@@ -1,0 +1,894 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Dashboard quản lý chấm công và giám sát sức khỏe nhân viên bằng AI">
+    <title>AI ChamCong — Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+    <style>
+        /* ====================================================
+           Design Tokens & Reset
+        ==================================================== */
+        :root {
+            --bg-base:        #0d1117;
+            --bg-card:        #161b22;
+            --bg-card-hover:  #1c2230;
+            --bg-overlay:     rgba(22, 27, 34, 0.85);
+            --border:         #30363d;
+            --border-accent:  #388bfd;
+
+            --accent-blue:    #388bfd;
+            --accent-green:   #3fb950;
+            --accent-red:     #f85149;
+            --accent-orange:  #d29922;
+            --accent-purple:  #a371f7;
+
+            --text-primary:   #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted:     #484f58;
+
+            --radius-sm:  6px;
+            --radius-md:  10px;
+            --radius-lg:  16px;
+
+            --shadow-card: 0 4px 24px rgba(0,0,0,0.4);
+            --transition:  all 0.2s ease;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Inter', sans-serif;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+        }
+
+        /* ====================================================
+           Layout
+        ==================================================== */
+        .layout {
+            display: grid;
+            grid-template-rows: 64px 1fr;
+            min-height: 100vh;
+        }
+
+        /* Header */
+        .header {
+            background: var(--bg-card);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            padding: 0 24px;
+            gap: 16px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-logo {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            font-weight: 700;
+            font-size: 1.05rem;
+            color: var(--text-primary);
+            text-decoration: none;
+        }
+
+        .header-logo .logo-icon {
+            width: 32px; height: 32px;
+            background: linear-gradient(135deg, var(--accent-blue), var(--accent-purple));
+            border-radius: var(--radius-sm);
+            display: flex; align-items: center; justify-content: center;
+            font-size: 16px;
+        }
+
+        .header-right {
+            margin-left: auto;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        /* Live indicator */
+        .live-badge {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.78rem;
+            font-weight: 600;
+            color: var(--accent-green);
+            background: rgba(63, 185, 80, 0.1);
+            border: 1px solid rgba(63, 185, 80, 0.3);
+            padding: 4px 12px;
+            border-radius: 20px;
+        }
+
+        .live-dot {
+            width: 8px; height: 8px;
+            background: var(--accent-green);
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50%       { opacity: 0.5; transform: scale(0.8); }
+        }
+
+        /* Main content */
+        .main {
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+            max-width: 1600px;
+            margin: 0 auto;
+            width: 100%;
+        }
+
+        /* ====================================================
+           Stats Cards
+        ==================================================== */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 16px;
+        }
+
+        .stat-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 20px;
+            transition: var(--transition);
+        }
+
+        .stat-card:hover {
+            border-color: var(--border-accent);
+            background: var(--bg-card-hover);
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-card);
+        }
+
+        .stat-label {
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .stat-value {
+            font-size: 1.8rem;
+            font-weight: 700;
+            line-height: 1;
+        }
+
+        .stat-value.blue   { color: var(--accent-blue); }
+        .stat-value.green  { color: var(--accent-green); }
+        .stat-value.red    { color: var(--accent-red); }
+        .stat-value.orange { color: var(--accent-orange); }
+
+        .stat-sub {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        /* ====================================================
+           Two-column Grid (Camera + Charts)
+        ==================================================== */
+        .content-grid {
+            display: grid;
+            grid-template-columns: 640px 1fr;
+            gap: 24px;
+            align-items: start;
+        }
+
+        @media (max-width: 1100px) {
+            .content-grid { grid-template-columns: 1fr; }
+        }
+
+        /* ====================================================
+           Cards
+        ==================================================== */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            box-shadow: var(--shadow-card);
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .card-title {
+            font-size: 0.9rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-title-icon {
+            width: 22px; height: 22px;
+            border-radius: 6px;
+            display: flex; align-items: center; justify-content: center;
+            font-size: 13px;
+        }
+
+        .card-body {
+            padding: 20px;
+        }
+
+        /* ====================================================
+           Camera Feed
+        ==================================================== */
+        .camera-wrapper {
+            position: relative;
+            background: #000;
+            border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+            overflow: hidden;
+            aspect-ratio: 4/3;
+        }
+
+        .camera-wrapper img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .camera-status-bar {
+            position: absolute;
+            top: 12px; right: 12px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .ai-badge {
+            padding: 4px 10px;
+            border-radius: 20px;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.5px;
+            text-transform: uppercase;
+            backdrop-filter: blur(8px);
+            transition: var(--transition);
+        }
+
+        .ai-badge.normal  { background: rgba(63,185,80,0.25);  color: #3fb950; border: 1px solid rgba(63,185,80,0.4); }
+        .ai-badge.warning { background: rgba(248,81,73,0.3);   color: #f85149; border: 1px solid rgba(248,81,73,0.5); animation: blink 0.7s infinite; }
+        .ai-badge.tilt    { background: rgba(210,153,34,0.3);  color: #d29922; border: 1px solid rgba(210,153,34,0.5); animation: blink 0.7s infinite; }
+        .ai-badge.none    { background: rgba(139,148,158,0.2); color: #8b949e; border: 1px solid rgba(139,148,158,0.3); }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50%       { opacity: 0.5; }
+        }
+
+        /* Environment bar */
+        .env-bar {
+            padding: 12px 20px;
+            display: flex;
+            gap: 24px;
+            border-top: 1px solid var(--border);
+            background: var(--bg-base);
+        }
+
+        .env-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .env-label { font-size: 0.72rem; color: var(--text-secondary); text-transform: uppercase; }
+        .env-val   { font-size: 1.1rem; font-weight: 700; color: var(--text-primary); }
+        .env-time  { font-size: 0.7rem; color: var(--text-muted); margin-left: auto; align-self: center; }
+
+        /* ====================================================
+           Charts
+        ==================================================== */
+        .charts-stack {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 200px;
+        }
+
+        /* ====================================================
+           Tables
+        ==================================================== */
+        .tables-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+            gap: 20px;
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 0.83rem;
+        }
+
+        .data-table thead th {
+            padding: 10px 14px;
+            text-align: left;
+            font-size: 0.75rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.4px;
+            color: var(--text-secondary);
+            border-bottom: 1px solid var(--border);
+        }
+
+        .data-table tbody tr {
+            border-bottom: 1px solid var(--border);
+            transition: var(--transition);
+        }
+
+        .data-table tbody tr:last-child { border-bottom: none; }
+
+        .data-table tbody tr:hover {
+            background: var(--bg-card-hover);
+        }
+
+        .data-table tbody td {
+            padding: 10px 14px;
+            color: var(--text-primary);
+        }
+
+        .badge-pill {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 0.72rem;
+            font-weight: 600;
+        }
+
+        .badge-red    { background: rgba(248,81,73,0.2);  color: #f85149; }
+        .badge-orange { background: rgba(210,153,34,0.2); color: #d29922; }
+        .badge-green  { background: rgba(63,185,80,0.2);  color: #3fb950; }
+        .badge-gray   { background: rgba(139,148,158,0.15); color: #8b949e; }
+
+        .no-data {
+            padding: 24px;
+            text-align: center;
+            color: var(--text-muted);
+            font-size: 0.85rem;
+        }
+
+        /* ====================================================
+           Section headings
+        ==================================================== */
+        .section-title {
+            font-size: 0.8rem;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            margin-bottom: 12px;
+        }
+
+        /* Scrollable table wrapper */
+        .table-scroll {
+            max-height: 260px;
+            overflow-y: auto;
+        }
+
+        .table-scroll::-webkit-scrollbar { width: 4px; }
+        .table-scroll::-webkit-scrollbar-track { background: transparent; }
+        .table-scroll::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    </style>
+</head>
+<body>
+<div class="layout">
+
+    <!-- ===== HEADER ===== -->
+    <header class="header">
+        <a class="header-logo" href="/">
+            <div class="logo-icon">🤖</div>
+            AI ChamCong Dashboard
+        </a>
+        <div class="header-right">
+            <span id="ai-status-badge" class="ai-badge none">Khởi động...</span>
+            <div class="live-badge">
+                <span class="live-dot"></span>
+                LIVE
+            </div>
+        </div>
+    </header>
+
+    <!-- ===== MAIN ===== -->
+    <main class="main">
+
+        <!-- Stats row -->
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-label">Nhiệt độ</div>
+                <div class="stat-value blue" id="stat-nhiet-do">--</div>
+                <div class="stat-sub">°C — Phòng làm việc</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Độ ẩm</div>
+                <div class="stat-value green" id="stat-do-am">--</div>
+                <div class="stat-sub">% RH</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Nhịp tim gần nhất</div>
+                <div class="stat-value orange" id="stat-nhip-tim">--</div>
+                <div class="stat-sub">bpm</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">SpO₂ gần nhất</div>
+                <div class="stat-value purple" style="color:var(--accent-purple)" id="stat-spo2">--</div>
+                <div class="stat-sub">%</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-label">Cảnh báo AI hôm nay</div>
+                <div class="stat-value red" id="stat-canh-bao">--</div>
+                <div class="stat-sub">vi phạm trạng thái</div>
+            </div>
+        </div>
+
+        <!-- Camera + Charts -->
+        <div class="content-grid">
+
+            <!-- Camera -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <div class="card-title-icon" style="background:rgba(56,139,253,0.15);">📷</div>
+                        Camera Giám Sát AI
+                    </div>
+                    <small style="color:var(--text-muted); font-size:0.75rem;">EAR Detection · Head Tilt</small>
+                </div>
+                <div class="camera-wrapper">
+                    <img id="camera-feed" src="{{ url_for('video_feed') }}" alt="Camera stream AI">
+                    <div class="camera-status-bar">
+                        <span id="ear-display" class="ai-badge none">EAR --</span>
+                    </div>
+                </div>
+                <div class="env-bar">
+                    <div class="env-item">
+                        <span class="env-label">Nhiệt độ</span>
+                        <span class="env-val"><span id="nhiet-do">--</span>°C</span>
+                    </div>
+                    <div class="env-item">
+                        <span class="env-label">Độ ẩm</span>
+                        <span class="env-val"><span id="do-am">--</span>%</span>
+                    </div>
+                    <span class="env-time">Cập nhật: <span id="thoi-gian-mt">--</span></span>
+                </div>
+            </div>
+
+            <!-- Charts stack -->
+            <div class="charts-stack">
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <div class="card-title-icon" style="background:rgba(248,81,73,0.15);">❤️</div>
+                            Nhịp tim (bpm)
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="chart-heart-rate"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">
+                        <div class="card-title">
+                            <div class="card-title-icon" style="background:rgba(56,139,253,0.15);">🌡️</div>
+                            Nhiệt độ môi trường (°C)
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="chart-container">
+                            <canvas id="chart-temperature"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Data Tables -->
+        <div class="tables-grid">
+
+            <!-- Cảnh báo AI -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <div class="card-title-icon" style="background:rgba(248,81,73,0.15);">⚠️</div>
+                        Cảnh báo AI Gần Đây
+                    </div>
+                </div>
+                <div class="table-scroll">
+                    <table class="data-table" id="alert-table">
+                        <thead>
+                            <tr>
+                                <th>Nhân viên</th>
+                                <th>Loại cảnh báo</th>
+                                <th>Giá trị</th>
+                                <th>Thời gian</th>
+                            </tr>
+                        </thead>
+                        <tbody id="alert-tbody">
+                            <tr><td colspan="4" class="no-data">Đang tải...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Chấm công -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <div class="card-title-icon" style="background:rgba(63,185,80,0.15);">🕐</div>
+                        Lịch Sử Chấm Công
+                    </div>
+                </div>
+                <div class="table-scroll">
+                    <table class="data-table" id="chamcong-table">
+                        <thead>
+                            <tr>
+                                <th>Nhân viên</th>
+                                <th>Giờ vào</th>
+                                <th>Giờ ra</th>
+                            </tr>
+                        </thead>
+                        <tbody id="chamcong-tbody">
+                            <tr><td colspan="3" class="no-data">Đang tải...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Sức khỏe -->
+            <div class="card">
+                <div class="card-header">
+                    <div class="card-title">
+                        <div class="card-title-icon" style="background:rgba(163,113,247,0.15);">💊</div>
+                        Lịch Sử Đo Sức Khỏe
+                    </div>
+                </div>
+                <div class="table-scroll">
+                    <table class="data-table" id="health-table">
+                        <thead>
+                            <tr>
+                                <th>Nhân viên</th>
+                                <th>Nhịp tim</th>
+                                <th>SpO₂</th>
+                                <th>Thời gian</th>
+                            </tr>
+                        </thead>
+                        <tbody id="health-tbody">
+                            <tr><td colspan="4" class="no-data">Đang tải...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+        </div><!-- /tables-grid -->
+
+    </main>
+</div>
+
+<!-- ============================================================
+     JavaScript — Fetch API + Chart.js
+============================================================ -->
+<script>
+// ============================================================
+// Chart.js — cấu hình chung
+// ============================================================
+const CHART_DEFAULTS = {
+    responsive: true,
+    maintainAspectRatio: false,
+    animation: { duration: 500 },
+    plugins: {
+        legend: { display: false },
+        tooltip: {
+            backgroundColor: '#1c2230',
+            borderColor: '#30363d',
+            borderWidth: 1,
+            titleColor: '#e6edf3',
+            bodyColor: '#8b949e'
+        }
+    },
+    scales: {
+        x: {
+            grid: { color: '#21262d' },
+            ticks: { color: '#8b949e', maxTicksLimit: 6, font: { size: 11 } }
+        },
+        y: {
+            grid: { color: '#21262d' },
+            ticks: { color: '#8b949e', font: { size: 11 } }
+        }
+    }
+};
+
+// Chart nhịp tim
+const ctxHR = document.getElementById('chart-heart-rate').getContext('2d');
+const heartRateChart = new Chart(ctxHR, {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [{
+            label: 'Nhịp tim (bpm)',
+            data: [],
+            borderColor: '#f85149',
+            backgroundColor: 'rgba(248,81,73,0.1)',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointBackgroundColor: '#f85149',
+            fill: true,
+            tension: 0.4
+        }]
+    },
+    options: {
+        ...CHART_DEFAULTS,
+        scales: {
+            ...CHART_DEFAULTS.scales,
+            y: { ...CHART_DEFAULTS.scales.y, min: 50, max: 120 }
+        }
+    }
+});
+
+// Chart nhiệt độ
+const ctxTemp = document.getElementById('chart-temperature').getContext('2d');
+const tempChart = new Chart(ctxTemp, {
+    type: 'line',
+    data: {
+        labels: [],
+        datasets: [{
+            label: 'Nhiệt độ (°C)',
+            data: [],
+            borderColor: '#388bfd',
+            backgroundColor: 'rgba(56,139,253,0.1)',
+            borderWidth: 2,
+            pointRadius: 3,
+            pointBackgroundColor: '#388bfd',
+            fill: true,
+            tension: 0.4
+        }]
+    },
+    options: {
+        ...CHART_DEFAULTS,
+        scales: {
+            ...CHART_DEFAULTS.scales,
+            y: { ...CHART_DEFAULTS.scales.y, min: 20, max: 45 }
+        }
+    }
+});
+
+// ============================================================
+// Utilities
+// ============================================================
+function updateChart(chart, labels, values) {
+    chart.data.labels   = labels;
+    chart.data.datasets[0].data = values;
+    chart.update();
+}
+
+function formatBadge(loai) {
+    if (!loai) return '<span class="badge-pill badge-gray">--</span>';
+    const l = loai.toLowerCase();
+    if (l.includes('ngu') || l.includes('sleep'))
+        return `<span class="badge-pill badge-red">${loai}</span>`;
+    if (l.includes('guc') || l.includes('tilt'))
+        return `<span class="badge-pill badge-orange">${loai}</span>`;
+    return `<span class="badge-pill badge-gray">${loai}</span>`;
+}
+
+function formatGioRa(val) {
+    if (!val || val === '--') return '<span style="color:var(--text-muted)">Chưa ra</span>';
+    return val;
+}
+
+// ============================================================
+// Fetch: Môi trường
+// ============================================================
+function fetchEnvData() {
+    fetch('/api/get_environment')
+        .then(r => r.json())
+        .then(data => {
+            document.getElementById('nhiet-do').textContent    = data.NhietDo;
+            document.getElementById('do-am').textContent       = data.DoAm;
+            document.getElementById('thoi-gian-mt').textContent = data.ThoiGian;
+            document.getElementById('stat-nhiet-do').textContent = data.NhietDo;
+            document.getElementById('stat-do-am').textContent  = data.DoAm;
+        })
+        .catch(e => console.error('[env]', e));
+}
+
+// ============================================================
+// Fetch: Sức khỏe (bảng)
+// ============================================================
+function fetchHealthData() {
+    fetch('/api/get_health')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.length) {
+                document.getElementById('health-tbody').innerHTML =
+                    '<tr><td colspan="4" class="no-data">Chưa có dữ liệu</td></tr>';
+                return;
+            }
+            const firstRow = data[0];
+            document.getElementById('stat-nhip-tim').textContent = firstRow.NhipTim;
+            document.getElementById('stat-spo2').textContent     = firstRow.SpO2;
+
+            document.getElementById('health-tbody').innerHTML = data.map(r => `
+                <tr>
+                    <td>${r.HoTen}</td>
+                    <td><strong style="color:var(--accent-red)">${r.NhipTim}</strong> bpm</td>
+                    <td><strong style="color:var(--accent-purple)">${r.SpO2}</strong>%</td>
+                    <td style="color:var(--text-secondary);font-size:0.78rem">${r.ThoiGian}</td>
+                </tr>
+            `).join('');
+        })
+        .catch(e => console.error('[health]', e));
+}
+
+// ============================================================
+// Fetch: Chart nhịp tim
+// ============================================================
+function fetchHeartRateChart() {
+    fetch('/api/chart/health')
+        .then(r => r.json())
+        .then(data => {
+            updateChart(
+                heartRateChart,
+                data.map(r => r.ThoiGian),
+                data.map(r => r.NhipTim)
+            );
+        })
+        .catch(e => console.error('[chart/health]', e));
+}
+
+// ============================================================
+// Fetch: Chart nhiệt độ
+// ============================================================
+function fetchTempChart() {
+    fetch('/api/chart/environment')
+        .then(r => r.json())
+        .then(data => {
+            updateChart(
+                tempChart,
+                data.map(r => r.ThoiGian),
+                data.map(r => r.NhietDo)
+            );
+        })
+        .catch(e => console.error('[chart/env]', e));
+}
+
+// ============================================================
+// Fetch: Chấm công
+// ============================================================
+function fetchChamCongData() {
+    fetch('/api/get_chamcong')
+        .then(r => r.json())
+        .then(data => {
+            if (!data.length) {
+                document.getElementById('chamcong-tbody').innerHTML =
+                    '<tr><td colspan="3" class="no-data">Chưa có dữ liệu</td></tr>';
+                return;
+            }
+            document.getElementById('chamcong-tbody').innerHTML = data.map(r => `
+                <tr>
+                    <td>${r.HoTen}</td>
+                    <td style="color:var(--accent-green)">${r.GioVao}</td>
+                    <td>${formatGioRa(r.GioRa)}</td>
+                </tr>
+            `).join('');
+        })
+        .catch(e => console.error('[chamcong]', e));
+}
+
+// ============================================================
+// Fetch: Cảnh báo AI
+// ============================================================
+function fetchAlerts() {
+    fetch('/api/get_alerts?limit=10')
+        .then(r => r.json())
+        .then(data => {
+            // Cập nhật stat card
+            document.getElementById('stat-canh-bao').textContent = data.length;
+
+            if (!data.length) {
+                document.getElementById('alert-tbody').innerHTML =
+                    '<tr><td colspan="4" class="no-data">Chưa có cảnh báo</td></tr>';
+                return;
+            }
+            document.getElementById('alert-tbody').innerHTML = data.map(r => `
+                <tr>
+                    <td>${r.HoTen}</td>
+                    <td>${formatBadge(r.LoaiCanhBao)}</td>
+                    <td style="color:var(--text-secondary);font-size:0.78rem">
+                        ${r.GiaTri !== null ? r.GiaTri : '--'}
+                    </td>
+                    <td style="color:var(--text-secondary);font-size:0.78rem">${r.ThoiGian}</td>
+                </tr>
+            `).join('');
+        })
+        .catch(e => console.error('[alerts]', e));
+}
+
+// ============================================================
+// Fetch: AI Status (EAR badge real-time)
+// ============================================================
+function fetchAiStatus() {
+    fetch('/api/ai_status')
+        .then(r => r.json())
+        .then(data => {
+            const badge     = document.getElementById('ai-status-badge');
+            const earBadge  = document.getElementById('ear-display');
+
+            const stateMap = {
+                'binh_thuong':        { label: '✅ Bình thường', cls: 'normal' },
+                'buon_ngu':           { label: '⚠️ Buồn ngủ!',   cls: 'warning' },
+                'guc_dau':            { label: '⚠️ Gục đầu!',    cls: 'tilt' },
+                'khong_co_khuon_mat': { label: '👤 Không tìm thấy', cls: 'none' }
+            };
+
+            const info = stateMap[data.state] || { label: data.state, cls: 'none' };
+            badge.textContent = info.label;
+            badge.className   = `ai-badge ${info.cls}`;
+
+            earBadge.textContent = `EAR ${data.ear}`;
+            earBadge.className   = `ai-badge ${data.state === 'buon_ngu' ? 'warning' : 'none'}`;
+        })
+        .catch(e => console.error('[ai_status]', e));
+}
+
+// ============================================================
+// Polling — tần suất phù hợp với từng loại dữ liệu
+// ============================================================
+function initPolling() {
+    // Lần đầu tải ngay
+    fetchEnvData();
+    fetchHealthData();
+    fetchChamCongData();
+    fetchAlerts();
+    fetchHeartRateChart();
+    fetchTempChart();
+    fetchAiStatus();
+
+    // Môi trường & health: 3 giây
+    setInterval(fetchEnvData,      3000);
+    setInterval(fetchHealthData,   3000);
+
+    // Charts: 5 giây (ít data hơn)
+    setInterval(fetchHeartRateChart, 5000);
+    setInterval(fetchTempChart,      5000);
+
+    // Chấm công & Cảnh báo: 5 giây
+    setInterval(fetchChamCongData, 5000);
+    setInterval(fetchAlerts,       5000);
+
+    // AI status badge: 1 giây (real-time feel)
+    setInterval(fetchAiStatus, 1000);
+}
+
+document.addEventListener('DOMContentLoaded', initPolling);
+</script>
+</body>
+</html>
