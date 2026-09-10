@@ -1,4 +1,122 @@
+"""
+services.py — Tầng nghiệp vụ (Business Logic Layer)
+=====================================================
+Nhận dữ liệu thô từ database, áp dụng quy tắc nghiệp vụ,
+trả về dict/list sẵn sàng cho JSON response.
+
+Quy tắc chấm công (KHÔNG có thời gian ân hạn):
+    GioVao <= GioBatDau  -> Đúng giờ
+    GioVao >  GioBatDau  -> Đi trễ
+
+    GioRa  >= GioKetThuc -> Đúng giờ
+    GioRa  <  GioKetThuc -> Về sớm
+    GioRa  is None       -> Đang làm việc
+"""
+
+from datetime import date, datetime, time
 import database
+
+
+# ============================================================
+# Hàm tính trạng thái chấm công
+# ============================================================
+
+def _to_time(val):
+    """
+    Chuyển nhiều kiểu dữ liệu về datetime.time.
+    Hỗ trợ: datetime.time, datetime.timedelta (SQL Server TIME),
+            datetime.datetime, str "HH:MM:SS".
+    """
+    if val is None:
+        return None
+
+    # timedelta — SQL Server trả TIME dưới dạng timedelta
+    try:
+        from datetime import timedelta
+        if isinstance(val, timedelta):
+            total_sec = int(val.total_seconds())
+            h = total_sec // 3600
+            m = (total_sec % 3600) // 60
+            s = total_sec % 60
+            return time(h, m, s)
+    except Exception:
+        pass
+
+    if isinstance(val, time):
+        return val
+
+    if isinstance(val, datetime):
+        return val.time()
+
+    if isinstance(val, str):
+        try:
+            parts = val.split(":")
+            return time(int(parts[0]), int(parts[1]), int(parts[2]) if len(parts) > 2 else 0)
+        except Exception:
+            return None
+
+    return None
+
+
+def calc_attendance_status(gio_bat_dau, gio_ket_thuc, gio_vao, gio_ra):
+    """
+    Tính trạng thái chấm công theo quy tắc nghiệp vụ.
+
+    Tham số:
+        gio_bat_dau  : giờ bắt đầu ca (time hoặc timedelta)
+        gio_ket_thuc : giờ kết thúc ca
+        gio_vao      : giờ nhân viên vào (datetime hoặc None)
+        gio_ra       : giờ nhân viên ra (datetime hoặc None)
+
+    Trả về dict:
+        TrangThaiVao      : "Đúng giờ" | "Đi trễ" | "Chưa chấm công"
+        TrangThaiRa       : "Đang làm việc" | "Đúng giờ" | "Về sớm"
+        TrangThaiTongHop  : chuỗi gộp ngắn gọn
+    """
+    # Chuyển ca về time
+    bat_dau  = _to_time(gio_bat_dau)
+    ket_thuc = _to_time(gio_ket_thuc)
+
+    # Chưa chấm công
+    if gio_vao is None:
+        return {
+            "TrangThaiVao":     "Chưa chấm công",
+            "TrangThaiRa":      "--",
+            "TrangThaiTongHop": "Chưa chấm công",
+        }
+
+    t_vao = gio_vao.time() if isinstance(gio_vao, datetime) else gio_vao
+
+    # Trạng thái vào
+    if bat_dau is not None and t_vao > bat_dau:
+        trang_thai_vao = "Đi trễ"
+    else:
+        trang_thai_vao = "Đúng giờ"
+
+    # Trạng thái ra
+    if gio_ra is None:
+        trang_thai_ra = "Đang làm việc"
+    else:
+        t_ra = gio_ra.time() if isinstance(gio_ra, datetime) else gio_ra
+        if ket_thuc is not None and t_ra < ket_thuc:
+            trang_thai_ra = "Về sớm"
+        else:
+            trang_thai_ra = "Đúng giờ"
+
+    # Tổng hợp
+    if trang_thai_ra == "Đang làm việc":
+        tong_hop = f"{trang_thai_vao} · Đang làm việc"
+    elif trang_thai_vao == "Đúng giờ" and trang_thai_ra == "Đúng giờ":
+        tong_hop = "Hoàn thành"
+    else:
+        tong_hop = f"{trang_thai_vao} · {trang_thai_ra}"
+
+    return {
+        "TrangThaiVao":     trang_thai_vao,
+        "TrangThaiRa":      trang_thai_ra,
+        "TrangThaiTongHop": tong_hop,
+    }
+
 
 # ============================================================
 # NhanVien
@@ -10,121 +128,484 @@ def fetch_dashboard_data():
 
 
 # ============================================================
-# Health (Sức khỏe)
+# CaLamViec
+# ============================================================
+
+def fetch_all_shifts():
+    """Trả về danh sách ca làm việc."""
+    try:
+        rows = database.get_all_shifts()
+        result = []
+        for row in rows:
+            gbd = _to_time(row[2])
+            gkt = _to_time(row[3])
+            result.append({
+                "MaCa":       row[0],
+                "TenCa":      row[1],
+                "GioBatDau":  gbd.strftime("%H:%M") if gbd else "--",
+                "GioKetThuc": gkt.strftime("%H:%M") if gkt else "--",
+            })
+        return result
+    except Exception as e:
+        print(f"[services] Loi lay ca lam viec: {e}")
+        return []
+
+
+# ============================================================
+# PhanCaNhanVien
+# ============================================================
+
+def assign_shift(data):
+    """
+    Phân ca cho nhân viên.
+    data: {"MaNV": int, "MaCa": int, "NgayLamViec": "YYYY-MM-DD" (tùy chọn)}
+    """
+    ma_nv = data.get("MaNV")
+    ma_ca = data.get("MaCa")
+    ngay  = data.get("NgayLamViec")
+
+    if ma_nv is None or ma_ca is None:
+        return False, "Thiếu MaNV hoặc MaCa"
+
+    if ngay is None:
+        ngay = date.today().isoformat()
+
+    try:
+        database.assign_shift(ma_nv, ma_ca, ngay)
+        return True, "Phân ca thành công"
+    except Exception as e:
+        print(f"[services] Loi phan ca: {e}")
+        return False, f"Lỗi phân ca: {e}"
+
+
+# ============================================================
+# ChamCong — Check-in / Check-out
+# ============================================================
+
+def process_attendance(ma_nv, ma_tb=1):
+    """
+    Xử lý chấm công theo quy tắc:
+
+    1. Lấy ca hôm nay của nhân viên.
+       Nếu không có ca → trả lỗi rõ.
+
+    2. Lấy bản ghi ChamCong hôm nay.
+       - Không có bản ghi → CHECK-IN
+       - Có bản ghi, GioRa=NULL → CHECK-OUT
+       - Có bản ghi, GioRa!=NULL → COMPLETED
+
+    3. CHECK-IN thành công → set_active_employee (caller xử lý)
+       CHECK-OUT thành công → clear_active_employee nếu đúng người
+
+    Trả về dict:
+        action   : "checkin" | "checkout" | "completed" | "error"
+        status   : "success" | "error"
+        message  : chuỗi mô tả
+        MaCa     : ca làm việc (nếu có)
+    """
+    today = date.today().isoformat()
+
+    # --- Lấy ca ---
+    try:
+        shift_row = database.get_employee_shift(ma_nv, today)
+    except Exception as e:
+        return {
+            "action":  "error",
+            "status":  "error",
+            "message": f"Lỗi truy vấn ca: {e}",
+        }
+
+    if shift_row is None:
+        return {
+            "action":  "error",
+            "status":  "error",
+            "message": "Nhân viên chưa được phân ca hôm nay",
+        }
+
+    ma_ca        = shift_row[0]
+    ten_ca       = shift_row[1]
+    gio_bat_dau  = shift_row[2]
+    gio_ket_thuc = shift_row[3]
+
+    # --- Lấy bản ghi hôm nay ---
+    try:
+        today_rec = database.get_today_record(ma_nv)
+    except Exception as e:
+        return {
+            "action":  "error",
+            "status":  "error",
+            "message": f"Lỗi truy vấn chấm công: {e}",
+        }
+
+    # --- CHECK-IN ---
+    if today_rec is None:
+        try:
+            database.insert_checkin(ma_nv, ma_ca, ma_tb)
+            return {
+                "action":  "checkin",
+                "status":  "success",
+                "message": f"Chấm công vào thành công — Ca: {ten_ca}",
+                "MaCa":    ma_ca,
+                "TenCa":   ten_ca,
+            }
+        except Exception as e:
+            return {
+                "action":  "error",
+                "status":  "error",
+                "message": f"Lỗi check-in: {e}",
+            }
+
+    ma_cc  = today_rec[0]
+    gio_vao = today_rec[1]
+    gio_ra  = today_rec[2]
+
+    # --- CHECK-OUT ---
+    if gio_vao is not None and gio_ra is None:
+        try:
+            database.update_checkout(ma_cc)
+            return {
+                "action":  "checkout",
+                "status":  "success",
+                "message": f"Chấm công ra thành công — Ca: {ten_ca}",
+                "MaCa":    ma_ca,
+                "TenCa":   ten_ca,
+            }
+        except Exception as e:
+            return {
+                "action":  "error",
+                "status":  "error",
+                "message": f"Lỗi check-out: {e}",
+            }
+
+    # --- COMPLETED ---
+    return {
+        "action":  "completed",
+        "status":  "success",
+        "message": "Đã hoàn tất chấm công hôm nay",
+        "MaCa":    ma_ca,
+        "TenCa":   ten_ca,
+    }
+
+
+# ============================================================
+# ChamCong — Dashboard Summary
+# ============================================================
+
+def fetch_attendance_dashboard():
+    """
+    Trả về summary KPI + records đầy đủ cho Dashboard.
+
+    Summary (tính từ 1 snapshot — KHÔNG thể mâu thuẫn):
+        TongNhanVien  : tổng NV hệ thống
+        DaChamCong    : số NV đã có GioVao hôm nay
+        DangLamViec   : GioVao != NULL, GioRa == NULL
+        DiTre         : GioVao > GioBatDau
+        VeSom         : GioRa < GioKetThuc (đã ra về)
+        ChuaChamCong  : TongNhanVien - DaChamCong  (≥ 0)
+        DaRaVe        : GioRa != NULL
+        CanhBaoHomNay : số cảnh báo AI hôm nay
+
+    Records: danh sách toàn bộ NV kèm trạng thái
+    """
+    try:
+        rows          = database.get_today_attendance()
+        canh_bao_cnt  = database.get_today_alert_count()
+    except Exception as e:
+        print(f"[services] Loi lay dashboard: {e}")
+        return {
+            "Summary": {
+                "TongNhanVien":  0,
+                "DaChamCong":    0,
+                "DangLamViec":   0,
+                "DiTre":         0,
+                "VeSom":         0,
+                "ChuaChamCong":  0,
+                "DaRaVe":        0,
+                "CanhBaoHomNay": 0,
+            },
+            "Records": [],
+        }
+
+    tong      = len(rows)
+    da_cham   = 0
+    dang_lam  = 0
+    di_tre    = 0
+    ve_som    = 0
+    da_ra_ve  = 0
+
+    records = []
+
+    for row in rows:
+        ma_nv        = row[0]
+        ho_ten       = row[1]
+        ma_ca        = row[2]
+        ten_ca       = row[3]
+        gio_bat_dau  = row[4]
+        gio_ket_thuc = row[5]
+        gio_vao      = row[6]   # datetime hoặc None
+        gio_ra       = row[7]   # datetime hoặc None
+
+        gbd_t = _to_time(gio_bat_dau)
+        gkt_t = _to_time(gio_ket_thuc)
+
+        status = calc_attendance_status(
+            gio_bat_dau, gio_ket_thuc, gio_vao, gio_ra
+        )
+
+        # Đếm KPI
+        if gio_vao is not None:
+            da_cham += 1
+
+            if gio_ra is None:
+                dang_lam += 1
+            else:
+                da_ra_ve += 1
+                # Về sớm: GioRa < GioKetThuc
+                if gkt_t and gio_ra.time() < gkt_t:
+                    ve_som += 1
+
+            # Đi trễ: GioVao > GioBatDau
+            if gbd_t and gio_vao.time() > gbd_t:
+                di_tre += 1
+
+        # Format để trả JSON
+        records.append({
+            "MaNV":   ma_nv,
+            "HoTen":  ho_ten,
+
+            "MaCa":       ma_ca,
+            "TenCa":      ten_ca or "--",
+            "GioBatDau":  gbd_t.strftime("%H:%M") if gbd_t else "--",
+            "GioKetThuc": gkt_t.strftime("%H:%M") if gkt_t else "--",
+
+            "GioVao": (
+                gio_vao.strftime("%H:%M:%S")
+                if gio_vao else None
+            ),
+            "GioRa": (
+                gio_ra.strftime("%H:%M:%S")
+                if gio_ra else None
+            ),
+
+            "TrangThaiVao":     status["TrangThaiVao"],
+            "TrangThaiRa":      status["TrangThaiRa"],
+            "TrangThaiTongHop": status["TrangThaiTongHop"],
+        })
+
+    chua_cham = max(0, tong - da_cham)
+
+    return {
+        "Summary": {
+            "TongNhanVien":  tong,
+            "DaChamCong":    da_cham,
+            "DangLamViec":   dang_lam,
+            "DiTre":         di_tre,
+            "VeSom":         ve_som,
+            "ChuaChamCong":  chua_cham,
+            "DaRaVe":        da_ra_ve,
+            "CanhBaoHomNay": canh_bao_cnt,
+        },
+        "Records": records,
+    }
+
+
+def fetch_today_attendance_summary():
+    """
+    Toàn bộ chấm công hôm nay + tổng nhân viên.
+    Dùng cho endpoint /api/get_chamcong_today (backward compat).
+    """
+    try:
+        records   = database.get_today_cham_cong()
+        total_nv  = database.get_total_employees()
+
+        rows = []
+        for row in records:
+            rows.append({
+                "HoTen": row[0],
+                "GioVao": (
+                    row[1].strftime("%Y-%m-%d %H:%M:%S")
+                    if row[1] else None
+                ),
+                "GioRa": (
+                    row[2].strftime("%Y-%m-%d %H:%M:%S")
+                    if row[2] else None
+                ),
+                "MaNV": row[3],
+            })
+
+        return {"TongNV": total_nv, "Records": rows}
+
+    except Exception as e:
+        print(f"[services] Loi lay cham cong hom nay: {e}")
+        return {"TongNV": 0, "Records": []}
+
+
+def fetch_attendance_weekly():
+    """Thống kê chấm công 7 ngày gần nhất."""
+    try:
+        records = database.get_weekly_cham_cong()
+        return [
+            {
+                "Ngay":       str(row[0]) if row[0] else "--",
+                "SoNguoiVao": int(row[1]) if row[1] else 0,
+                "SoNguoiRa":  int(row[2]) if row[2] else 0,
+            }
+            for row in records
+        ]
+    except Exception as e:
+        print(f"[services] Loi lay thong ke tuan: {e}")
+        return []
+
+
+def fetch_attendance_history():
+    """Lịch sử chấm công gần nhất (backward compat)."""
+    try:
+        records = database.get_recent_cham_cong()
+        return [
+            {
+                "HoTen":  row[0],
+                "GioVao": (
+                    row[1].strftime("%Y-%m-%d %H:%M:%S")
+                    if row[1] else "--"
+                ),
+                "GioRa": (
+                    row[2].strftime("%Y-%m-%d %H:%M:%S")
+                    if row[2] else "--"
+                ),
+            }
+            for row in records
+        ]
+    except Exception as e:
+        print(f"[services] Loi lay lich su cham cong: {e}")
+        return []
+
+
+# ============================================================
+# Health
 # ============================================================
 
 def save_sensor_data(data):
-    ma_nv   = data.get('MaNV')
-    nhip_tim = data.get('NhipTim')
-    spo2    = data.get('SpO2')
-    if ma_nv and nhip_tim and spo2:
+    ma_nv    = data.get("MaNV")
+    nhip_tim = data.get("NhipTim")
+    spo2     = data.get("SpO2")
+
+    if ma_nv is None or nhip_tim is None or spo2 is None:
+        return False
+
+    try:
         database.insert_health_data(ma_nv, nhip_tim, spo2)
         return True
-    return False
+    except Exception as e:
+        print(f"[services] Loi luu suc khoe: {e}")
+        return False
+
 
 def fetch_health_data():
-    records = database.get_recent_health_data()
-    return [
-        {
-            "HoTen":    row[0],
-            "NhipTim":  row[1],
-            "SpO2":     row[2],
-            "ThoiGian": row[3].strftime("%Y-%m-%d %H:%M:%S")
-        }
-        for row in records
-    ]
+    try:
+        records = database.get_recent_health_data()
+        return [
+            {
+                "HoTen":   row[0],
+                "NhipTim": row[1],
+                "SpO2":    row[2],
+                "ThoiGian": (
+                    row[3].strftime("%Y-%m-%d %H:%M:%S")
+                    if row[3] else "--"
+                ),
+            }
+            for row in records
+        ]
+    except Exception as e:
+        print(f"[services] Loi lay suc khoe: {e}")
+        return []
+
 
 def fetch_health_chart_data():
-    """Trả về time-series nhịp tim cho Chart.js."""
-    records = database.get_health_chart_data(limit=20)
-    return [
-        {
-            "HoTen":    row[0],
-            "NhipTim":  row[1],
-            "ThoiGian": row[2].strftime("%H:%M:%S")
-        }
-        for row in records
-    ]
+    try:
+        records = database.get_health_chart_data(limit=20)
+        return [
+            {
+                "HoTen":   row[0],
+                "NhipTim": row[1],
+                "ThoiGian": (
+                    row[2].strftime("%H:%M:%S")
+                    if row[2] else "--"
+                ),
+            }
+            for row in records
+        ]
+    except Exception as e:
+        print(f"[services] Loi lay chart suc khoe: {e}")
+        return []
 
 
 # ============================================================
-# Environment (Môi trường)
+# Environment
 # ============================================================
 
 def save_environment_data(data):
-    nhiet_do = data.get('NhietDo')
-    do_am    = data.get('DoAm')
-    if nhiet_do is not None and do_am is not None:
-        database.insert_environment_data(nhiet_do, do_am)
-        return True
-    return False
+    nhiet_do = data.get("NhietDo")
+    do_am    = data.get("DoAm")
+    ma_tb    = data.get("MaTB", 1)
 
-def fetch_latest_environment():
-    row = database.get_recent_environment_data()
-    if row:
-        return {
-            "NhietDo":  row[0],
-            "DoAm":     row[1],
-            "ThoiGian": row[2].strftime("%Y-%m-%d %H:%M:%S")
-        }
-    return {"NhietDo": "--", "DoAm": "--", "ThoiGian": "--"}
+    if nhiet_do is None or do_am is None:
+        return False
 
-def fetch_environment_chart_data():
-    """Trả về time-series nhiệt độ/độ ẩm cho Chart.js."""
-    records = database.get_environment_chart_data(limit=20)
-    return [
-        {
-            "NhietDo":  row[0],
-            "DoAm":     row[1],
-            "ThoiGian": row[2].strftime("%H:%M:%S")
-        }
-        for row in records
-    ]
-
-
-# ============================================================
-# ChamCong (Attendance)
-# ============================================================
-
-def mark_attendance(data):
-    ma_nv = data.get('MaNV')
-    if ma_nv:
-        database.insert_cham_cong(ma_nv)
-        return True
-    return False
-
-def fetch_attendance_history():
-    records = database.get_recent_cham_cong()
-    return [
-        {
-            "HoTen":  row[0],
-            "GioVao": row[1].strftime("%Y-%m-%d %H:%M:%S") if row[1] else "--",
-            "GioRa":  row[2].strftime("%Y-%m-%d %H:%M:%S") if row[2] else "--"
-        }
-        for row in records
-    ]
-
-
-# ============================================================
-# CanhBao / LichSuTrangThai (AI Alerts)
-# ============================================================
-
-def save_alert(ma_nv, loai_canh_bao, mo_ta, gia_tri=None):
-    """
-    Lưu một cảnh báo AI vào bảng CanhBao.
-    Được gọi từ ai_engine khi phát hiện buồn ngủ hoặc gục đầu.
-    """
     try:
-        database.insert_canh_bao(ma_nv, loai_canh_bao, mo_ta, gia_tri)
+        database.insert_environment_data(nhiet_do, do_am, ma_tb)
         return True
     except Exception as e:
-        print(f"[services] Loi luu canh bao: {e}")
+        print(f"[services] Loi luu moi truong: {e}")
         return False
+
+
+def fetch_latest_environment():
+    try:
+        row = database.get_recent_environment_data()
+        if row:
+            return {
+                "NhietDo": row[0],
+                "DoAm":    row[1],
+                "ThoiGian": (
+                    row[2].strftime("%Y-%m-%d %H:%M:%S")
+                    if row[2] else "--"
+                ),
+            }
+    except Exception as e:
+        print(f"[services] Loi lay moi truong: {e}")
+    return {"NhietDo": "--", "DoAm": "--", "ThoiGian": "--"}
+
+
+def fetch_environment_chart_data():
+    try:
+        records = database.get_environment_chart_data(limit=20)
+        return [
+            {
+                "NhietDo": row[0],
+                "DoAm":    row[1],
+                "ThoiGian": (
+                    row[2].strftime("%H:%M:%S")
+                    if row[2] else "--"
+                ),
+            }
+            for row in records
+        ]
+    except Exception as e:
+        print(f"[services] Loi lay chart moi truong: {e}")
+        return []
+
+
+# ============================================================
+# AI State Log
+# ============================================================
 
 def save_state_log(ma_nv, trang_thai, gia_tri=None):
     """
-    Lưu log trạng thái AI vào LichSuTrangThai (gọi định kỳ, không phải mỗi frame).
+    Lưu trạng thái AI.
+    gia_tri nhận để tương thích với ai_engine.
     """
+    if ma_nv is None:
+        return False
     try:
         database.insert_trang_thai(ma_nv, trang_thai, gia_tri)
         return True
@@ -132,17 +613,71 @@ def save_state_log(ma_nv, trang_thai, gia_tri=None):
         print(f"[services] Loi luu trang thai: {e}")
         return False
 
+
+# ============================================================
+# AI Alert
+# ============================================================
+
+def save_alert(ma_nv, loai_canh_bao, mo_ta, gia_tri=None):
+    """
+    Khi AI phát hiện buồn ngủ / gục đầu:
+    1. Tạo LichSuTrangThai → lấy MaTT.
+    2. Tạo CanhBao liên kết MaTT.
+    """
+    if ma_nv is None:
+        return False
+
+    loai_lower = str(loai_canh_bao).strip().lower()
+
+    if "buon" in loai_lower or "ngu" in loai_lower or "ngủ" in loai_lower:
+        trang_thai = "buon_ngu"
+    elif "guc" in loai_lower or "gục" in loai_lower:
+        trang_thai = "guc_dau"
+    else:
+        trang_thai = "binh_thuong"
+
+    try:
+        ma_tt = database.insert_trang_thai(ma_nv, trang_thai, gia_tri)
+        database.insert_canh_bao(
+            ma_nv=ma_nv,
+            loai_canh_bao=loai_canh_bao,
+            mo_ta=mo_ta,
+            gia_tri=gia_tri,
+            ma_tt=ma_tt,
+            ma_tb=1,
+            ma_loai_cb=1,
+        )
+        return True
+    except Exception as e:
+        print(f"[services] Loi luu canh bao: {e}")
+        return False
+
+
+# ============================================================
+# Alert History
+# ============================================================
+
 def fetch_alert_history(limit=10):
-    """Trả về danh sách cảnh báo gần nhất cho Dashboard."""
-    records = database.get_recent_canh_bao(limit=limit)
-    result = []
-    for row in records:
-        result.append({
-            "HoTen":      row[0],
-            "LoaiCanhBao": row[1],
-            "MoTa":       row[2] if row[2] else "",
-            "GiaTri":     round(float(row[3]), 3) if row[3] is not None else None,
-            "ThoiGian":   row[4].strftime("%Y-%m-%d %H:%M:%S"),
-            "DaXuLy":     bool(row[5])
-        })
-    return result
+    """
+    Trả danh sách cảnh báo cho Dashboard.
+    Fields: HoTen, LoaiCanhBao, MoTa, GiaTri, ThoiGian, DaXuLy
+    """
+    try:
+        records = database.get_recent_canh_bao(limit=limit)
+        result = []
+        for row in records:
+            result.append({
+                "HoTen":      row[0],
+                "LoaiCanhBao": row[1] if row[1] else "Cảnh báo AI",
+                "MoTa":       row[2] if row[2] else "",
+                "GiaTri":     None,
+                "ThoiGian": (
+                    row[3].strftime("%Y-%m-%d %H:%M:%S")
+                    if row[3] else "--"
+                ),
+                "DaXuLy": False,
+            })
+        return result
+    except Exception as e:
+        print(f"[services] Loi lay canh bao: {e}")
+        return []
