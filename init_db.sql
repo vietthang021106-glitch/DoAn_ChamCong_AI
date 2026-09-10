@@ -9,15 +9,14 @@
 -- KHÔNG DELETE dữ liệu, KHÔNG thay đổi dữ liệu cũ.
 --
 -- Thứ tự tạo tuân theo phụ thuộc FK:
---   VaiTro → TaiKhoan
---   NhanVien → TaiKhoan, VaiTro
---   ThietBi
---   CaLamViec → PhanCaNhanVien
---   NhanVien  → PhanCaNhanVien
+--   VaiTro → NhanVien
+--   NhanVien → TaiKhoan, LichSuSucKhoe, LichSuTrangThai, CanhBao,
+--              ChamCong, PhanCaNhanVien
+--   ThietBi → ThongSoMoiTruong, CanhBao, ChamCong
+--   CaLamViec → PhanCaNhanVien, ChamCong
 --   DanhMucBieuHien → LichSuTrangThai
---   LoaiCanhBao     → CanhBao
---   ChamCong        → CanhBao (MaTT)
---   NhanVien        → LichSuSucKhoe, ThongSoMoiTruong, CanhBao, ChamCong
+--   LoaiCanhBao → CanhBao
+--   LichSuTrangThai → CanhBao (MaTT)
 -- ==========================================================
 
 USE DoAn_ChamCong_AI;
@@ -32,8 +31,8 @@ IF NOT EXISTS (
 )
 BEGIN
     CREATE TABLE VaiTro (
-        MaVT    INT            IDENTITY(1,1) PRIMARY KEY,
-        TenVT   NVARCHAR(100)  NOT NULL
+        MaVaiTro  INT            IDENTITY(1,1) PRIMARY KEY,
+        TenVaiTro NVARCHAR(100)  NOT NULL
     );
     PRINT N'[OK] Tao bang VaiTro';
 END
@@ -50,17 +49,40 @@ IF NOT EXISTS (
 )
 BEGIN
     CREATE TABLE NhanVien (
-        MaNV    INT            IDENTITY(1,1) PRIMARY KEY,
-        HoTen   NVARCHAR(150)  NOT NULL,
-        Email   NVARCHAR(200)  NULL,
-        MaVT    INT            NULL,
+        MaNV          INT              IDENTITY(1,1) PRIMARY KEY,
+        HoTen         NVARCHAR(150)    NOT NULL,
+        AnhKhuonMat   NVARCHAR(MAX)    NULL,
+        MaVaiTro      INT              NULL,
         CONSTRAINT FK_NhanVien_VaiTro
-            FOREIGN KEY (MaVT) REFERENCES VaiTro(MaVT)
+            FOREIGN KEY (MaVaiTro) REFERENCES VaiTro(MaVaiTro)
     );
     PRINT N'[OK] Tao bang NhanVien';
 END
 ELSE
-    PRINT N'[SKIP] NhanVien da ton tai';
+BEGIN
+    -- Bổ sung AnhKhuonMat nếu chưa có (idempotent)
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'NhanVien' AND COLUMN_NAME = 'AnhKhuonMat'
+    )
+    BEGIN
+        ALTER TABLE NhanVien ADD AnhKhuonMat NVARCHAR(MAX) NULL;
+        PRINT N'[OK] Them cot AnhKhuonMat vao NhanVien';
+    END
+    -- Bổ sung MaVaiTro nếu chưa có
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'NhanVien' AND COLUMN_NAME = 'MaVaiTro'
+    )
+    BEGIN
+        ALTER TABLE NhanVien ADD MaVaiTro INT NULL;
+        ALTER TABLE NhanVien ADD CONSTRAINT FK_NhanVien_VaiTro
+            FOREIGN KEY (MaVaiTro) REFERENCES VaiTro(MaVaiTro);
+        PRINT N'[OK] Them cot MaVaiTro vao NhanVien';
+    END
+    ELSE
+        PRINT N'[SKIP] NhanVien da ton tai';
+END
 GO
 
 -- ==========================================================
@@ -72,10 +94,10 @@ IF NOT EXISTS (
 )
 BEGIN
     CREATE TABLE TaiKhoan (
-        MaTK        INT            IDENTITY(1,1) PRIMARY KEY,
-        MaNV        INT            NOT NULL,
-        TenDangNhap NVARCHAR(100)  NOT NULL UNIQUE,
-        MatKhau     NVARCHAR(255)  NOT NULL,
+        MaTK        INT           IDENTITY(1,1) PRIMARY KEY,
+        MaNV        INT           NOT NULL,
+        TenDangNhap VARCHAR(50)   NOT NULL UNIQUE,
+        MatKhau     VARCHAR(255)  NOT NULL,
         CONSTRAINT FK_TaiKhoan_NhanVien
             FOREIGN KEY (MaNV) REFERENCES NhanVien(MaNV)
     );
@@ -94,115 +116,44 @@ IF NOT EXISTS (
 )
 BEGIN
     CREATE TABLE ThietBi (
-        MaTB    INT            IDENTITY(1,1) PRIMARY KEY,
-        TenTB   NVARCHAR(200)  NULL,
-        ViTri   NVARCHAR(200)  NULL
+        MaTB      INT            IDENTITY(1,1) PRIMARY KEY,
+        LoaiTB    NVARCHAR(200)  NULL,
+        TrangThai NVARCHAR(100)  NULL
     );
-    -- Thêm thiết bị mặc định MaTB=1 nếu chưa có
+    -- Thiết bị mặc định MaTB=1
     SET IDENTITY_INSERT ThietBi ON;
-    INSERT INTO ThietBi (MaTB, TenTB, ViTri)
-    VALUES (1, N'Camera chinh', N'Cua ra vao');
+    INSERT INTO ThietBi (MaTB, LoaiTB, TrangThai)
+    VALUES (1, N'Camera', N'Hoat dong');
     SET IDENTITY_INSERT ThietBi OFF;
     PRINT N'[OK] Tao bang ThietBi + du lieu mac dinh';
 END
 ELSE
-    PRINT N'[SKIP] ThietBi da ton tai';
-GO
-
--- ==========================================================
--- 5. CaLamViec
--- ==========================================================
-IF NOT EXISTS (
-    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
-    WHERE TABLE_NAME = 'CaLamViec'
-)
 BEGIN
-    CREATE TABLE CaLamViec (
-        MaCa        INT            IDENTITY(1,1) PRIMARY KEY,
-        TenCa       NVARCHAR(100)  NOT NULL,
-        GioBatDau   TIME           NOT NULL,
-        GioKetThuc  TIME           NOT NULL
-    );
-    -- Ca hành chính mặc định
-    INSERT INTO CaLamViec (TenCa, GioBatDau, GioKetThuc)
-    VALUES (N'Ca hanh chinh', '08:00:00', '17:00:00');
-    PRINT N'[OK] Tao bang CaLamViec + Ca hanh chinh';
-END
-ELSE
-    PRINT N'[SKIP] CaLamViec da ton tai';
-GO
-
--- ==========================================================
--- 6. PhanCaNhanVien
--- ==========================================================
-IF NOT EXISTS (
-    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
-    WHERE TABLE_NAME = 'PhanCaNhanVien'
-)
-BEGIN
-    CREATE TABLE PhanCaNhanVien (
-        MaPhanCa    INT  IDENTITY(1,1) PRIMARY KEY,
-        MaNV        INT  NOT NULL,
-        MaCa        INT  NOT NULL,
-        NgayLamViec DATE NOT NULL,
-        CONSTRAINT FK_PhanCa_NhanVien
-            FOREIGN KEY (MaNV) REFERENCES NhanVien(MaNV),
-        CONSTRAINT FK_PhanCa_CaLamViec
-            FOREIGN KEY (MaCa) REFERENCES CaLamViec(MaCa),
-        CONSTRAINT UQ_PhanCa_NV_Ngay
-            UNIQUE (MaNV, NgayLamViec)   -- mỗi NV chỉ 1 ca/ngày
-    );
-    PRINT N'[OK] Tao bang PhanCaNhanVien';
-END
-ELSE
-    PRINT N'[SKIP] PhanCaNhanVien da ton tai';
-GO
-
--- ==========================================================
--- 7. ChamCong
---    Nếu bảng đã tồn tại, chỉ bổ sung cột MaCa nếu thiếu.
--- ==========================================================
-IF NOT EXISTS (
-    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
-    WHERE TABLE_NAME = 'ChamCong'
-)
-BEGIN
-    CREATE TABLE ChamCong (
-        MaCC    INT       IDENTITY(1,1) PRIMARY KEY,
-        MaNV    INT       NOT NULL,
-        GioVao  DATETIME  NULL,
-        GioRa   DATETIME  NULL,
-        MaTB    INT       NULL,
-        MaCa    INT       NULL,
-        CONSTRAINT FK_ChamCong_NhanVien
-            FOREIGN KEY (MaNV) REFERENCES NhanVien(MaNV),
-        CONSTRAINT FK_ChamCong_ThietBi
-            FOREIGN KEY (MaTB) REFERENCES ThietBi(MaTB),
-        CONSTRAINT FK_ChamCong_CaLamViec
-            FOREIGN KEY (MaCa) REFERENCES CaLamViec(MaCa)
-    );
-    PRINT N'[OK] Tao bang ChamCong (voi MaCa)';
-END
-ELSE
-BEGIN
-    -- Bổ sung cột MaCa nếu chưa có (idempotent)
+    -- Bổ sung LoaiTB nếu chưa có
     IF NOT EXISTS (
         SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_NAME = 'ChamCong' AND COLUMN_NAME = 'MaCa'
+        WHERE TABLE_NAME = 'ThietBi' AND COLUMN_NAME = 'LoaiTB'
     )
     BEGIN
-        ALTER TABLE ChamCong ADD MaCa INT NULL;
-        ALTER TABLE ChamCong ADD CONSTRAINT FK_ChamCong_CaLamViec
-            FOREIGN KEY (MaCa) REFERENCES CaLamViec(MaCa);
-        PRINT N'[OK] Them cot MaCa vao ChamCong';
+        ALTER TABLE ThietBi ADD LoaiTB NVARCHAR(200) NULL;
+        PRINT N'[OK] Them cot LoaiTB vao ThietBi';
+    END
+    -- Bổ sung TrangThai nếu chưa có
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'ThietBi' AND COLUMN_NAME = 'TrangThai'
+    )
+    BEGIN
+        ALTER TABLE ThietBi ADD TrangThai NVARCHAR(100) NULL;
+        PRINT N'[OK] Them cot TrangThai vao ThietBi';
     END
     ELSE
-        PRINT N'[SKIP] ChamCong.MaCa da ton tai';
+        PRINT N'[SKIP] ThietBi da ton tai';
 END
 GO
 
 -- ==========================================================
--- 8. LichSuSucKhoe
+-- 5. LichSuSucKhoe
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -213,7 +164,7 @@ BEGIN
         MaSK     INT      IDENTITY(1,1) PRIMARY KEY,
         MaNV     INT      NOT NULL,
         NhipTim  INT      NULL,
-        SpO2     INT      NULL,
+        SpO2     FLOAT    NULL,
         ThoiGian DATETIME DEFAULT GETDATE(),
         CONSTRAINT FK_SucKhoe_NhanVien
             FOREIGN KEY (MaNV) REFERENCES NhanVien(MaNV)
@@ -225,7 +176,7 @@ ELSE
 GO
 
 -- ==========================================================
--- 9. ThongSoMoiTruong
+-- 6. ThongSoMoiTruong
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -248,7 +199,7 @@ ELSE
 GO
 
 -- ==========================================================
--- 10. DanhMucBieuHien  (danh mục trạng thái AI)
+-- 7. DanhMucBieuHien
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -257,25 +208,36 @@ IF NOT EXISTS (
 BEGIN
     CREATE TABLE DanhMucBieuHien (
         MaBieuHien  INT            IDENTITY(1,1) PRIMARY KEY,
-        TenBieuHien NVARCHAR(100)  NOT NULL
+        TenBieuHien NVARCHAR(100)  NOT NULL,
+        MoTa        NVARCHAR(255)  NULL
     );
     -- Dữ liệu mặc định khớp với mapping trong database.py
-    INSERT INTO DanhMucBieuHien (TenBieuHien)
+    INSERT INTO DanhMucBieuHien (TenBieuHien, MoTa)
     VALUES
-        (N'binh_thuong'),   -- 1
-        (N'buon_ngu'),      -- 2
-        (N'guc_dau'),       -- 3
-        (N'meo_mieng');     -- 4
+        (N'binh_thuong', N'Nguoi dung o trang thai binh thuong'),  -- 1
+        (N'buon_ngu',    N'Phat hien bieu hien buon ngu'),         -- 2
+        (N'guc_dau',     N'Phat hien dau guc xuong'),              -- 3
+        (N'meo_mieng',   N'Phat hien bieu hien meo mieng');        -- 4
     PRINT N'[OK] Tao bang DanhMucBieuHien + du lieu mac dinh';
 END
 ELSE
-    PRINT N'[SKIP] DanhMucBieuHien da ton tai';
+BEGIN
+    -- Bổ sung MoTa nếu chưa có
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'DanhMucBieuHien' AND COLUMN_NAME = 'MoTa'
+    )
+    BEGIN
+        ALTER TABLE DanhMucBieuHien ADD MoTa NVARCHAR(255) NULL;
+        PRINT N'[OK] Them cot MoTa vao DanhMucBieuHien';
+    END
+    ELSE
+        PRINT N'[SKIP] DanhMucBieuHien da ton tai';
+END
 GO
 
 -- ==========================================================
--- 11. LichSuTrangThai  (log trạng thái AI mỗi 5 giây)
---     Schema THẬT: MaTT, MaNV, MaBieuHien, ThoiGian
---     KHÔNG có: TrangThai (text), GiaTri, MoTa, DaXuLy
+-- 8. LichSuTrangThai
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -292,14 +254,14 @@ BEGIN
         CONSTRAINT FK_TrangThai_BieuHien
             FOREIGN KEY (MaBieuHien) REFERENCES DanhMucBieuHien(MaBieuHien)
     );
-    PRINT N'[OK] Tao bang LichSuTrangThai (MaTT/MaNV/MaBieuHien/ThoiGian)';
+    PRINT N'[OK] Tao bang LichSuTrangThai';
 END
 ELSE
     PRINT N'[SKIP] LichSuTrangThai da ton tai';
 GO
 
 -- ==========================================================
--- 12. LoaiCanhBao  (danh mục loại cảnh báo)
+-- 9. LoaiCanhBao
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -322,10 +284,7 @@ ELSE
 GO
 
 -- ==========================================================
--- 13. CanhBao  (sự kiện cảnh báo được ghi nhận)
---     Schema THẬT: MaCB, MaNV, MaLoaiCB, NoiDung,
---                  ThoiGian, MaTT, MaTB
---     KHÔNG có: GiaTri (float riêng), MoTa (text riêng), DaXuLy
+-- 10. CanhBao
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -336,10 +295,10 @@ BEGIN
         MaCB      INT            IDENTITY(1,1) PRIMARY KEY,
         MaNV      INT            NOT NULL,
         MaLoaiCB  INT            NOT NULL DEFAULT 1,
-        NoiDung   NVARCHAR(500)  NULL,
+        NoiDung   NVARCHAR(255)  NULL,
         ThoiGian  DATETIME       DEFAULT GETDATE(),
-        MaTT      INT            NULL,   -- FK -> LichSuTrangThai
-        MaTB      INT            NULL,   -- FK -> ThietBi
+        MaTT      INT            NULL,
+        MaTB      INT            NULL,
         CONSTRAINT FK_CanhBao_NhanVien
             FOREIGN KEY (MaNV) REFERENCES NhanVien(MaNV),
         CONSTRAINT FK_CanhBao_LoaiCanhBao
@@ -349,10 +308,100 @@ BEGIN
         CONSTRAINT FK_CanhBao_ThietBi
             FOREIGN KEY (MaTB) REFERENCES ThietBi(MaTB)
     );
-    PRINT N'[OK] Tao bang CanhBao (MaCB/MaNV/MaLoaiCB/NoiDung/ThoiGian/MaTT/MaTB)';
+    PRINT N'[OK] Tao bang CanhBao';
 END
 ELSE
     PRINT N'[SKIP] CanhBao da ton tai';
+GO
+
+-- ==========================================================
+-- 11. CaLamViec
+-- ==========================================================
+IF NOT EXISTS (
+    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_NAME = 'CaLamViec'
+)
+BEGIN
+    CREATE TABLE CaLamViec (
+        MaCa       INT            IDENTITY(1,1) PRIMARY KEY,
+        TenCa      NVARCHAR(100)  NOT NULL,
+        GioBatDau  TIME           NOT NULL,
+        GioKetThuc TIME           NOT NULL
+    );
+    INSERT INTO CaLamViec (TenCa, GioBatDau, GioKetThuc)
+    VALUES (N'Ca hanh chinh', '08:00:00', '17:00:00');
+    PRINT N'[OK] Tao bang CaLamViec + Ca hanh chinh';
+END
+ELSE
+    PRINT N'[SKIP] CaLamViec da ton tai';
+GO
+
+-- ==========================================================
+-- 12. PhanCaNhanVien
+-- ==========================================================
+IF NOT EXISTS (
+    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_NAME = 'PhanCaNhanVien'
+)
+BEGIN
+    CREATE TABLE PhanCaNhanVien (
+        MaPhanCa    INT  IDENTITY(1,1) PRIMARY KEY,
+        MaNV        INT  NOT NULL,
+        MaCa        INT  NOT NULL,
+        NgayLamViec DATE NOT NULL,
+        CONSTRAINT FK_PhanCa_NhanVien
+            FOREIGN KEY (MaNV) REFERENCES NhanVien(MaNV),
+        CONSTRAINT FK_PhanCa_CaLamViec
+            FOREIGN KEY (MaCa) REFERENCES CaLamViec(MaCa),
+        CONSTRAINT UQ_PhanCa_NV_Ngay
+            UNIQUE (MaNV, NgayLamViec)
+    );
+    PRINT N'[OK] Tao bang PhanCaNhanViec';
+END
+ELSE
+    PRINT N'[SKIP] PhanCaNhanVien da ton tai';
+GO
+
+-- ==========================================================
+-- 13. ChamCong
+-- ==========================================================
+IF NOT EXISTS (
+    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+    WHERE TABLE_NAME = 'ChamCong'
+)
+BEGIN
+    CREATE TABLE ChamCong (
+        MaCC    INT       IDENTITY(1,1) PRIMARY KEY,
+        MaNV    INT       NOT NULL,
+        GioVao  DATETIME  NULL,
+        GioRa   DATETIME  NULL,
+        MaTB    INT       NULL,
+        MaCa    INT       NULL,
+        CONSTRAINT FK_ChamCong_NhanVien
+            FOREIGN KEY (MaNV) REFERENCES NhanVien(MaNV),
+        CONSTRAINT FK_ChamCong_ThietBi
+            FOREIGN KEY (MaTB) REFERENCES ThietBi(MaTB),
+        CONSTRAINT FK_ChamCong_CaLamViec
+            FOREIGN KEY (MaCa) REFERENCES CaLamViec(MaCa)
+    );
+    PRINT N'[OK] Tao bang ChamCong';
+END
+ELSE
+BEGIN
+    -- Bổ sung MaCa nếu chưa có (idempotent)
+    IF NOT EXISTS (
+        SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS
+        WHERE TABLE_NAME = 'ChamCong' AND COLUMN_NAME = 'MaCa'
+    )
+    BEGIN
+        ALTER TABLE ChamCong ADD MaCa INT NULL;
+        ALTER TABLE ChamCong ADD CONSTRAINT FK_ChamCong_CaLamViec
+            FOREIGN KEY (MaCa) REFERENCES CaLamViec(MaCa);
+        PRINT N'[OK] Them cot MaCa vao ChamCong';
+    END
+    ELSE
+        PRINT N'[SKIP] ChamCong da ton tai';
+END
 GO
 
 -- ==========================================================
