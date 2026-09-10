@@ -11,7 +11,7 @@ for i in range(3):
     r = requests.post(base + '/api/chamcong', json={'MaNV': 1, 'MaTB': 1}, timeout=5)
     j = r.json()
     print(f'  [{i+1}] action={j.get("action")} status={j.get("status")}')
-    print(f'       msg={j.get("message")}')
+    print(f'       msg={j.get("message")}')  
 
 print()
 print('=== Dashboard Summary ===')

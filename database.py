@@ -143,7 +143,7 @@ def assign_shift(ma_nv, ma_ca, ngay_lam_viec):
 
         if row:
             cursor.execute("""
-                UPDATE PhanCaNhanViec
+                UPDATE PhanCaNhanVien
                 SET MaCa = ?
                 WHERE MaNV = ? AND NgayLamViec = ?
             """, (ma_ca, ma_nv, ngay_lam_viec))
@@ -260,9 +260,11 @@ def get_today_attendance():
     """
     Toàn bộ nhân viên kèm tình trạng chấm công hôm nay.
 
-    JOIN với PhanCaNhanVien và CaLamViec để lấy ca + giờ chuẩn.
-    Nhân viên chưa phân ca hoặc chưa chấm công vẫn xuất hiện
-    thông qua LEFT JOIN.
+    Dùng OUTER APPLY + SELECT TOP 1 để đảm bảo mỗi nhân viên
+    CHỈ xuất hiện đúng 1 dòng, kể cả khi ChamCong có nhiều
+    bản ghi trong ngày (tránh duplicate nhân vật gây sai KPI).
+
+    Ưu tiên bản ghi có GioVao sớm nhất trong ngày.
 
     Trả về:
         MaNV, HoTen,
@@ -282,8 +284,8 @@ def get_today_attendance():
                 CLV.GioBatDau,
                 CLV.GioKetThuc,
 
-                CC.GioVao,
-                CC.GioRa
+                CC_TODAY.GioVao,
+                CC_TODAY.GioRa
 
             FROM NhanVien NV
 
@@ -295,10 +297,17 @@ def get_today_attendance():
             LEFT JOIN CaLamViec CLV
                 ON PCN.MaCa = CLV.MaCa
 
-            -- Bản ghi chấm công hôm nay
-            LEFT JOIN ChamCong CC
-                ON  NV.MaNV = CC.MaNV
-                AND CAST(CC.GioVao AS DATE) = CAST(GETDATE() AS DATE)
+            -- Lấy đúng 1 bản ghi ChamCong hôm nay (GioVao sớm nhất)
+            OUTER APPLY (
+                SELECT TOP 1
+                    CC.GioVao,
+                    CC.GioRa
+                FROM ChamCong CC
+                WHERE
+                    CC.MaNV = NV.MaNV
+                    AND CAST(CC.GioVao AS DATE) = CAST(GETDATE() AS DATE)
+                ORDER BY CC.GioVao ASC
+            ) AS CC_TODAY
 
             ORDER BY NV.MaNV
         """)
