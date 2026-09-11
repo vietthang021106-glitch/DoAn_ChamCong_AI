@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Đăng nhập — Hệ thống chấm công AI & Giám sát thông minh">
+    <title>Đăng nhập — Hệ thống Chấm công AI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base:       #070b12;
+            --bg-surface:    #0c1120;
+            --bg-card:       #111827;
+            --bg-card-hover: #161f30;
+            --border:        #1e2d45;
+            --border-glow:   rgba(59,130,246,0.4);
+            --accent-blue:   #3b82f6;
+            --accent-cyan:   #06b6d4;
+            --accent-green:  #10b981;
+            --accent-red:    #ef4444;
+            --grad-primary:  linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
+            --text-primary:  #f1f5f9;
+            --text-secondary:#94a3b8;
+            --text-muted:    #64748b;
+            --radius-md:     12px;
+            --radius-lg:     16px;
+            --shadow-card:   0 12px 40px rgba(0, 0, 0, 0.6);
+            --shadow-glow:   0 0 30px rgba(59, 130, 246, 0.2);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+            background-image: 
+                radial-gradient(ellipse 80% 60% at 50% -20%, rgba(59, 130, 246, 0.15), transparent),
+                radial-gradient(ellipse 60% 40% at 80% 100%, rgba(6, 182, 212, 0.1), transparent);
+        }
+
+        .login-container {
+            width: 100%;
+            max-width: 440px;
+        }
+
+        .brand-header {
+            text-align: center;
+            margin-bottom: 28px;
+        }
+
+        .brand-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 58px;
+            height: 58px;
+            background: var(--grad-primary);
+            border-radius: 16px;
+            font-size: 28px;
+            box-shadow: 0 8px 24px rgba(59, 130, 246, 0.35);
+            margin-bottom: 16px;
+        }
+
+        .brand-title {
+            font-size: 1.5rem;
+            font-weight: 800;
+            letter-spacing: -0.5px;
+            background: var(--grad-primary);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .brand-subtitle {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: 6px;
+        }
+
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 32px 28px;
+            box-shadow: var(--shadow-card);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 3px;
+            background: var(--grad-primary);
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-label {
+            display: block;
+            font-size: 0.8rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .input-wrapper {
+            position: relative;
+        }
+
+        .input-icon {
+            position: absolute;
+            left: 14px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 16px;
+            color: var(--text-muted);
+            pointer-events: none;
+        }
+
+        .form-input {
+            width: 100%;
+            padding: 12px 14px 12px 42px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            color: var(--text-primary);
+            font-size: 0.95rem;
+            font-family: inherit;
+            outline: none;
+            transition: all 0.2s ease;
+        }
+
+        .form-input:focus {
+            border-color: var(--accent-blue);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+            background: #0f172a;
+        }
+
+        .form-input::placeholder {
+            color: var(--text-muted);
+        }
+
+        .btn-submit {
+            width: 100%;
+            padding: 13px;
+            background: var(--grad-primary);
+            color: #ffffff;
+            border: none;
+            border-radius: var(--radius-md);
+            font-size: 0.95rem;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            box-shadow: 0 4px 16px rgba(59, 130, 246, 0.3);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            margin-top: 24px;
+        }
+
+        .btn-submit:hover {
+            opacity: 0.95;
+            transform: translateY(-1px);
+            box-shadow: 0 6px 20px rgba(59, 130, 246, 0.45);
+        }
+
+        .btn-submit:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .alert-box {
+            padding: 12px 14px;
+            border-radius: var(--radius-md);
+            font-size: 0.85rem;
+            margin-bottom: 20px;
+            display: none;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .alert-error {
+            background: rgba(239, 68, 68, 0.15);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #fca5a5;
+        }
+
+        .alert-success {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            color: #86efac;
+        }
+
+        .quick-accounts {
+            margin-top: 24px;
+            padding-top: 20px;
+            border-top: 1px solid var(--border);
+        }
+
+        .quick-accounts-title {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 12px;
+            text-align: center;
+        }
+
+        .quick-chips {
+            display: flex;
+            gap: 8px;
+        }
+
+        .quick-chip {
+            flex: 1;
+            padding: 9px 10px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+            cursor: pointer;
+            text-align: center;
+            transition: all 0.2s ease;
+        }
+
+        .quick-chip:hover {
+            border-color: var(--accent-blue);
+            background: var(--bg-card-hover);
+            color: var(--text-primary);
+        }
+
+        .quick-chip strong {
+            color: var(--accent-cyan);
+            display: block;
+        }
+
+        .spinner {
+            width: 18px;
+            height: 18px;
+            border: 2px solid rgba(255,255,255,0.3);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            display: none;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .footer-note {
+            text-align: center;
+            margin-top: 20px;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+    </style>
+</head>
+<body>
+
+<div class="login-container">
+    <div class="brand-header">
+        <div class="brand-icon">⏱️</div>
+        <h1 class="brand-title">Hệ thống Chấm công AI</h1>
+        <p class="brand-subtitle">Attendance Management &amp; AI Safety Monitor</p>
+    </div>
+
+    <div class="card">
+        <div id="alertBox" class="alert-box alert-error">
+            <span id="alertIcon">⚠️</span>
+            <span id="alertMessage">Tên đăng nhập hoặc mật khẩu không đúng</span>
+        </div>
+
+        <form id="loginForm" onsubmit="handleLogin(event)">
+            <div class="form-group">
+                <label class="form-label" for="username">Tên đăng nhập</label>
+                <div class="input-wrapper">
+                    <span class="input-icon">👤</span>
+                    <input 
+                        type="text" 
+                        id="username" 
+                        name="username" 
+                        class="form-input" 
+                        placeholder="Nhập tên đăng nhập (ví dụ: admin)" 
+                        required 
+                        autocomplete="username"
+                        autofocus
+                    >
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="password">Mật khẩu</label>
+                <div class="input-wrapper">
+                    <span class="input-icon">🔒</span>
+                    <input 
+                        type="password" 
+                        id="password" 
+                        name="password" 
+                        class="form-input" 
+                        placeholder="Nhập mật khẩu" 
+                        required 
+                        autocomplete="current-password"
+                    >
+                </div>
+            </div>
+
+            <button type="submit" id="btnSubmit" class="btn-submit">
+                <span class="spinner" id="spinner"></span>
+                <span id="btnText">Đăng nhập</span>
+            </button>
+        </form>
+
+        <div class="quick-accounts">
+            <div class="quick-accounts-title">Tài khoản mẫu thử nghiệm</div>
+            <div class="quick-chips">
+                <div class="quick-chip" onclick="fillAccount('admin', '123')">
+                    <strong>Admin</strong>
+                    admin / 123
+                </div>
+                <div class="quick-chip" onclick="fillAccount('nv2', '123456')">
+                    <strong>Nhân viên</strong>
+                    nv2 / 123456
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="footer-note">
+        Đồ Án Tốt Nghiệp AI Chấm Công &amp; Cảnh Báo An Toàn Lao Động · v2.0
+    </div>
+</div>
+
+<script>
+function showAlert(msg, isSuccess = false) {
+    const box = document.getElementById('alertBox');
+    const text = document.getElementById('alertMessage');
+    const icon = document.getElementById('alertIcon');
+    box.className = 'alert-box ' + (isSuccess ? 'alert-success' : 'alert-error');
+    icon.textContent = isSuccess ? '✅' : '⚠️';
+    text.textContent = msg;
+    box.style.display = 'flex';
+}
+
+function hideAlert() {
+    document.getElementById('alertBox').style.display = 'none';
+}
+
+function fillAccount(u, p) {
+    document.getElementById('username').value = u;
+    document.getElementById('password').value = p;
+    hideAlert();
+}
+
+async function handleLogin(e) {
+    e.preventDefault();
+    hideAlert();
+
+    const u = document.getElementById('username').value.trim();
+    const p = document.getElementById('password').value;
+    const btn = document.getElementById('btnSubmit');
+    const spinner = document.getElementById('spinner');
+    const btnText = document.getElementById('btnText');
+
+    if (!u || !p) {
+        showAlert('Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu');
+        return;
+    }
+
+    btn.disabled = true;
+    spinner.style.display = 'inline-block';
+    btnText.textContent = 'Đang xác thực...';
+
+    try {
+        const res = await fetch('/api/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ TenDangNhap: u, MatKhau: p })
+        });
+
+        const data = await res.json();
+
+        if (res.ok && data.status === 'success') {
+            showAlert('Đăng nhập thành công! Đang chuyển hướng...', true);
+            const redirectUrl = data.redirect || (data.user?.MaVaiTro === 1 ? '/' : '/me');
+            setTimeout(() => {
+                window.location.href = redirectUrl;
+            }, 500);
+        } else {
+            showAlert(data.message || 'Tên đăng nhập hoặc mật khẩu không chính xác');
+            btn.disabled = false;
+            spinner.style.display = 'none';
+            btnText.textContent = 'Đăng nhập';
+        }
+    } catch (err) {
+        showAlert('Không thể kết nối đến máy chủ. Vui lòng kiểm tra lại!');
+        btn.disabled = false;
+        spinner.style.display = 'none';
+        btnText.textContent = 'Đăng nhập';
+    }
+}
+</script>
+
+</body>
+</html>

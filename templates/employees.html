@@ -1,0 +1,910 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Quản lý nhân viên — Hệ thống chấm công AI">
+    <title>AI Chấm Công — Quản lý nhân viên</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+    /* ====================================================
+       Design Tokens — giống index.html
+    ==================================================== */
+    :root {
+        --bg-base:       #070b12;
+        --bg-surface:    #0c1120;
+        --bg-card:       #111827;
+        --bg-card-hover: #161f30;
+        --bg-sidebar:    #090e1d;
+
+        --border:        #1e2d45;
+        --border-subtle: #162035;
+        --border-glow:   rgba(99,179,237,0.35);
+
+        --accent-blue:   #3b82f6;
+        --accent-cyan:   #06b6d4;
+        --accent-green:  #10b981;
+        --accent-red:    #ef4444;
+        --accent-orange: #f59e0b;
+        --accent-purple: #8b5cf6;
+        --accent-teal:   #14b8a6;
+        --accent-rose:   #f43f5e;
+
+        --grad-primary: linear-gradient(135deg,#3b82f6 0%,#06b6d4 100%);
+        --grad-green:   linear-gradient(135deg,#10b981 0%,#06b6d4 100%);
+        --grad-sidebar: linear-gradient(180deg,#090e1d 0%,#07101e 100%);
+        --grad-purple:  linear-gradient(135deg,#8b5cf6 0%,#ec4899 100%);
+
+        --text-primary:   #f1f5f9;
+        --text-secondary: #94a3b8;
+        --text-muted:     #475569;
+
+        --radius-sm:  8px;
+        --radius-md:  12px;
+        --radius-lg:  16px;
+
+        --sidebar-w:  240px;
+        --header-h:   64px;
+
+        --shadow-sm:  0 2px 8px rgba(0,0,0,.4);
+        --shadow-md:  0 4px 20px rgba(0,0,0,.5);
+        --shadow-glow:0 0 20px rgba(59,130,246,.15);
+
+        --ease:       all .2s cubic-bezier(.4,0,.2,1);
+        --ease-slow:  all .35s cubic-bezier(.4,0,.2,1);
+    }
+
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
+    html{scroll-behavior:smooth;}
+    body{font-family:'Inter',system-ui,sans-serif;background:var(--bg-base);color:var(--text-primary);min-height:100vh;line-height:1.6;-webkit-font-smoothing:antialiased;}
+    a{text-decoration:none;color:inherit;}
+    button{cursor:pointer;border:none;background:none;font-family:inherit;}
+
+    ::-webkit-scrollbar{width:5px;height:5px;}
+    ::-webkit-scrollbar-track{background:transparent;}
+    ::-webkit-scrollbar-thumb{background:#1e3a5f;border-radius:10px;}
+    ::-webkit-scrollbar-thumb:hover{background:var(--accent-blue);}
+
+    /* ====================================================
+       Layout
+    ==================================================== */
+    .app-shell{
+        display:grid;
+        grid-template-columns:var(--sidebar-w) 1fr;
+        grid-template-rows:var(--header-h) 1fr;
+        grid-template-areas:"sidebar header" "sidebar main";
+        min-height:100vh;
+    }
+
+    /* ====================================================
+       SIDEBAR
+    ==================================================== */
+    .sidebar{
+        grid-area:sidebar;
+        background:var(--grad-sidebar);
+        border-right:1px solid var(--border-subtle);
+        display:flex;flex-direction:column;
+        position:fixed;top:0;left:0;
+        width:var(--sidebar-w);height:100vh;
+        z-index:200;overflow:hidden;
+    }
+    .sidebar::after{
+        content:'';position:absolute;top:0;right:0;width:1px;height:100%;
+        background:linear-gradient(180deg,transparent 0%,rgba(59,130,246,.4) 30%,rgba(6,182,212,.4) 70%,transparent 100%);
+    }
+    .sidebar-brand{
+        display:flex;align-items:center;gap:10px;
+        padding:0 18px;height:var(--header-h);
+        border-bottom:1px solid var(--border-subtle);flex-shrink:0;
+    }
+    .brand-icon{
+        width:36px;height:36px;background:var(--grad-primary);border-radius:var(--radius-sm);
+        display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;
+        box-shadow:0 0 16px rgba(59,130,246,.4);
+    }
+    .brand-text{display:flex;flex-direction:column;line-height:1.2;}
+    .brand-name{font-size:.82rem;font-weight:700;color:var(--text-primary);letter-spacing:.2px;}
+    .brand-sub{font-size:.62rem;color:var(--text-muted);letter-spacing:.5px;text-transform:uppercase;}
+
+    .sidebar-nav{flex:1;padding:12px 10px;display:flex;flex-direction:column;gap:2px;overflow-y:auto;}
+    .nav-label-group{font-size:.6rem;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);padding:10px 10px 5px;}
+
+    .nav-item{
+        display:flex;align-items:center;gap:10px;padding:9px 12px;
+        border-radius:var(--radius-sm);font-size:.845rem;font-weight:500;
+        color:var(--text-secondary);transition:var(--ease);position:relative;cursor:pointer;
+    }
+    .nav-item:hover{background:rgba(59,130,246,.08);color:var(--text-primary);}
+    .nav-item.active{background:rgba(59,130,246,.15);color:var(--accent-blue);}
+    .nav-item.active::before{
+        content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
+        width:3px;height:60%;background:var(--grad-primary);border-radius:0 3px 3px 0;
+    }
+    .nav-icon{
+        width:32px;height:32px;border-radius:6px;display:flex;align-items:center;
+        justify-content:center;font-size:14px;flex-shrink:0;
+        background:rgba(255,255,255,.04);transition:var(--ease);
+    }
+    .nav-item.active .nav-icon{background:rgba(59,130,246,.2);}
+    .nav-item:hover .nav-icon{background:rgba(59,130,246,.12);}
+
+    .sidebar-footer{padding:12px 10px;border-top:1px solid var(--border-subtle);flex-shrink:0;}
+    .sidebar-version{font-size:.65rem;color:var(--text-muted);text-align:center;}
+
+    /* ====================================================
+       HEADER
+    ==================================================== */
+    .header{
+        grid-area:header;
+        background:rgba(12,17,32,.95);backdrop-filter:blur(12px);
+        border-bottom:1px solid var(--border);
+        display:flex;align-items:center;padding:0 24px;gap:14px;
+        position:sticky;top:0;z-index:100;
+        margin-left:var(--sidebar-w);
+    }
+    .header-title{display:flex;flex-direction:column;}
+    .header-title-main{
+        font-size:.95rem;font-weight:700;
+        background:var(--grad-primary);-webkit-background-clip:text;
+        -webkit-text-fill-color:transparent;background-clip:text;line-height:1.2;
+    }
+    .header-title-sub{font-size:.68rem;color:var(--text-muted);}
+    .header-right{margin-left:auto;display:flex;align-items:center;gap:12px;}
+    .header-datetime{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;}
+    .datetime-time{font-size:.88rem;font-weight:700;color:var(--text-primary);font-variant-numeric:tabular-nums;}
+    .datetime-date{font-size:.65rem;color:var(--text-muted);}
+    .user-avatar{
+        width:34px;height:34px;border-radius:50%;background:var(--grad-purple);
+        display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;
+        color:#fff;border:2px solid rgba(139,92,246,.4);cursor:pointer;transition:var(--ease);flex-shrink:0;
+    }
+    .user-avatar:hover{transform:scale(1.08);box-shadow:0 0 14px rgba(139,92,246,.4);}
+
+    /* ====================================================
+       MAIN
+    ==================================================== */
+    .main{
+        grid-area:main;margin-left:var(--sidebar-w);
+        padding:22px 24px;display:flex;flex-direction:column;gap:20px;min-width:0;
+    }
+
+    /* ====================================================
+       PAGE HEADING
+    ==================================================== */
+    .page-heading{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:12px;}
+    .page-heading-left{}
+    .page-heading-title{font-size:1.25rem;font-weight:800;letter-spacing:-.3px;}
+    .page-heading-sub{font-size:.78rem;color:var(--text-muted);margin-top:2px;}
+
+    /* ====================================================
+       BUTTON
+    ==================================================== */
+    .btn{
+        display:inline-flex;align-items:center;gap:7px;
+        padding:9px 18px;border-radius:var(--radius-sm);
+        font-size:.85rem;font-weight:600;transition:var(--ease);
+        cursor:pointer;border:none;
+    }
+    .btn-primary{
+        background:var(--grad-primary);color:#fff;
+        box-shadow:0 0 16px rgba(59,130,246,.3);
+    }
+    .btn-primary:hover{opacity:.88;transform:translateY(-1px);box-shadow:0 0 24px rgba(59,130,246,.45);}
+    .btn-primary:disabled{opacity:.5;cursor:not-allowed;transform:none;}
+    .btn-ghost{
+        background:rgba(255,255,255,.05);color:var(--text-secondary);
+        border:1px solid var(--border);
+    }
+    .btn-ghost:hover{background:rgba(255,255,255,.09);color:var(--text-primary);}
+    .btn-sm{padding:6px 13px;font-size:.78rem;}
+    .btn-edit{
+        background:rgba(59,130,246,.12);color:var(--accent-blue);
+        border:1px solid rgba(59,130,246,.25);
+    }
+    .btn-edit:hover{background:rgba(59,130,246,.22);border-color:rgba(59,130,246,.45);}
+
+    /* ====================================================
+       CARD & TABLE
+    ==================================================== */
+    .card{
+        background:var(--bg-card);border:1px solid var(--border);
+        border-radius:var(--radius-lg);overflow:hidden;
+    }
+    .card-hdr{
+        display:flex;align-items:center;justify-content:space-between;
+        padding:14px 18px;border-bottom:1px solid var(--border-subtle);
+    }
+    .card-title{display:flex;align-items:center;gap:9px;font-size:.92rem;font-weight:700;}
+    .card-icon{
+        width:30px;height:30px;border-radius:7px;
+        display:flex;align-items:center;justify-content:center;font-size:14px;
+    }
+    .card-icon.purple{background:rgba(139,92,246,.15);}
+    .card-badge{font-size:.7rem;color:var(--text-muted);background:rgba(255,255,255,.04);padding:3px 9px;border-radius:20px;border:1px solid var(--border);}
+
+    .table-scroll{overflow-x:auto;}
+    .data-table{width:100%;border-collapse:collapse;}
+    .data-table th{
+        padding:11px 14px;text-align:left;font-size:.7rem;font-weight:600;
+        text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);
+        border-bottom:1px solid var(--border-subtle);white-space:nowrap;
+        background:rgba(255,255,255,.02);
+    }
+    .data-table td{
+        padding:12px 14px;font-size:.85rem;border-bottom:1px solid rgba(30,45,69,.5);
+        vertical-align:middle;
+    }
+    .data-table tr:last-child td{border-bottom:none;}
+    .data-table tr:hover td{background:rgba(59,130,246,.04);}
+
+    .no-data{text-align:center;color:var(--text-muted);padding:32px!important;font-size:.85rem;}
+    .no-data-icon{margin-right:8px;}
+
+    /* ====================================================
+       BADGE KhuonMat
+    ==================================================== */
+    .badge{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:20px;font-size:.72rem;font-weight:600;white-space:nowrap;}
+    .badge-green{background:rgba(16,185,129,.12);color:#10b981;border:1px solid rgba(16,185,129,.25);}
+    .badge-gray {background:rgba(71,85,105,.15);color:#64748b;border:1px solid rgba(71,85,105,.3);}
+    .badge-orange{background:rgba(245,158,11,.12);color:#f59e0b;border:1px solid rgba(245,158,11,.25);}
+
+    .role-chip{display:inline-flex;align-items:center;padding:3px 9px;border-radius:6px;font-size:.75rem;font-weight:600;background:rgba(139,92,246,.12);color:var(--accent-purple);border:1px solid rgba(139,92,246,.22);}
+
+    .id-chip{font-size:.78rem;color:var(--text-muted);font-variant-numeric:tabular-nums;}
+
+    /* ====================================================
+       MODAL
+    ==================================================== */
+    .modal-backdrop{
+        display:none;position:fixed;inset:0;
+        background:rgba(0,0,0,.72);backdrop-filter:blur(6px);
+        z-index:1000;align-items:center;justify-content:center;
+    }
+    .modal-backdrop.open{display:flex;}
+
+    .modal{
+        background:var(--bg-card);border:1px solid var(--border);
+        border-radius:var(--radius-lg);padding:28px;width:100%;max-width:440px;
+        box-shadow:0 24px 60px rgba(0,0,0,.7),0 0 0 1px rgba(59,130,246,.08);
+        animation:modalIn .22s ease;
+    }
+    @keyframes modalIn{from{opacity:0;transform:scale(.96) translateY(8px);}to{opacity:1;transform:none;}}
+
+    .modal-title{
+        font-size:1rem;font-weight:700;margin-bottom:6px;
+        background:var(--grad-primary);-webkit-background-clip:text;
+        -webkit-text-fill-color:transparent;background-clip:text;
+    }
+    .modal-sub{font-size:.78rem;color:var(--text-muted);margin-bottom:22px;}
+
+    .form-group{margin-bottom:16px;}
+    .form-label{display:block;font-size:.78rem;font-weight:600;color:var(--text-secondary);margin-bottom:6px;}
+    .form-control{
+        width:100%;padding:10px 13px;
+        background:rgba(255,255,255,.04);border:1px solid var(--border);
+        border-radius:var(--radius-sm);color:var(--text-primary);font-size:.88rem;
+        font-family:inherit;transition:var(--ease);outline:none;
+    }
+    .form-control:focus{border-color:var(--accent-blue);background:rgba(59,130,246,.06);box-shadow:0 0 0 3px rgba(59,130,246,.15);}
+    .form-control:disabled{opacity:.55;cursor:not-allowed;}
+    .form-control-static{
+        width:100%;padding:10px 13px;
+        background:rgba(255,255,255,.02);border:1px solid var(--border-subtle);
+        border-radius:var(--radius-sm);color:var(--text-muted);font-size:.88rem;
+        font-family:inherit;
+    }
+    .form-error{font-size:.75rem;color:var(--accent-red);margin-top:5px;display:none;}
+    .form-error.show{display:block;}
+
+    .modal-footer{display:flex;gap:10px;justify-content:flex-end;margin-top:22px;padding-top:16px;border-top:1px solid var(--border-subtle);}
+
+    /* ====================================================
+       TOAST
+    ==================================================== */
+    #toast-container{
+        position:fixed;bottom:24px;right:24px;z-index:9999;
+        display:flex;flex-direction:column;gap:10px;pointer-events:none;
+    }
+    .toast{
+        display:flex;align-items:center;gap:10px;
+        padding:12px 18px;border-radius:var(--radius-md);
+        font-size:.84rem;font-weight:500;
+        box-shadow:var(--shadow-md);
+        animation:toastIn .25s ease;pointer-events:all;min-width:240px;max-width:380px;
+    }
+    .toast-success{background:#0d2b1f;border:1px solid rgba(16,185,129,.35);color:#10b981;}
+    .toast-error  {background:#2b0d0d;border:1px solid rgba(239,68,68,.35);color:#ef4444;}
+    .toast-info   {background:#0d1e2b;border:1px solid rgba(59,130,246,.35);color:#3b82f6;}
+    @keyframes toastIn{from{opacity:0;transform:translateY(16px);}to{opacity:1;transform:none;}}
+    @keyframes toastOut{to{opacity:0;transform:translateX(20px);}}
+
+    /* ====================================================
+       Stat bar
+    ==================================================== */
+    .stat-bar{display:flex;gap:20px;flex-wrap:wrap;}
+    .stat-item{display:flex;flex-direction:column;align-items:center;padding:12px 20px;background:rgba(255,255,255,.03);border:1px solid var(--border-subtle);border-radius:var(--radius-md);}
+    .stat-num{font-size:1.5rem;font-weight:800;line-height:1;}
+    .stat-label{font-size:.65rem;text-transform:uppercase;letter-spacing:.5px;color:var(--text-muted);margin-top:3px;}
+    .stat-num.blue  {color:var(--accent-blue);}
+    .stat-num.green {color:var(--accent-green);}
+    .stat-num.orange{color:var(--accent-orange);}
+
+    /* ====================================================
+       Responsive
+    ==================================================== */
+    @media(max-width:900px){
+        :root{--sidebar-w:58px;}
+        .brand-text,.nav-item .nav-label,.nav-label-group,.sidebar-version,.brand-sub{display:none;}
+        .nav-item{justify-content:center;padding:10px;}
+        .nav-icon{margin:0;}
+        .brand-icon{margin:0 auto;}
+        .sidebar-brand{justify-content:center;padding:0 10px;}
+    }
+    @media(max-width:600px){
+        .main{padding:14px;}
+        .stat-bar{gap:10px;}
+    }
+    </style>
+</head>
+<body>
+<div class="app-shell">
+
+<!-- =========================================================
+     SIDEBAR
+========================================================= -->
+<aside class="sidebar" role="navigation" aria-label="Navigation chính">
+    <div class="sidebar-brand">
+        <div class="brand-icon">🤖</div>
+        <div class="brand-text">
+            <span class="brand-name">AI ChamCong</span>
+            <span class="brand-sub">Smart Attendance</span>
+        </div>
+    </div>
+
+    <nav class="sidebar-nav">
+        <span class="nav-label-group">Tổng quan</span>
+        <a class="nav-item" id="nav-dashboard" href="/">
+            <div class="nav-icon">🏠</div><span class="nav-label">Dashboard</span>
+        </a>
+
+        <span class="nav-label-group">Quản lý</span>
+        <a class="nav-item active" id="nav-employees" href="/employees">
+            <div class="nav-icon">👥</div><span class="nav-label">Nhân viên</span>
+        </a>
+
+        <span class="nav-label-group">Chấm công</span>
+        <a class="nav-item" id="nav-chamcong" href="/#chamcong">
+            <div class="nav-icon">✅</div><span class="nav-label">Chấm công hôm nay</span>
+        </a>
+        <a class="nav-item" id="nav-thongke" href="/#thongke">
+            <div class="nav-icon">📊</div><span class="nav-label">Thống kê</span>
+        </a>
+
+        <span class="nav-label-group">Giám sát</span>
+        <a class="nav-item" id="nav-camera" href="/#camera">
+            <div class="nav-icon">📷</div><span class="nav-label">Camera AI</span>
+        </a>
+        <a class="nav-item" id="nav-canhbao" href="/#canhbao">
+            <div class="nav-icon">⚠️</div><span class="nav-label">Cảnh báo AI</span>
+        </a>
+
+        <span class="nav-label-group">Hỗ trợ</span>
+        <a class="nav-item" id="nav-suckhoe" href="/#suckhoe">
+            <div class="nav-icon">💊</div><span class="nav-label">Sức khỏe</span>
+        </a>
+        <a class="nav-item" id="nav-moitruong" href="/#moitruong">
+            <div class="nav-icon">🌡️</div><span class="nav-label">Môi trường</span>
+        </a>
+    </nav>
+
+    <div class="sidebar-footer">
+        <div class="sidebar-version">v2.0.0 · DoAn 2024</div>
+    </div>
+</aside>
+
+<!-- =========================================================
+     HEADER
+========================================================= -->
+<header class="header" role="banner">
+    <div class="header-title">
+        <div class="header-title-main">Quản lý Nhân viên</div>
+        <div class="header-title-sub">Employee Management — AI ChamCong</div>
+    </div>
+
+    <div class="header-right">
+        <div class="header-datetime">
+            <div class="datetime-time" id="header-clock">--:--:--</div>
+            <div class="datetime-date" id="header-date">--</div>
+        </div>
+        <div class="user-avatar" title="Admin">AD</div>
+        <a href="/logout" title="Đăng xuất" style="padding:6px 12px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;border-radius:8px;font-size:0.75rem;font-weight:600;display:flex;align-items:center;gap:4px;text-decoration:none;transition:all 0.2s;" onmouseover="this.style.background='rgba(239,68,68,0.25)'" onmouseout="this.style.background='rgba(239,68,68,0.12)'">⎋ Đăng xuất</a>
+    </div>
+</header>
+
+<!-- =========================================================
+     MAIN
+========================================================= -->
+<main class="main" role="main">
+
+    <!-- PAGE HEADING -->
+    <div class="page-heading">
+        <div class="page-heading-left">
+            <div class="page-heading-title">👥 QUẢN LÝ NHÂN VIÊN</div>
+            <div class="page-heading-sub">Xem, thêm và cập nhật thông tin nhân viên</div>
+        </div>
+        <button class="btn btn-primary" id="btn-add-employee" onclick="openAddModal()">
+            ➕ Thêm nhân viên
+        </button>
+    </div>
+
+    <!-- STAT BAR -->
+    <div class="stat-bar" id="stat-bar">
+        <div class="stat-item">
+            <div class="stat-num blue" id="stat-total">--</div>
+            <div class="stat-label">Tổng nhân viên</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-num green" id="stat-registered">--</div>
+            <div class="stat-label">Đã đăng ký khuôn mặt</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-num orange" id="stat-pending">--</div>
+            <div class="stat-label">Chưa đăng ký</div>
+        </div>
+    </div>
+
+    <!-- TABLE CARD -->
+    <div class="card">
+        <div class="card-hdr">
+            <div class="card-title">
+                <div class="card-icon purple">👥</div>
+                Danh sách nhân viên
+            </div>
+            <span class="card-badge" id="table-badge">Đang tải...</span>
+        </div>
+        <div class="table-scroll">
+            <table class="data-table" id="emp-table">
+                <thead>
+                    <tr>
+                        <th>MaNV</th>
+                        <th>Họ tên</th>
+                        <th>Vai trò</th>
+                        <th>Khuôn mặt</th>
+                        <th>Thao tác</th>
+                    </tr>
+                </thead>
+                <tbody id="emp-tbody">
+                    <tr><td colspan="5" class="no-data"><span class="no-data-icon">⏳</span>Đang tải dữ liệu...</td></tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+</main>
+</div><!-- /app-shell -->
+
+<!-- =========================================================
+     MODAL THÊM NHÂN VIÊN
+========================================================= -->
+<div class="modal-backdrop" id="modal-add" role="dialog" aria-modal="true" aria-labelledby="modal-add-title">
+    <div class="modal">
+        <div class="modal-title" id="modal-add-title">➕ Thêm nhân viên mới</div>
+        <div class="modal-sub">Điền thông tin bên dưới. Khuôn mặt sẽ đăng ký ở bước tiếp theo.</div>
+
+        <div class="form-group">
+            <label class="form-label" for="add-hoten">Họ tên <span style="color:var(--accent-red)">*</span></label>
+            <input class="form-control" type="text" id="add-hoten" placeholder="Nguyễn Văn A" maxlength="150" autocomplete="off">
+            <div class="form-error" id="add-hoten-err">Vui lòng nhập họ tên</div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="add-vaitro">Vai trò <span style="color:var(--accent-red)">*</span></label>
+            <select class="form-control" id="add-vaitro">
+                <option value="">-- Chọn vai trò --</option>
+            </select>
+            <div class="form-error" id="add-vaitro-err">Vui lòng chọn vai trò</div>
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeAddModal()">Hủy</button>
+            <button class="btn btn-primary" id="btn-submit-add" onclick="submitAdd()">Thêm nhân viên</button>
+        </div>
+    </div>
+</div>
+
+<!-- =========================================================
+     MODAL SỬA NHÂN VIÊN
+========================================================= -->
+<div class="modal-backdrop" id="modal-edit" role="dialog" aria-modal="true" aria-labelledby="modal-edit-title">
+    <div class="modal">
+        <div class="modal-title" id="modal-edit-title">✏️ Sửa thông tin nhân viên</div>
+        <div class="modal-sub">Chỉ Họ tên và Vai trò có thể thay đổi.</div>
+
+        <div class="form-group">
+            <label class="form-label">Mã nhân viên</label>
+            <div class="form-control-static" id="edit-manv-display">--</div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="edit-hoten">Họ tên <span style="color:var(--accent-red)">*</span></label>
+            <input class="form-control" type="text" id="edit-hoten" maxlength="150" autocomplete="off">
+            <div class="form-error" id="edit-hoten-err">Vui lòng nhập họ tên</div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label" for="edit-vaitro">Vai trò <span style="color:var(--accent-red)">*</span></label>
+            <select class="form-control" id="edit-vaitro">
+                <option value="">-- Chọn vai trò --</option>
+            </select>
+            <div class="form-error" id="edit-vaitro-err">Vui lòng chọn vai trò</div>
+        </div>
+
+        <div class="form-group">
+            <label class="form-label">Trạng thái khuôn mặt</label>
+            <div class="form-control-static" id="edit-khuonmat-display">--</div>
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeEditModal()">Hủy</button>
+            <button class="btn btn-primary" id="btn-submit-edit" onclick="submitEdit()">Lưu thay đổi</button>
+        </div>
+    </div>
+</div>
+
+<!-- =========================================================
+     PLACEHOLDER: ĐĂNG KÝ KHUÔN MẶT
+========================================================= -->
+<div class="modal-backdrop" id="modal-face" role="dialog" aria-modal="true" aria-labelledby="modal-face-title">
+    <div class="modal">
+        <div class="modal-title" id="modal-face-title">📷 Đăng ký khuôn mặt</div>
+        <div class="modal-sub" id="modal-face-sub">--</div>
+
+        <div style="background:rgba(59,130,246,.06);border:1px solid rgba(59,130,246,.2);border-radius:var(--radius-md);padding:20px;text-align:center;margin-bottom:18px;">
+            <div style="font-size:2.5rem;margin-bottom:10px;">🚧</div>
+            <div style="font-size:.88rem;font-weight:600;color:var(--accent-blue);margin-bottom:6px;">Tính năng sắp ra mắt</div>
+            <div style="font-size:.8rem;color:var(--text-muted);line-height:1.6;">
+                Chức năng đăng ký khuôn mặt sẽ được triển khai ở bước tiếp theo.<br>
+                Nhân viên sẽ đứng trước camera để hệ thống ghi nhận khuôn mặt.
+            </div>
+        </div>
+
+        <div class="modal-footer">
+            <button class="btn btn-ghost" onclick="closeFaceModal()">Đóng</button>
+        </div>
+    </div>
+</div>
+
+<!-- Toast container -->
+<div id="toast-container"></div>
+
+<!-- =========================================================
+     JAVASCRIPT
+========================================================= -->
+<script>
+/* ============================================================
+   GLOBALS
+============================================================ */
+const BASE_URL = '';
+let _employees  = [];   // cache danh sách
+let _roles      = [];   // cache vai trò
+let _editMaNV   = null; // ID đang sửa
+
+/* ============================================================
+   CLOCK
+============================================================ */
+const DAYS   = ['Chủ nhật','Thứ Hai','Thứ Ba','Thứ Tư','Thứ Năm','Thứ Sáu','Thứ Bảy'];
+const MONTHS = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+
+function updateClock() {
+    const now = new Date();
+    const hh = String(now.getHours()).padStart(2,'0');
+    const mm = String(now.getMinutes()).padStart(2,'0');
+    const ss = String(now.getSeconds()).padStart(2,'0');
+    document.getElementById('header-clock').textContent = `${hh}:${mm}:${ss}`;
+    document.getElementById('header-date').textContent  =
+        `${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS[now.getMonth()]} ${now.getFullYear()}`;
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+/* ============================================================
+   TOAST
+============================================================ */
+function showToast(msg, type='success', durationMs=3500) {
+    const container = document.getElementById('toast-container');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
+    toast.innerHTML = `<span>${icon}</span><span>${msg}</span>`;
+    container.appendChild(toast);
+    setTimeout(() => {
+        toast.style.animation = 'toastOut .3s ease forwards';
+        setTimeout(() => toast.remove(), 320);
+    }, durationMs);
+}
+
+/* ============================================================
+   LOAD ROLES
+============================================================ */
+async function loadRoles() {
+    try {
+        const resp = await fetch(`${BASE_URL}/api/roles`);
+        _roles = await resp.json();
+        populateRoleSelect('add-vaitro', _roles, '');
+        populateRoleSelect('edit-vaitro', _roles, '');
+    } catch(e) {
+        console.error('loadRoles error', e);
+    }
+}
+
+function populateRoleSelect(selectId, roles, selectedVal) {
+    const sel = document.getElementById(selectId);
+    // giữ option đầu
+    while (sel.options.length > 1) sel.remove(1);
+    for (const r of roles) {
+        const opt = document.createElement('option');
+        opt.value = r.MaVaiTro;
+        opt.textContent = r.TenVaiTro;
+        if (String(r.MaVaiTro) === String(selectedVal)) opt.selected = true;
+        sel.appendChild(opt);
+    }
+}
+
+/* ============================================================
+   LOAD EMPLOYEES
+============================================================ */
+async function loadEmployees() {
+    try {
+        const resp = await fetch(`${BASE_URL}/api/employees`);
+        _employees = await resp.json();
+        renderTable(_employees);
+        renderStats(_employees);
+    } catch(e) {
+        console.error('loadEmployees error', e);
+        document.getElementById('emp-tbody').innerHTML =
+            '<tr><td colspan="5" class="no-data"><span class="no-data-icon">❌</span>Không thể tải dữ liệu</td></tr>';
+    }
+}
+
+function renderStats(emps) {
+    const total      = emps.length;
+    const registered = emps.filter(e => e.DaDangKyKhuonMat).length;
+    const pending    = total - registered;
+    document.getElementById('stat-total').textContent      = total;
+    document.getElementById('stat-registered').textContent = registered;
+    document.getElementById('stat-pending').textContent    = pending;
+}
+
+function renderTable(emps) {
+    const tbody = document.getElementById('emp-tbody');
+    const badge = document.getElementById('table-badge');
+    badge.textContent = `${emps.length} nhân viên`;
+
+    if (!emps.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="no-data"><span class="no-data-icon">📭</span>Chưa có nhân viên nào</td></tr>';
+        return;
+    }
+
+    tbody.innerHTML = emps.map(emp => {
+        const faceHtml = emp.DaDangKyKhuonMat
+            ? `<span class="badge badge-green">✓ Đã đăng ký</span>`
+            : `<button class="btn btn-sm btn-ghost" onclick="openFaceModal(${emp.MaNV}, '${escHtml(emp.HoTen)}')"
+                 title="Đăng ký khuôn mặt" style="gap:5px;">
+                 📷 Chưa đăng ký
+               </button>`;
+
+        return `
+        <tr id="row-${emp.MaNV}">
+            <td class="id-chip">#${emp.MaNV}</td>
+            <td style="font-weight:600;">${escHtml(emp.HoTen)}</td>
+            <td><span class="role-chip">${escHtml(emp.TenVaiTro || '--')}</span></td>
+            <td>${faceHtml}</td>
+            <td>
+                <button class="btn btn-sm btn-edit" onclick="openEditModal(${emp.MaNV})">✏️ Sửa</button>
+            </td>
+        </tr>`;
+    }).join('');
+}
+
+function escHtml(str) {
+    return String(str)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+/* ============================================================
+   MODAL ADD
+============================================================ */
+function openAddModal() {
+    document.getElementById('add-hoten').value = '';
+    document.getElementById('add-vaitro').value = '';
+    hideErr('add-hoten-err');
+    hideErr('add-vaitro-err');
+    populateRoleSelect('add-vaitro', _roles, '');
+    document.getElementById('modal-add').classList.add('open');
+    setTimeout(() => document.getElementById('add-hoten').focus(), 50);
+}
+
+function closeAddModal() {
+    document.getElementById('modal-add').classList.remove('open');
+}
+
+async function submitAdd() {
+    const hoTen   = document.getElementById('add-hoten').value.trim();
+    const maVaiTro = document.getElementById('add-vaitro').value;
+    let valid = true;
+
+    if (!hoTen) {
+        showErr('add-hoten-err', 'Vui lòng nhập họ tên');
+        valid = false;
+    } else { hideErr('add-hoten-err'); }
+
+    if (!maVaiTro) {
+        showErr('add-vaitro-err', 'Vui lòng chọn vai trò');
+        valid = false;
+    } else { hideErr('add-vaitro-err'); }
+
+    if (!valid) return;
+
+    const btn = document.getElementById('btn-submit-add');
+    btn.disabled = true;
+    btn.textContent = 'Đang xử lý...';
+
+    try {
+        const resp = await fetch(`${BASE_URL}/api/employees`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ HoTen: hoTen, MaVaiTro: parseInt(maVaiTro) }),
+        });
+        const data = await resp.json();
+
+        if (resp.status === 201) {
+            closeAddModal();
+            showToast(`Thêm nhân viên thành công (MaNV: ${data.MaNV})`, 'success');
+            await loadEmployees();
+        } else {
+            showToast(data.message || 'Lỗi khi thêm nhân viên', 'error');
+        }
+    } catch(e) {
+        showToast('Lỗi kết nối server', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Thêm nhân viên';
+    }
+}
+
+/* ============================================================
+   MODAL EDIT
+============================================================ */
+function openEditModal(maNV) {
+    const emp = _employees.find(e => e.MaNV === maNV);
+    if (!emp) { showToast('Không tìm thấy nhân viên', 'error'); return; }
+
+    _editMaNV = maNV;
+    document.getElementById('edit-manv-display').textContent = `#${emp.MaNV}`;
+    document.getElementById('edit-hoten').value = emp.HoTen;
+    populateRoleSelect('edit-vaitro', _roles, emp.MaVaiTro);
+
+    const faceStatus = emp.DaDangKyKhuonMat
+        ? '✅ Đã đăng ký khuôn mặt'
+        : '⏳ Chưa đăng ký khuôn mặt';
+    document.getElementById('edit-khuonmat-display').textContent = faceStatus;
+
+    hideErr('edit-hoten-err');
+    hideErr('edit-vaitro-err');
+    document.getElementById('modal-edit').classList.add('open');
+    setTimeout(() => document.getElementById('edit-hoten').focus(), 50);
+}
+
+function closeEditModal() {
+    document.getElementById('modal-edit').classList.remove('open');
+    _editMaNV = null;
+}
+
+async function submitEdit() {
+    if (!_editMaNV) return;
+    const hoTen    = document.getElementById('edit-hoten').value.trim();
+    const maVaiTro = document.getElementById('edit-vaitro').value;
+    let valid = true;
+
+    if (!hoTen) {
+        showErr('edit-hoten-err', 'Vui lòng nhập họ tên');
+        valid = false;
+    } else { hideErr('edit-hoten-err'); }
+
+    if (!maVaiTro) {
+        showErr('edit-vaitro-err', 'Vui lòng chọn vai trò');
+        valid = false;
+    } else { hideErr('edit-vaitro-err'); }
+
+    if (!valid) return;
+
+    const btn = document.getElementById('btn-submit-edit');
+    btn.disabled = true;
+    btn.textContent = 'Đang lưu...';
+
+    try {
+        const resp = await fetch(`${BASE_URL}/api/employees/${_editMaNV}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ HoTen: hoTen, MaVaiTro: parseInt(maVaiTro) }),
+        });
+        const data = await resp.json();
+
+        if (resp.status === 200) {
+            closeEditModal();
+            showToast('Cập nhật nhân viên thành công', 'success');
+            await loadEmployees();
+        } else if (resp.status === 404) {
+            showToast('Không tìm thấy nhân viên', 'error');
+        } else {
+            showToast(data.message || 'Lỗi khi cập nhật', 'error');
+        }
+    } catch(e) {
+        showToast('Lỗi kết nối server', 'error');
+    } finally {
+        btn.disabled = false;
+        btn.textContent = 'Lưu thay đổi';
+    }
+}
+
+/* ============================================================
+   MODAL FACE (PLACEHOLDER)
+============================================================ */
+function openFaceModal(maNV, hoTen) {
+    document.getElementById('modal-face-sub').textContent =
+        `Nhân viên: ${hoTen} (MaNV: ${maNV})`;
+    document.getElementById('modal-face').classList.add('open');
+}
+
+function closeFaceModal() {
+    document.getElementById('modal-face').classList.remove('open');
+}
+
+/* ============================================================
+   FORM HELPERS
+============================================================ */
+function showErr(id, msg) {
+    const el = document.getElementById(id);
+    if (el) { el.textContent = msg; el.classList.add('show'); }
+}
+function hideErr(id) {
+    const el = document.getElementById(id);
+    if (el) el.classList.remove('show');
+}
+
+/* ============================================================
+   CLOSE MODAL ON BACKDROP CLICK
+============================================================ */
+document.querySelectorAll('.modal-backdrop').forEach(bd => {
+    bd.addEventListener('click', e => {
+        if (e.target === bd) {
+            bd.classList.remove('open');
+            _editMaNV = null;
+        }
+    });
+});
+
+/* ============================================================
+   CLOSE MODAL ON ESC
+============================================================ */
+document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+        document.querySelectorAll('.modal-backdrop.open').forEach(bd => {
+            bd.classList.remove('open');
+            _editMaNV = null;
+        });
+    }
+});
+
+/* ============================================================
+   INIT
+============================================================ */
+(async () => {
+    await loadRoles();
+    await loadEmployees();
+})();
+</script>
+</body>
+</html>

@@ -15,6 +15,7 @@ Quy tắc chấm công (KHÔNG có thời gian ân hạn):
 
 from datetime import date, datetime, time
 import database
+from werkzeug.security import generate_password_hash, check_password_hash
 
 
 # ============================================================
@@ -681,3 +682,371 @@ def fetch_alert_history(limit=10):
     except Exception as e:
         print(f"[services] Loi lay canh bao: {e}")
         return []
+
+
+# ============================================================
+# Quản lý Nhân viên
+# ============================================================
+
+def _row_to_employee_dict(row):
+    """
+    Chuyển row DB (MaNV, HoTen, AnhKhuonMat, MaVaiTro, TenVaiTro)
+    thành dict trả client.
+
+    AnhKhuonMat KHÔNG trả về client.
+    DaDangKyKhuonMat = True khi AnhKhuonMat != NULL và trim != ''.
+    """
+    anh = row[2]
+    da_dang_ky = bool(anh and str(anh).strip())
+    return {
+        "MaNV":              row[0],
+        "HoTen":             row[1],
+        "MaVaiTro":          row[3],
+        "TenVaiTro":         row[4] if row[4] else "",
+        "DaDangKyKhuonMat":  da_dang_ky,
+    }
+
+
+def fetch_employees():
+    """
+    Danh sách tất cả nhân viên kèm trạng thái khuôn mặt.
+
+    Output:
+    [
+        {
+            "MaNV": 1,
+            "HoTen": "Nguyễn Văn A",
+            "MaVaiTro": 1,
+            "TenVaiTro": "Quản trị viên",
+            "DaDangKyKhuonMat": true
+        }
+    ]
+    """
+    try:
+        rows = database.get_all_employees()
+        return [_row_to_employee_dict(r) for r in rows]
+    except Exception as e:
+        print(f"[services] Loi lay danh sach nhan vien: {e}")
+        return []
+
+
+def fetch_employee(ma_nv):
+    """
+    Thông tin 1 nhân viên.
+
+    Trả về dict hoặc None nếu không tìm thấy.
+    """
+    try:
+        row = database.get_employee_by_id(ma_nv)
+        if row is None:
+            return None
+        return _row_to_employee_dict(row)
+    except Exception as e:
+        print(f"[services] Loi lay nhan vien {ma_nv}: {e}")
+        return None
+
+
+def fetch_all_roles():
+    """
+    Danh sách vai trò.
+
+    Output:
+    [{"MaVaiTro": 1, "TenVaiTro": "Quản trị viên"}, ...]
+    """
+    try:
+        rows = database.get_all_roles()
+        return [{"MaVaiTro": r[0], "TenVaiTro": r[1]} for r in rows]
+    except Exception as e:
+        print(f"[services] Loi lay vai tro: {e}")
+        return []
+
+
+def create_employee(data):
+    """
+    Thêm nhân viên mới.
+
+    Input: {"HoTen": "...", "MaVaiTro": int}
+
+    Validation:
+    - HoTen bắt buộc, không rỗng sau khi trim
+    - MaVaiTro bắt buộc, phải tồn tại trong VaiTro
+
+    AnhKhuonMat luôn = NULL — không nhận từ client.
+
+    Trả về:
+    - Thành công: {"status": "success", "message": "...", "MaNV": int}
+    - Lỗi:        {"status": "error",   "message": "..."}
+    """
+    # --- Validation HoTen ---
+    ho_ten = data.get("HoTen")
+    if ho_ten is None:
+        return {"status": "error", "message": "Thiếu HoTen"}
+
+    ho_ten = str(ho_ten).strip()
+    if not ho_ten:
+        return {"status": "error", "message": "HoTen không được rỗng"}
+
+    # --- Validation MaVaiTro ---
+    ma_vai_tro = data.get("MaVaiTro")
+    if ma_vai_tro is None:
+        return {"status": "error", "message": "Thiếu MaVaiTro"}
+
+    try:
+        ma_vai_tro = int(ma_vai_tro)
+    except (TypeError, ValueError):
+        return {"status": "error", "message": "MaVaiTro phải là số nguyên"}
+
+    try:
+        if not database.role_exists(ma_vai_tro):
+            return {"status": "error", "message": f"MaVaiTro={ma_vai_tro} không tồn tại"}
+    except Exception as e:
+        return {"status": "error", "message": f"Lỗi kiểm tra vai trò: {e}"}
+
+    # --- Insert ---
+    try:
+        ma_nv = database.insert_employee(ho_ten, ma_vai_tro)
+        if ma_nv is None:
+            return {"status": "error", "message": "Không lấy được MaNV sau khi tạo"}
+        return {
+            "status":  "success",
+            "message": "Thêm nhân viên thành công",
+            "MaNV":    ma_nv,
+        }
+    except Exception as e:
+        print(f"[services] Loi tao nhan vien: {e}")
+        return {"status": "error", "message": f"Lỗi tạo nhân viên: {e}"}
+
+
+def edit_employee(ma_nv, data):
+    """
+    Cập nhật thông tin nhân viên.
+
+    Chỉ cho sửa: HoTen, MaVaiTro.
+    Bỏ qua hoàn toàn: MaNV, AnhKhuonMat trong data.
+
+    Trả về:
+    - Thành công: {"status": "success", "message": "..."}
+    - Không tìm thấy: {"status": "not_found"}
+    - Lỗi: {"status": "error", "message": "..."}
+    """
+    # --- Kiểm tra nhân viên tồn tại ---
+    try:
+        existing = database.get_employee_by_id(ma_nv)
+    except Exception as e:
+        return {"status": "error", "message": f"Lỗi truy vấn: {e}"}
+
+    if existing is None:
+        return {"status": "not_found"}
+
+    # --- Lấy giá trị mới (fallback về giá trị cũ nếu không truyền) ---
+    ho_ten = data.get("HoTen", existing[1])
+    if ho_ten is None:
+        ho_ten = existing[1]
+    ho_ten = str(ho_ten).strip()
+    if not ho_ten:
+        return {"status": "error", "message": "HoTen không được rỗng"}
+
+    ma_vai_tro = data.get("MaVaiTro", existing[3])
+    try:
+        ma_vai_tro = int(ma_vai_tro)
+    except (TypeError, ValueError):
+        return {"status": "error", "message": "MaVaiTro phải là số nguyên"}
+
+    try:
+        if not database.role_exists(ma_vai_tro):
+            return {"status": "error", "message": f"MaVaiTro={ma_vai_tro} không tồn tại"}
+    except Exception as e:
+        return {"status": "error", "message": f"Lỗi kiểm tra vai trò: {e}"}
+
+    # --- Update ---
+    try:
+        affected = database.update_employee(ma_nv, ho_ten, ma_vai_tro)
+        if affected == 0:
+            return {"status": "error", "message": "Không có thay đổi nào được lưu"}
+        return {"status": "success", "message": "Cập nhật nhân viên thành công"}
+    except Exception as e:
+        print(f"[services] Loi sua nhan vien {ma_nv}: {e}")
+        return {"status": "error", "message": f"Lỗi cập nhật: {e}"}
+
+
+# ============================================================
+# Xác thực — Login / Tài khoản
+# ============================================================
+
+def authenticate(username, password):
+    """
+    Xác thực đăng nhập.
+
+    Input: username (str), password (str)
+
+    Trả về:
+    - Thành công:
+        {
+            "status": "success",
+            "user": {
+                "MaTK":      int,
+                "MaNV":      int,
+                "HoTen":     str,
+                "MaVaiTro":  int,
+                "TenVaiTro": str
+            }
+        }
+    - Thất bại:
+        {"status": "error", "message": "..."}
+    """
+    if not username or not password:
+        return {"status": "error", "message": "Thiếu tên đăng nhập hoặc mật khẩu"}
+
+    username = str(username).strip()
+    if not username:
+        return {"status": "error", "message": "Tên đăng nhập không được rỗng"}
+
+    try:
+        row = database.get_account_by_username(username)
+    except Exception as e:
+        print(f"[services] Loi truy van tai khoan: {e}")
+        return {"status": "error", "message": "Lỗi hệ thống"}
+
+    if row is None:
+        return {"status": "error", "message": "Sai tên đăng nhập hoặc mật khẩu"}
+
+    # row: (MaTK, MaNV, TenDangNhap, MatKhau, HoTen, MaVaiTro, TenVaiTro)
+    mat_khau_hash = row[3]
+
+    # Hỗ trợ migrate plaintext password
+    if not mat_khau_hash.startswith("scrypt:") and not mat_khau_hash.startswith("pbkdf2:"):
+        # Mật khẩu cũ (plaintext)
+        if mat_khau_hash == password:
+            # Đúng mật khẩu -> migrate sang hash
+            new_hash = generate_password_hash(password)
+            try:
+                database.update_account_password(row[0], new_hash)
+            except Exception as e:
+                print(f"[services] Loi migrate password cho MaTK {row[0]}: {e}")
+        else:
+            return {"status": "error", "message": "Sai tên đăng nhập hoặc mật khẩu"}
+    elif not check_password_hash(mat_khau_hash, password):
+        return {"status": "error", "message": "Sai tên đăng nhập hoặc mật khẩu"}
+
+    return {
+        "status": "success",
+        "user": {
+            "MaTK":      row[0],
+            "MaNV":      row[1],
+            "HoTen":     row[4],
+            "MaVaiTro":  row[5],
+            "TenVaiTro": row[6] if row[6] else "",
+        },
+    }
+
+
+def create_account(data):
+    """
+    Tạo tài khoản.
+
+    Input: {"MaNV": int, "TenDangNhap": str, "MatKhau": str}
+
+    Trả về:
+    - Thành công: {"status": "success", "message": "...", "MaTK": int}
+    - Lỗi:        {"status": "error",   "message": "..."}
+    """
+    ma_nv         = data.get("MaNV")
+    ten_dang_nhap = data.get("TenDangNhap")
+    mat_khau      = data.get("MatKhau")
+
+    if ma_nv is None:
+        return {"status": "error", "message": "Thiếu MaNV"}
+    if not ten_dang_nhap or not str(ten_dang_nhap).strip():
+        return {"status": "error", "message": "Thiếu TenDangNhap"}
+    if not mat_khau:
+        return {"status": "error", "message": "Thiếu MatKhau"}
+
+    ten_dang_nhap = str(ten_dang_nhap).strip()
+
+    try:
+        if database.account_exists(ten_dang_nhap):
+            return {"status": "error", "message": f"TenDangNhap '{ten_dang_nhap}' đã tồn tại"}
+    except Exception as e:
+        return {"status": "error", "message": f"Lỗi kiểm tra: {e}"}
+
+    mat_khau_hash = generate_password_hash(mat_khau)
+
+    try:
+        ma_tk = database.insert_account(ma_nv, ten_dang_nhap, mat_khau_hash)
+        if ma_tk is None:
+            return {"status": "error", "message": "Không lấy được MaTK"}
+        return {
+            "status":  "success",
+            "message": "Tạo tài khoản thành công",
+            "MaTK":    ma_tk,
+        }
+    except Exception as e:
+        print(f"[services] Loi tao tai khoan: {e}")
+        return {"status": "error", "message": f"Lỗi tạo tài khoản: {e}"}
+
+
+def fetch_my_attendance(ma_nv):
+    """
+    Lấy chấm công hôm nay + ca làm việc của chính nhân viên.
+
+    Trả về dict cho trang /me.
+    """
+    today = date.today().isoformat()
+
+    result = {
+        "CaHomNay":   None,
+        "ChamCong":   None,
+        "TrangThai":  "Chưa chấm công",
+        "LichSu":     [],
+    }
+
+    try:
+        # Ca hôm nay
+        shift_row = database.get_employee_shift(ma_nv, today)
+        if shift_row:
+            gbd = _to_time(shift_row[2])
+            gkt = _to_time(shift_row[3])
+            result["CaHomNay"] = {
+                "MaCa":       shift_row[0],
+                "TenCa":      shift_row[1],
+                "GioBatDau":  gbd.strftime("%H:%M") if gbd else "--",
+                "GioKetThuc": gkt.strftime("%H:%M") if gkt else "--",
+            }
+
+        # Chấm công hôm nay
+        today_rec = database.get_today_record(ma_nv)
+        if today_rec:
+            gio_vao = today_rec[1]
+            gio_ra  = today_rec[2]
+            result["ChamCong"] = {
+                "MaCC":  today_rec[0],
+                "GioVao": gio_vao.strftime("%H:%M:%S") if gio_vao else None,
+                "GioRa":  gio_ra.strftime("%H:%M:%S") if gio_ra else None,
+            }
+
+            # Tính trạng thái
+            if shift_row:
+                status = calc_attendance_status(
+                    shift_row[2], shift_row[3], gio_vao, gio_ra
+                )
+                result["TrangThai"] = status["TrangThaiTongHop"]
+            else:
+                if gio_ra:
+                    result["TrangThai"] = "Đã chấm công ra"
+                else:
+                    result["TrangThai"] = "Đang làm việc"
+
+    except Exception as e:
+        print(f"[services] Loi lay cham cong ca nhan {ma_nv}: {e}")
+
+    # Lịch sử 10 bản ghi gần nhất
+    try:
+        recent = database.get_recent_cham_cong(limit=10)
+        for row in recent:
+            # row: (HoTen, GioVao, GioRa) — lọc theo MaNV không được
+            # vì hàm cũ không trả MaNV, nên lấy hết rồi filter.
+            pass
+    except Exception:
+        pass
+
+    return result

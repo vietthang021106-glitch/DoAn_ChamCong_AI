@@ -1,0 +1,710 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Trang cá nhân — Hệ thống Chấm công AI">
+    <title>AI Chấm Công — Trang Cá Nhân</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg-base:       #070b12;
+            --bg-surface:    #0c1120;
+            --bg-card:       #111827;
+            --bg-card-hover: #161f30;
+            --border:        #1e2d45;
+            --border-subtle: #162035;
+            --border-glow:   rgba(99,179,237,0.35);
+
+            --accent-blue:   #3b82f6;
+            --accent-cyan:   #06b6d4;
+            --accent-green:  #10b981;
+            --accent-red:    #ef4444;
+            --accent-orange: #f59e0b;
+            --accent-purple: #8b5cf6;
+
+            --grad-primary:  linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
+            --grad-green:    linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
+            --grad-orange:   linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
+            --grad-purple:   linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
+
+            --text-primary:   #f1f5f9;
+            --text-secondary: #94a3b8;
+            --text-muted:     #64748b;
+
+            --radius-sm:  8px;
+            --radius-md:  12px;
+            --radius-lg:  16px;
+
+            --shadow-sm:  0 2px 8px rgba(0,0,0,.4);
+            --shadow-md:  0 4px 20px rgba(0,0,0,.5);
+            --shadow-glow:0 0 20px rgba(59,130,246,.15);
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            font-family: 'Inter', system-ui, sans-serif;
+            background: var(--bg-base);
+            color: var(--text-primary);
+            min-height: 100vh;
+            line-height: 1.6;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* Header */
+        .header {
+            height: 64px;
+            background: var(--bg-surface);
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 28px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .brand-badge {
+            width: 38px;
+            height: 38px;
+            background: var(--grad-primary);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            box-shadow: 0 4px 12px rgba(59,130,246,0.3);
+        }
+
+        .brand-title {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--text-primary);
+        }
+
+        .brand-sub {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .live-clock {
+            text-align: right;
+            border-right: 1px solid var(--border);
+            padding-right: 16px;
+        }
+
+        .clock-time {
+            font-size: 0.95rem;
+            font-weight: 700;
+            font-variant-numeric: tabular-nums;
+            color: var(--text-primary);
+        }
+
+        .clock-date {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+        }
+
+        .user-tag {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .user-avatar {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: var(--grad-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.85rem;
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .user-details {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .user-name {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-primary);
+        }
+
+        .user-role {
+            font-size: 0.7rem;
+            color: var(--accent-cyan);
+        }
+
+        .btn-action {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 7px 14px;
+            border-radius: var(--radius-sm);
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            transition: all 0.2s;
+        }
+
+        .btn-admin {
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.4);
+            color: var(--accent-blue);
+        }
+
+        .btn-admin:hover {
+            background: rgba(59, 130, 246, 0.25);
+        }
+
+        .btn-logout {
+            background: rgba(239, 68, 68, 0.12);
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            color: #fca5a5;
+        }
+
+        .btn-logout:hover {
+            background: rgba(239, 68, 68, 0.25);
+            color: #fff;
+        }
+
+        /* Container */
+        .container {
+            max-width: 1080px;
+            margin: 32px auto;
+            padding: 0 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        /* Profile Banner */
+        .banner {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            padding: 24px 28px;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .banner::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 3px;
+            background: var(--grad-primary);
+        }
+
+        .banner-left {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .banner-avatar {
+            width: 64px;
+            height: 64px;
+            border-radius: 16px;
+            background: var(--grad-primary);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.6rem;
+            font-weight: 800;
+            color: #fff;
+            box-shadow: var(--shadow-glow);
+        }
+
+        .banner-title {
+            font-size: 1.3rem;
+            font-weight: 700;
+        }
+
+        .banner-sub {
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            margin-top: 4px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .badge-role {
+            padding: 3px 10px;
+            border-radius: 20px;
+            font-size: 0.72rem;
+            font-weight: 600;
+            background: rgba(6, 182, 212, 0.15);
+            border: 1px solid rgba(6, 182, 212, 0.35);
+            color: var(--accent-cyan);
+        }
+
+        .btn-refresh {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 16px;
+            background: var(--bg-surface);
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+            border-radius: var(--radius-sm);
+            font-size: 0.82rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-refresh:hover {
+            border-color: var(--accent-blue);
+            color: var(--text-primary);
+        }
+
+        /* KPI Grid */
+        .kpi-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+        }
+
+        @media (max-width: 860px) {
+            .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+            .banner { flex-direction: column; align-items: flex-start; gap: 16px; }
+        }
+
+        .kpi-card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-md);
+            padding: 20px;
+            position: relative;
+            overflow: hidden;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .kpi-card:hover {
+            transform: translateY(-2px);
+            box-shadow: var(--shadow-glow);
+            border-color: var(--border-glow);
+        }
+
+        .kpi-card::before {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; height: 2px;
+        }
+
+        .kpi-card.c-status::before { background: var(--grad-green); }
+        .kpi-card.c-shift::before  { background: var(--grad-primary); }
+        .kpi-card.c-in::before     { background: var(--grad-cyan); }
+        .kpi-card.c-out::before    { background: var(--grad-orange); }
+
+        .kpi-icon {
+            font-size: 20px;
+            margin-bottom: 12px;
+        }
+
+        .kpi-label {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+
+        .kpi-val {
+            font-size: 1.4rem;
+            font-weight: 700;
+            color: var(--text-primary);
+            margin-top: 6px;
+            font-variant-numeric: tabular-nums;
+        }
+
+        .kpi-desc {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 6px;
+        }
+
+        /* Card Section */
+        .card {
+            background: var(--bg-card);
+            border: 1px solid var(--border);
+            border-radius: var(--radius-lg);
+            overflow: hidden;
+            box-shadow: var(--shadow-sm);
+        }
+
+        .card-header {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-subtle);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+
+        .card-title {
+            font-size: 0.95rem;
+            font-weight: 700;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card-body {
+            padding: 24px;
+        }
+
+        .info-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 16px;
+        }
+
+        @media (max-width: 600px) {
+            .info-grid { grid-template-columns: 1fr; }
+        }
+
+        .info-item {
+            background: var(--bg-surface);
+            border: 1px solid var(--border-subtle);
+            border-radius: var(--radius-md);
+            padding: 14px 18px;
+        }
+
+        .info-label {
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+
+        .info-value {
+            font-size: 1rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-top: 4px;
+        }
+
+        /* Status Badge */
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.78rem;
+            font-weight: 600;
+        }
+
+        .status-badge.working {
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid rgba(16, 185, 129, 0.35);
+            color: var(--accent-green);
+        }
+
+        .status-badge.not-checked {
+            background: rgba(148, 163, 184, 0.12);
+            border: 1px solid rgba(148, 163, 184, 0.25);
+            color: var(--text-secondary);
+        }
+
+        .status-badge.finished {
+            background: rgba(59, 130, 246, 0.15);
+            border: 1px solid rgba(59, 130, 246, 0.35);
+            color: var(--accent-blue);
+        }
+
+        .status-badge.late {
+            background: rgba(245, 158, 11, 0.15);
+            border: 1px solid rgba(245, 158, 11, 0.35);
+            color: var(--accent-orange);
+        }
+
+        /* Guide box */
+        .guide-box {
+            background: rgba(59, 130, 246, 0.06);
+            border: 1px dashed rgba(59, 130, 246, 0.3);
+            border-radius: var(--radius-md);
+            padding: 16px 20px;
+            margin-top: 20px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+        }
+
+        .guide-icon {
+            font-size: 28px;
+        }
+
+        .guide-text {
+            font-size: 0.82rem;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .guide-text strong {
+            color: var(--text-primary);
+        }
+    </style>
+</head>
+<body>
+
+<!-- Header -->
+<header class="header">
+    <div class="header-brand">
+        <div class="brand-badge">⏱️</div>
+        <div>
+            <div class="brand-title">AI Chấm Công</div>
+            <div class="brand-sub">Trang Cá Nhân Nhân Viên</div>
+        </div>
+    </div>
+
+    <div class="header-right">
+        <div class="live-clock">
+            <div class="clock-time" id="clockTime">--:--:--</div>
+            <div class="clock-date" id="clockDate">--</div>
+        </div>
+
+        <div class="user-tag">
+            <div class="user-avatar" id="userAvatar">NV</div>
+            <div class="user-details">
+                <span class="user-name" id="headerUserName">Đang tải...</span>
+                <span class="user-role" id="headerUserRole">Nhân viên</span>
+            </div>
+        </div>
+
+        <a href="/" id="adminLink" class="btn-action btn-admin" style="display:none;">
+            ⚙️ Trang Quản trị
+        </a>
+
+        <a href="/logout" class="btn-action btn-logout">
+            ⎋ Đăng xuất
+        </a>
+    </div>
+</header>
+
+<!-- Main Container -->
+<main class="container">
+    <!-- Banner -->
+    <div class="banner">
+        <div class="banner-left">
+            <div class="banner-avatar" id="bannerAvatar">NV</div>
+            <div>
+                <h1 class="banner-title" id="bannerName">Đang tải thông tin...</h1>
+                <div class="banner-sub">
+                    <span id="bannerEmpId">Mã NV: --</span>
+                    <span>•</span>
+                    <span class="badge-role" id="bannerRole">Nhân viên</span>
+                </div>
+            </div>
+        </div>
+        <div>
+            <button class="btn-refresh" onclick="loadData()">
+                🔄 Cập nhật
+            </button>
+        </div>
+    </div>
+
+    <!-- KPI Grid -->
+    <div class="kpi-grid">
+        <div class="kpi-card c-status">
+            <div class="kpi-icon">⚡</div>
+            <div class="kpi-label">Trạng thái hôm nay</div>
+            <div class="kpi-val" id="kpiStatus">--</div>
+            <div class="kpi-desc">cập nhật tự động</div>
+        </div>
+
+        <div class="kpi-card c-shift">
+            <div class="kpi-icon">📅</div>
+            <div class="kpi-label">Ca làm việc</div>
+            <div class="kpi-val" id="kpiShift">--</div>
+            <div class="kpi-desc" id="kpiShiftTime">--:-- - --:--</div>
+        </div>
+
+        <div class="kpi-card c-in">
+            <div class="kpi-icon">📥</div>
+            <div class="kpi-label">Giờ Check-in</div>
+            <div class="kpi-val" id="kpiCheckIn" style="color:var(--accent-green);">--:--:--</div>
+            <div class="kpi-desc">giờ vào ca</div>
+        </div>
+
+        <div class="kpi-card c-out">
+            <div class="kpi-icon">📤</div>
+            <div class="kpi-label">Giờ Check-out</div>
+            <div class="kpi-val" id="kpiCheckOut" style="color:var(--accent-orange);">--:--:--</div>
+            <div class="kpi-desc">giờ ra ca</div>
+        </div>
+    </div>
+
+    <!-- Attendance Details Card -->
+    <div class="card">
+        <div class="card-header">
+            <div class="card-title">
+                <span>📋</span> Chi tiết chấm công hôm nay
+            </div>
+            <div id="statusBadgeContainer">
+                <span class="status-badge not-checked" id="detailStatusBadge">Chưa chấm công</span>
+            </div>
+        </div>
+        <div class="card-body">
+            <div class="info-grid">
+                <div class="info-item">
+                    <div class="info-label">Nhân viên</div>
+                    <div class="info-value" id="detailName">--</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Mã số nhân viên</div>
+                    <div class="info-value" id="detailMaNV">--</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Ca phân công</div>
+                    <div class="info-value" id="detailShiftName">Không có ca</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Khung giờ ca</div>
+                    <div class="info-value" id="detailShiftHours">--:-- đến --:--</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Thời gian vào</div>
+                    <div class="info-value" id="detailCheckIn">Chưa ghi nhận</div>
+                </div>
+                <div class="info-item">
+                    <div class="info-label">Thời gian ra</div>
+                    <div class="info-value" id="detailCheckOut">Chưa ghi nhận</div>
+                </div>
+            </div>
+
+            <!-- Guide Box -->
+            <div class="guide-box">
+                <div class="guide-icon">💡</div>
+                <div class="guide-text">
+                    <strong>Hướng dẫn chấm công:</strong> Vui lòng quét thẻ RFID hoặc đưa khuôn mặt trước camera AI đặt tại cổng ra vào để hệ thống ghi nhận tự động giờ vào và giờ ra.
+                </div>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+// Clock update
+function updateClock() {
+    const now = new Date();
+    document.getElementById('clockTime').textContent = now.toLocaleTimeString('vi-VN');
+    document.getElementById('clockDate').textContent = now.toLocaleDateString('vi-VN', {
+        weekday: 'long', year: 'numeric', month: 'numeric', day: 'numeric'
+    });
+}
+setInterval(updateClock, 1000);
+updateClock();
+
+// Fetch Info and Attendance
+async function loadData() {
+    try {
+        // User Info
+        const infoRes = await fetch('/api/me/info');
+        if (infoRes.ok) {
+            const user = await infoRes.json();
+            const name = user.HoTen || 'Nhân viên';
+            document.getElementById('headerUserName').textContent = name;
+            document.getElementById('headerUserRole').textContent = user.TenVaiTro || 'Nhân viên';
+            document.getElementById('bannerName').textContent = name;
+            document.getElementById('bannerEmpId').textContent = 'Mã NV: #' + (user.MaNV || '--');
+            document.getElementById('bannerRole').textContent = user.TenVaiTro || 'Nhân viên';
+            document.getElementById('detailName').textContent = name;
+            document.getElementById('detailMaNV').textContent = '#' + (user.MaNV || '--');
+
+            // Avatar 2 letters
+            const parts = name.trim().split(' ');
+            const initials = parts.length > 1 
+                ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+                : name.substring(0, 2).toUpperCase();
+            document.getElementById('userAvatar').textContent = initials;
+            document.getElementById('bannerAvatar').textContent = initials;
+
+            // Show admin link if Admin
+            if (user.MaVaiTro === 1) {
+                document.getElementById('adminLink').style.display = 'inline-flex';
+            }
+        }
+
+        // Attendance Data
+        const attRes = await fetch('/api/me/attendance');
+        if (attRes.ok) {
+            const data = await attRes.json();
+
+            // Status
+            const status = data.TrangThai || 'Chưa chấm công';
+            document.getElementById('kpiStatus').textContent = status;
+
+            // Shift
+            if (data.CaHomNay) {
+                document.getElementById('kpiShift').textContent = data.CaHomNay.TenCa || 'Ca Ngày';
+                document.getElementById('kpiShiftTime').textContent = 
+                    (data.CaHomNay.GioBatDau || '--') + ' - ' + (data.CaHomNay.GioKetThuc || '--');
+                document.getElementById('detailShiftName').textContent = data.CaHomNay.TenCa || 'Ca Ngày';
+                document.getElementById('detailShiftHours').textContent = 
+                    (data.CaHomNay.GioBatDau || '--') + ' đến ' + (data.CaHomNay.GioKetThuc || '--');
+            } else {
+                document.getElementById('kpiShift').textContent = 'Chưa xếp ca';
+                document.getElementById('kpiShiftTime').textContent = 'Tự do';
+                document.getElementById('detailShiftName').textContent = 'Không có ca';
+                document.getElementById('detailShiftHours').textContent = 'Không áp dụng';
+            }
+
+            // Times
+            const cc = data.ChamCong;
+            const gioVao = cc && cc.GioVao ? cc.GioVao : null;
+            const gioRa  = cc && cc.GioRa ? cc.GioRa : null;
+
+            document.getElementById('kpiCheckIn').textContent = gioVao || '--:--:--';
+            document.getElementById('kpiCheckOut').textContent = gioRa || '--:--:--';
+            document.getElementById('detailCheckIn').textContent = gioVao || 'Chưa ghi nhận';
+            document.getElementById('detailCheckOut').textContent = gioRa || 'Chưa ghi nhận';
+
+            // Badge
+            const badge = document.getElementById('detailStatusBadge');
+            badge.textContent = status;
+            if (status.includes('Đang làm việc') || status.includes('Đúng giờ')) {
+                badge.className = 'status-badge working';
+            } else if (status.includes('Trễ') || status.includes('Muộn')) {
+                badge.className = 'status-badge late';
+            } else if (status.includes('Đã') || status.includes('ra')) {
+                badge.className = 'status-badge finished';
+            } else {
+                badge.className = 'status-badge not-checked';
+            }
+        }
+    } catch (err) {
+        console.error('Lỗi tải dữ liệu:', err);
+    }
+}
+
+loadData();
+// Poll every 10 seconds
+setInterval(loadData, 10000);
+</script>
+
+</body>
+</html>

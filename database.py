@@ -658,3 +658,243 @@ def get_today_alert_count():
         return int(row[0]) if row else 0
     finally:
         conn.close()
+
+
+# ============================================================
+# VaiTro
+# ============================================================
+
+def get_all_roles():
+    """
+    Tất cả vai trò.
+    Trả về: (MaVaiTro, TenVaiTro)
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT MaVaiTro, TenVaiTro
+            FROM VaiTro
+            ORDER BY MaVaiTro
+        """)
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def role_exists(ma_vai_tro):
+    """Kiểm tra MaVaiTro có tồn tại trong VaiTro không."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 1 FROM VaiTro WHERE MaVaiTro = ?
+        """, (ma_vai_tro,))
+        return cursor.fetchone() is not None
+    finally:
+        conn.close()
+
+
+# ============================================================
+# NhanVien — Quản lý nhân viên
+# ============================================================
+
+def get_all_employees():
+    """
+    Tất cả nhân viên kèm tên vai trò.
+
+    Trả về mỗi row:
+        (MaNV, HoTen, AnhKhuonMat, MaVaiTro, TenVaiTro)
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                NV.MaNV,
+                NV.HoTen,
+                NV.AnhKhuonMat,
+                NV.MaVaiTro,
+                VT.TenVaiTro
+
+            FROM NhanVien NV
+
+            LEFT JOIN VaiTro VT
+                ON NV.MaVaiTro = VT.MaVaiTro
+
+            ORDER BY NV.MaNV
+        """)
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def get_employee_by_id(ma_nv):
+    """
+    Lấy thông tin 1 nhân viên theo MaNV.
+
+    Trả về row hoặc None.
+    Row: (MaNV, HoTen, AnhKhuonMat, MaVaiTro, TenVaiTro)
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                NV.MaNV,
+                NV.HoTen,
+                NV.AnhKhuonMat,
+                NV.MaVaiTro,
+                VT.TenVaiTro
+
+            FROM NhanVien NV
+
+            LEFT JOIN VaiTro VT
+                ON NV.MaVaiTro = VT.MaVaiTro
+
+            WHERE NV.MaNV = ?
+        """, (ma_nv,))
+        return cursor.fetchone()
+    finally:
+        conn.close()
+
+
+def insert_employee(ho_ten, ma_vai_tro):
+    """
+    Thêm nhân viên mới.
+    AnhKhuonMat luôn = NULL khi tạo mới.
+
+    Trả về MaNV vừa tạo (int) hoặc None nếu thất bại.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO NhanVien
+                (HoTen, AnhKhuonMat, MaVaiTro)
+            OUTPUT INSERTED.MaNV
+            VALUES (?, NULL, ?)
+        """, (ho_ten, ma_vai_tro))
+        row = cursor.fetchone()
+        conn.commit()
+        return int(row[0]) if row else None
+    finally:
+        conn.close()
+
+
+def update_employee(ma_nv, ho_ten, ma_vai_tro):
+    """
+    Cập nhật thông tin nhân viên.
+    CHỈ UPDATE: HoTen, MaVaiTro.
+    TUYỆT ĐỐI KHÔNG update AnhKhuonMat.
+
+    Trả về số row bị ảnh hưởng.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE NhanVien
+            SET
+                HoTen    = ?,
+                MaVaiTro = ?
+            WHERE MaNV = ?
+        """, (ho_ten, ma_vai_tro, ma_nv))
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
+# ============================================================
+# TaiKhoan — Xác thực
+# ============================================================
+
+def get_account_by_username(ten_dang_nhap):
+    """
+    Lấy tài khoản theo TenDangNhap.
+
+    Trả về row hoặc None.
+    Row: (MaTK, MaNV, TenDangNhap, MatKhau, HoTen, MaVaiTro, TenVaiTro)
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                TK.MaTK,
+                TK.MaNV,
+                TK.TenDangNhap,
+                TK.MatKhau,
+                NV.HoTen,
+                NV.MaVaiTro,
+                VT.TenVaiTro
+
+            FROM TaiKhoan TK
+
+            JOIN NhanVien NV
+                ON TK.MaNV = NV.MaNV
+
+            LEFT JOIN VaiTro VT
+                ON NV.MaVaiTro = VT.MaVaiTro
+
+            WHERE TK.TenDangNhap = ?
+        """, (ten_dang_nhap,))
+        return cursor.fetchone()
+    finally:
+        conn.close()
+
+
+def account_exists(ten_dang_nhap):
+    """Kiểm tra TenDangNhap đã tồn tại trong TaiKhoan chưa."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT 1 FROM TaiKhoan WHERE TenDangNhap = ?
+        """, (ten_dang_nhap,))
+        return cursor.fetchone() is not None
+    finally:
+        conn.close()
+
+
+def insert_account(ma_nv, ten_dang_nhap, mat_khau_hash):
+    """
+    Tạo tài khoản mới.
+    mat_khau_hash phải là mật khẩu ĐÃ HASH (werkzeug).
+
+    Trả về MaTK vừa tạo (int) hoặc None.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO TaiKhoan
+                (MaNV, TenDangNhap, MatKhau)
+            OUTPUT INSERTED.MaTK
+            VALUES (?, ?, ?)
+        """, (ma_nv, ten_dang_nhap, mat_khau_hash))
+        row = cursor.fetchone()
+        conn.commit()
+        return int(row[0]) if row else None
+    finally:
+        conn.close()
+
+
+def update_account_password(ma_tk, mat_khau_hash):
+    """
+    Cập nhật mật khẩu cho tài khoản.
+    Dùng để migrate mật khẩu từ plaintext sang hash.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            UPDATE TaiKhoan
+            SET MatKhau = ?
+            WHERE MaTK = ?
+        """, (mat_khau_hash, ma_tk))
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
