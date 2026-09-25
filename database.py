@@ -185,20 +185,22 @@ def get_today_record(ma_nv):
         conn.close()
 
 
-def insert_checkin(ma_nv, ma_ca, ma_tb=1):
+def insert_checkin(ma_nv, ma_ca, ma_tb=1, anh_vao=None):
     """
     Tạo bản ghi CHECK-IN.
     GioVao = GETDATE(), GioRa = NULL.
+    anh_vao: bytes JPEG hoặc None.
     Trả về MaCC vừa tạo.
     """
     conn = get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("""
-            INSERT INTO ChamCong (MaNV, GioVao, GioRa, MaTB, MaCa)
+            INSERT INTO ChamCong
+                (MaNV, GioVao, GioRa, MaTB, MaCa, AnhVao)
             OUTPUT INSERTED.MaCC
-            VALUES (?, GETDATE(), NULL, ?, ?)
-        """, (ma_nv, ma_tb, ma_ca))
+            VALUES (?, GETDATE(), NULL, ?, ?, ?)
+        """, (ma_nv, ma_tb, ma_ca, anh_vao))
         row = cursor.fetchone()
         conn.commit()
         return int(row[0]) if row else None
@@ -206,9 +208,10 @@ def insert_checkin(ma_nv, ma_ca, ma_tb=1):
         conn.close()
 
 
-def update_checkout(ma_cc):
+def update_checkout(ma_cc, anh_ra=None):
     """
-    Cập nhật GioRa = GETDATE() cho bản ghi MaCC.
+    Cập nhật GioRa = GETDATE() và AnhRa cho bản ghi MaCC.
+    anh_ra: bytes JPEG hoặc None.
     Trả về số row bị ảnh hưởng.
     """
     conn = get_connection()
@@ -216,11 +219,49 @@ def update_checkout(ma_cc):
         cursor = conn.cursor()
         cursor.execute("""
             UPDATE ChamCong
-            SET GioRa = GETDATE()
+            SET
+                GioRa = GETDATE(),
+                AnhRa = ?
             WHERE MaCC = ?
-        """, (ma_cc,))
+        """, (anh_ra, ma_cc))
         conn.commit()
         return cursor.rowcount
+    finally:
+        conn.close()
+
+
+def get_attendance_image(ma_cc, image_type):
+    """
+    Lấy ảnh bằng chứng chấm công.
+
+    image_type: "in"  → AnhVao
+                "out" → AnhRa
+
+    Không cho truyền tên column tùy ý từ client;
+    dùng if cố định để tránh SQL injection.
+
+    Trả về bytes hoặc None.
+    """
+    if image_type == "in":
+        column = "AnhVao"
+    elif image_type == "out":
+        column = "AnhRa"
+    else:
+        return None  # invalid type
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        # column đã được whitelist bởi if ở trên — an toàn
+        cursor.execute(f"""
+            SELECT {column}
+            FROM ChamCong
+            WHERE MaCC = ?
+        """, (ma_cc,))
+        row = cursor.fetchone()
+        if row is None:
+            return None
+        return bytes(row[0]) if row[0] is not None else None
     finally:
         conn.close()
 
@@ -251,6 +292,22 @@ def get_recent_cham_cong(limit=20):
 
             ORDER BY CC.GioVao DESC
         """)
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+def get_employee_attendance_history(ma_nv, limit=30):
+    limit = _safe_limit(limit, default=30)
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT TOP {limit}
+                GioVao, GioRa
+            FROM ChamCong
+            WHERE MaNV = ?
+            ORDER BY GioVao DESC
+        """, (ma_nv,))
         return cursor.fetchall()
     finally:
         conn.close()
@@ -423,6 +480,22 @@ def get_recent_health_data(limit=10):
 
             ORDER BY SK.ThoiGian DESC
         """)
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+def get_employee_health_history(ma_nv, limit=30):
+    limit = _safe_limit(limit, default=30)
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT TOP {limit}
+                NhipTim, SpO2, ThoiGian
+            FROM LichSuSucKhoe
+            WHERE MaNV = ?
+            ORDER BY ThoiGian DESC
+        """, (ma_nv,))
         return cursor.fetchall()
     finally:
         conn.close()
@@ -639,6 +712,27 @@ def get_recent_canh_bao(limit=10):
 
             ORDER BY CB.ThoiGian DESC
         """)
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+def get_employee_alert_history(ma_nv, limit=20):
+    limit = _safe_limit(limit, default=20)
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute(f"""
+            SELECT TOP {limit}
+                COALESCE(BH.TenBieuHien, LCB.TenLoaiCB) AS LoaiCanhBao,
+                CB.NoiDung,
+                CB.ThoiGian
+            FROM CanhBao CB
+            LEFT JOIN LoaiCanhBao LCB ON CB.MaLoaiCB = LCB.MaLoaiCB
+            LEFT JOIN LichSuTrangThai TT ON CB.MaTT = TT.MaTT
+            LEFT JOIN DanhMucBieuHien BH ON TT.MaBieuHien = BH.MaBieuHien
+            WHERE CB.MaNV = ?
+            ORDER BY CB.ThoiGian DESC
+        """, (ma_nv,))
         return cursor.fetchall()
     finally:
         conn.close()
@@ -896,5 +990,139 @@ def update_account_password(ma_tk, mat_khau_hash):
         """, (mat_khau_hash, ma_tk))
         conn.commit()
         return cursor.rowcount
+    finally:
+        conn.close()
+
+
+# ============================================================
+# FaceEmbedding — Enrollment
+# ============================================================
+
+def insert_face_embedding(ma_nv, vector_bytes, so_chieu=512):
+    """
+    Lưu một face embedding vào FaceEmbedding.
+
+    Tham số:
+        ma_nv        : MaNV (int)
+        vector_bytes : bytes float32, độ dài = so_chieu * 4
+        so_chieu     : số chiều embedding (mặc định 512)
+
+    Trả về MaEmbedding vừa INSERT (int) hoặc None.
+
+    Dùng parameterized query — KHÔNG nối binary vào SQL string.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            INSERT INTO FaceEmbedding
+                (MaNV, VectorData, SoChieu)
+            OUTPUT INSERTED.MaEmbedding
+            VALUES (?, ?, ?)
+        """, (ma_nv, vector_bytes, so_chieu))
+        row = cursor.fetchone()
+        conn.commit()
+        return int(row[0]) if row else None
+    finally:
+        conn.close()
+
+
+def get_face_embeddings(ma_nv):
+    """
+    Lấy tất cả embedding của một nhân viên.
+
+    Trả về list of rows:
+        (MaEmbedding, MaNV, VectorData, SoChieu, ThoiGianTao)
+
+    Trả list rỗng nếu không có embedding.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                MaEmbedding,
+                MaNV,
+                VectorData,
+                SoChieu,
+                ThoiGianTao
+            FROM FaceEmbedding
+            WHERE MaNV = ?
+            ORDER BY MaEmbedding
+        """, (ma_nv,))
+        return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def delete_face_embeddings(ma_nv):
+    """
+    Xóa TẤT CẢ embedding của nhân viên.
+    CHỈ gọi khi admin muốn đăng ký lại khuôn mặt.
+    KHÔNG tự động gọi trong quá trình capture.
+
+    Trả về số row đã xóa.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            DELETE FROM FaceEmbedding
+            WHERE MaNV = ?
+        """, (ma_nv,))
+        conn.commit()
+        return cursor.rowcount
+    finally:
+        conn.close()
+
+
+def count_face_embeddings(ma_nv):
+    """
+    Đếm số embedding hiện có của nhân viên.
+    Dùng để kiểm tra trước khi đăng ký.
+
+    Trả về int.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT COUNT(*)
+            FROM FaceEmbedding
+            WHERE MaNV = ?
+        """, (ma_nv,))
+        row = cursor.fetchone()
+        return int(row[0]) if row else 0
+    finally:
+        conn.close()
+
+
+def get_all_face_embeddings():
+    """
+    Lấy toàn bộ face embedding trong hệ thống, kèm HoTen.
+
+    Dùng cho PHASE 2 — Recognition / Matching.
+
+    Trả về list of rows:
+        (MaEmbedding, MaNV, VectorData, SoChieu, HoTen)
+
+    VectorData là bytes (float32 little-endian), KHÔNG encode Base64.
+    Trả list rỗng nếu chưa có embedding nào.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT
+                fe.MaEmbedding,
+                fe.MaNV,
+                fe.VectorData,
+                fe.SoChieu,
+                nv.HoTen
+            FROM FaceEmbedding fe
+            JOIN NhanVien nv ON nv.MaNV = fe.MaNV
+            ORDER BY fe.MaNV, fe.MaEmbedding
+        """)
+        return cursor.fetchall()
     finally:
         conn.close()

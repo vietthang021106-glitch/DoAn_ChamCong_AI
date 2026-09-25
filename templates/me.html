@@ -1,710 +1,426 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Trang cá nhân — Hệ thống Chấm công AI">
-    <title>AI Chấm Công — Trang Cá Nhân</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <style>
-        :root {
-            --bg-base:       #070b12;
-            --bg-surface:    #0c1120;
-            --bg-card:       #111827;
-            --bg-card-hover: #161f30;
-            --border:        #1e2d45;
-            --border-subtle: #162035;
-            --border-glow:   rgba(99,179,237,0.35);
-
-            --accent-blue:   #3b82f6;
-            --accent-cyan:   #06b6d4;
-            --accent-green:  #10b981;
-            --accent-red:    #ef4444;
-            --accent-orange: #f59e0b;
-            --accent-purple: #8b5cf6;
-
-            --grad-primary:  linear-gradient(135deg, #3b82f6 0%, #06b6d4 100%);
-            --grad-green:    linear-gradient(135deg, #10b981 0%, #06b6d4 100%);
-            --grad-orange:   linear-gradient(135deg, #f59e0b 0%, #f97316 100%);
-            --grad-purple:   linear-gradient(135deg, #8b5cf6 0%, #ec4899 100%);
-
-            --text-primary:   #f1f5f9;
-            --text-secondary: #94a3b8;
-            --text-muted:     #64748b;
-
-            --radius-sm:  8px;
-            --radius-md:  12px;
-            --radius-lg:  16px;
-
-            --shadow-sm:  0 2px 8px rgba(0,0,0,.4);
-            --shadow-md:  0 4px 20px rgba(0,0,0,.5);
-            --shadow-glow:0 0 20px rgba(59,130,246,.15);
-        }
-
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body {
-            font-family: 'Inter', system-ui, sans-serif;
-            background: var(--bg-base);
-            color: var(--text-primary);
-            min-height: 100vh;
-            line-height: 1.6;
-            -webkit-font-smoothing: antialiased;
-        }
-
-        /* Header */
-        .header {
-            height: 64px;
-            background: var(--bg-surface);
-            border-bottom: 1px solid var(--border);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 0 28px;
-            position: sticky;
-            top: 0;
-            z-index: 100;
-        }
-
-        .header-brand {
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .brand-badge {
-            width: 38px;
-            height: 38px;
-            background: var(--grad-primary);
-            border-radius: 10px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 20px;
-            box-shadow: 0 4px 12px rgba(59,130,246,0.3);
-        }
-
-        .brand-title {
-            font-size: 1.05rem;
-            font-weight: 700;
-            color: var(--text-primary);
-        }
-
-        .brand-sub {
-            font-size: 0.72rem;
-            color: var(--text-muted);
-        }
-
-        .header-right {
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .live-clock {
-            text-align: right;
-            border-right: 1px solid var(--border);
-            padding-right: 16px;
-        }
-
-        .clock-time {
-            font-size: 0.95rem;
-            font-weight: 700;
-            font-variant-numeric: tabular-nums;
-            color: var(--text-primary);
-        }
-
-        .clock-date {
-            font-size: 0.72rem;
-            color: var(--text-muted);
-        }
-
-        .user-tag {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-        }
-
-        .user-avatar {
-            width: 36px;
-            height: 36px;
-            border-radius: 50%;
-            background: var(--grad-primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 0.85rem;
-            font-weight: 700;
-            color: #fff;
-        }
-
-        .user-details {
-            display: flex;
-            flex-direction: column;
-        }
-
-        .user-name {
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: var(--text-primary);
-        }
-
-        .user-role {
-            font-size: 0.7rem;
-            color: var(--accent-cyan);
-        }
-
-        .btn-action {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 7px 14px;
-            border-radius: var(--radius-sm);
-            font-size: 0.8rem;
-            font-weight: 600;
-            cursor: pointer;
-            text-decoration: none;
-            transition: all 0.2s;
-        }
-
-        .btn-admin {
-            background: rgba(59, 130, 246, 0.15);
-            border: 1px solid rgba(59, 130, 246, 0.4);
-            color: var(--accent-blue);
-        }
-
-        .btn-admin:hover {
-            background: rgba(59, 130, 246, 0.25);
-        }
-
-        .btn-logout {
-            background: rgba(239, 68, 68, 0.12);
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            color: #fca5a5;
-        }
-
-        .btn-logout:hover {
-            background: rgba(239, 68, 68, 0.25);
-            color: #fff;
-        }
-
-        /* Container */
-        .container {
-            max-width: 1080px;
-            margin: 32px auto;
-            padding: 0 20px;
-            display: flex;
-            flex-direction: column;
-            gap: 24px;
-        }
-
-        /* Profile Banner */
-        .banner {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            padding: 24px 28px;
-            position: relative;
-            overflow: hidden;
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            box-shadow: var(--shadow-sm);
-        }
-
-        .banner::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0; height: 3px;
-            background: var(--grad-primary);
-        }
-
-        .banner-left {
-            display: flex;
-            align-items: center;
-            gap: 20px;
-        }
-
-        .banner-avatar {
-            width: 64px;
-            height: 64px;
-            border-radius: 16px;
-            background: var(--grad-primary);
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 1.6rem;
-            font-weight: 800;
-            color: #fff;
-            box-shadow: var(--shadow-glow);
-        }
-
-        .banner-title {
-            font-size: 1.3rem;
-            font-weight: 700;
-        }
-
-        .banner-sub {
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-            margin-top: 4px;
-            display: flex;
-            align-items: center;
-            gap: 12px;
-        }
-
-        .badge-role {
-            padding: 3px 10px;
-            border-radius: 20px;
-            font-size: 0.72rem;
-            font-weight: 600;
-            background: rgba(6, 182, 212, 0.15);
-            border: 1px solid rgba(6, 182, 212, 0.35);
-            color: var(--accent-cyan);
-        }
-
-        .btn-refresh {
-            display: inline-flex;
-            align-items: center;
-            gap: 6px;
-            padding: 8px 16px;
-            background: var(--bg-surface);
-            border: 1px solid var(--border);
-            color: var(--text-secondary);
-            border-radius: var(--radius-sm);
-            font-size: 0.82rem;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .btn-refresh:hover {
-            border-color: var(--accent-blue);
-            color: var(--text-primary);
-        }
-
-        /* KPI Grid */
-        .kpi-grid {
-            display: grid;
-            grid-template-columns: repeat(4, 1fr);
-            gap: 16px;
-        }
-
-        @media (max-width: 860px) {
-            .kpi-grid { grid-template-columns: repeat(2, 1fr); }
-            .banner { flex-direction: column; align-items: flex-start; gap: 16px; }
-        }
-
-        .kpi-card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-md);
-            padding: 20px;
-            position: relative;
-            overflow: hidden;
-            transition: transform 0.2s, box-shadow 0.2s;
-        }
-
-        .kpi-card:hover {
-            transform: translateY(-2px);
-            box-shadow: var(--shadow-glow);
-            border-color: var(--border-glow);
-        }
-
-        .kpi-card::before {
-            content: '';
-            position: absolute;
-            top: 0; left: 0; right: 0; height: 2px;
-        }
-
-        .kpi-card.c-status::before { background: var(--grad-green); }
-        .kpi-card.c-shift::before  { background: var(--grad-primary); }
-        .kpi-card.c-in::before     { background: var(--grad-cyan); }
-        .kpi-card.c-out::before    { background: var(--grad-orange); }
-
-        .kpi-icon {
-            font-size: 20px;
-            margin-bottom: 12px;
-        }
-
-        .kpi-label {
-            font-size: 0.72rem;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            font-weight: 600;
-            letter-spacing: 0.5px;
-        }
-
-        .kpi-val {
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: var(--text-primary);
-            margin-top: 6px;
-            font-variant-numeric: tabular-nums;
-        }
-
-        .kpi-desc {
-            font-size: 0.75rem;
-            color: var(--text-muted);
-            margin-top: 6px;
-        }
-
-        /* Card Section */
-        .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
-            border-radius: var(--radius-lg);
-            overflow: hidden;
-            box-shadow: var(--shadow-sm);
-        }
-
-        .card-header {
-            padding: 16px 24px;
-            border-bottom: 1px solid var(--border-subtle);
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-        }
-
-        .card-title {
-            font-size: 0.95rem;
-            font-weight: 700;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .card-body {
-            padding: 24px;
-        }
-
-        .info-grid {
-            display: grid;
-            grid-template-columns: repeat(2, 1fr);
-            gap: 16px;
-        }
-
-        @media (max-width: 600px) {
-            .info-grid { grid-template-columns: 1fr; }
-        }
-
-        .info-item {
-            background: var(--bg-surface);
-            border: 1px solid var(--border-subtle);
-            border-radius: var(--radius-md);
-            padding: 14px 18px;
-        }
-
-        .info-label {
-            font-size: 0.72rem;
-            color: var(--text-muted);
-            text-transform: uppercase;
-            font-weight: 600;
-        }
-
-        .info-value {
-            font-size: 1rem;
-            font-weight: 600;
-            color: var(--text-primary);
-            margin-top: 4px;
-        }
-
-        /* Status Badge */
-        .status-badge {
-            display: inline-block;
-            padding: 4px 12px;
-            border-radius: 20px;
-            font-size: 0.78rem;
-            font-weight: 600;
-        }
-
-        .status-badge.working {
-            background: rgba(16, 185, 129, 0.15);
-            border: 1px solid rgba(16, 185, 129, 0.35);
-            color: var(--accent-green);
-        }
-
-        .status-badge.not-checked {
-            background: rgba(148, 163, 184, 0.12);
-            border: 1px solid rgba(148, 163, 184, 0.25);
-            color: var(--text-secondary);
-        }
-
-        .status-badge.finished {
-            background: rgba(59, 130, 246, 0.15);
-            border: 1px solid rgba(59, 130, 246, 0.35);
-            color: var(--accent-blue);
-        }
-
-        .status-badge.late {
-            background: rgba(245, 158, 11, 0.15);
-            border: 1px solid rgba(245, 158, 11, 0.35);
-            color: var(--accent-orange);
-        }
-
-        /* Guide box */
-        .guide-box {
-            background: rgba(59, 130, 246, 0.06);
-            border: 1px dashed rgba(59, 130, 246, 0.3);
-            border-radius: var(--radius-md);
-            padding: 16px 20px;
-            margin-top: 20px;
-            display: flex;
-            align-items: center;
-            gap: 16px;
-        }
-
-        .guide-icon {
-            font-size: 28px;
-        }
-
-        .guide-text {
-            font-size: 0.82rem;
-            color: var(--text-secondary);
-            line-height: 1.5;
-        }
-
-        .guide-text strong {
-            color: var(--text-primary);
-        }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Trang cá nhân — Smart Attendance">
+  <title>Trang cá nhân — Smart Attendance</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
 </head>
 <body>
 
-<!-- Header -->
-<header class="header">
-    <div class="header-brand">
-        <div class="brand-badge">⏱️</div>
-        <div>
-            <div class="brand-title">AI Chấm Công</div>
-            <div class="brand-sub">Trang Cá Nhân Nhân Viên</div>
-        </div>
+<!-- ================================================================
+     TOPBAR (no sidebar for employee page)
+================================================================ -->
+<header class="me-topbar" role="banner">
+  <a class="me-brand" href="/me">
+    <div class="me-brand-logo">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
     </div>
+    <span class="me-brand-name">Smart Attendance</span>
+  </a>
 
-    <div class="header-right">
-        <div class="live-clock">
-            <div class="clock-time" id="clockTime">--:--:--</div>
-            <div class="clock-date" id="clockDate">--</div>
+  <div class="topbar-right">
+    <!-- Admin link (shown if admin role) -->
+    <a href="/" id="adminLink" class="btn btn-ghost btn-sm" style="display:none;">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width:13px;height:13px;">
+        <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+        <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+      </svg>
+      Trang quản trị
+    </a>
+
+    <!-- User menu -->
+    <div class="user-menu">
+      <button class="user-btn" id="userBtn" aria-label="Tài khoản">
+        <div class="user-avatar-sm" id="userAvatar">NV</div>
+        <div class="user-info-text">
+          <span class="user-name-sm" id="headerUserName">Đang tải...</span>
+          <span class="user-role-sm" id="headerUserRole">Nhân viên</span>
         </div>
-
-        <div class="user-tag">
-            <div class="user-avatar" id="userAvatar">NV</div>
-            <div class="user-details">
-                <span class="user-name" id="headerUserName">Đang tải...</span>
-                <span class="user-role" id="headerUserRole">Nhân viên</span>
-            </div>
-        </div>
-
-        <a href="/" id="adminLink" class="btn-action btn-admin" style="display:none;">
-            ⚙️ Trang Quản trị
+        <svg class="user-chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      <div class="user-dropdown">
+        <a class="dropdown-item danger" href="/logout">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Đăng xuất
         </a>
-
-        <a href="/logout" class="btn-action btn-logout">
-            ⎋ Đăng xuất
-        </a>
+      </div>
     </div>
+  </div>
 </header>
 
-<!-- Main Container -->
-<main class="container">
-    <!-- Banner -->
-    <div class="banner">
-        <div class="banner-left">
-            <div class="banner-avatar" id="bannerAvatar">NV</div>
-            <div>
-                <h1 class="banner-title" id="bannerName">Đang tải thông tin...</h1>
-                <div class="banner-sub">
-                    <span id="bannerEmpId">Mã NV: --</span>
-                    <span>•</span>
-                    <span class="badge-role" id="bannerRole">Nhân viên</span>
-                </div>
-            </div>
-        </div>
-        <div>
-            <button class="btn-refresh" onclick="loadData()">
-                🔄 Cập nhật
-            </button>
-        </div>
+<!-- ================================================================
+     MAIN CONTENT
+================================================================ -->
+<main class="me-main" role="main">
+
+  <!-- GREETING -->
+  <div class="me-greeting">
+    <div class="me-greeting-name">Xin chào, <span id="bannerName">...</span></div>
+    <div class="me-greeting-date" id="greetingDate">--</div>
+  </div>
+
+  <!-- TODAY CARD -->
+  <div class="panel">
+    <div class="panel-header">
+      <span class="panel-title">Hôm nay</span>
+      <span id="statusBadgeContainer">
+        <span class="badge badge-gray" id="detailStatusBadge">Đang tải...</span>
+      </span>
+    </div>
+    <div class="today-card">
+      <div class="today-item">
+        <div class="today-label">Ca làm việc</div>
+        <div class="today-value" id="kpiShift">--</div>
+        <div class="today-sub" id="kpiShiftTime">--:-- – --:--</div>
+      </div>
+      <div class="today-item">
+        <div class="today-label">Giờ vào</div>
+        <div class="today-value tabular" id="kpiCheckIn" style="color:var(--success);">--:--</div>
+        <div class="today-sub">giờ check-in</div>
+      </div>
+      <div class="today-item">
+        <div class="today-label">Giờ ra</div>
+        <div class="today-value tabular" id="kpiCheckOut" style="color:var(--text-secondary);">--:--</div>
+        <div class="today-sub">giờ check-out</div>
+      </div>
+      <div class="today-item">
+        <div class="today-label">Trạng thái</div>
+        <div class="today-value" id="kpiStatus">--</div>
+        <div class="today-sub">hôm nay</div>
+      </div>
     </div>
 
-    <!-- KPI Grid -->
-    <div class="kpi-grid">
-        <div class="kpi-card c-status">
-            <div class="kpi-icon">⚡</div>
-            <div class="kpi-label">Trạng thái hôm nay</div>
-            <div class="kpi-val" id="kpiStatus">--</div>
-            <div class="kpi-desc">cập nhật tự động</div>
-        </div>
+    <!-- Guide note -->
+    <div style="padding:12px 24px 14px; border-top:1px solid var(--border-light); font-size:12.5px; color:var(--text-muted); display:flex; align-items:flex-start; gap:8px;">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width:14px;height:14px;flex-shrink:0;margin-top:1px;color:var(--primary);">
+        <circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/>
+      </svg>
+      Vui lòng quét thẻ RFID hoặc đưa khuôn mặt trước camera tại cổng ra vào để hệ thống ghi nhận giờ vào / ra.
+    </div>
+  </div>
 
-        <div class="kpi-card c-shift">
-            <div class="kpi-icon">📅</div>
-            <div class="kpi-label">Ca làm việc</div>
-            <div class="kpi-val" id="kpiShift">--</div>
-            <div class="kpi-desc" id="kpiShiftTime">--:-- - --:--</div>
-        </div>
+  <!-- ATTENDANCE HISTORY TABLE -->
+  <div class="panel">
+    <div class="panel-header">
+      <span class="panel-title">Lịch sử chấm công</span>
+      <span class="panel-badge" id="att-history-badge">--</span>
+    </div>
+    <div class="table-wrap" style="max-height:300px; overflow-y:auto;">
+      <table class="data-table" id="att-history-table">
+        <thead>
+          <tr>
+            <th>Ngày</th>
+            <th>Ca làm việc</th>
+            <th>Giờ vào</th>
+            <th>Giờ ra</th>
+            <th>Trạng thái</th>
+          </tr>
+        </thead>
+        <tbody id="att-history-tbody">
+          <tr><td colspan="5" class="td-empty">Đang tải...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
 
-        <div class="kpi-card c-in">
-            <div class="kpi-icon">📥</div>
-            <div class="kpi-label">Giờ Check-in</div>
-            <div class="kpi-val" id="kpiCheckIn" style="color:var(--accent-green);">--:--:--</div>
-            <div class="kpi-desc">giờ vào ca</div>
-        </div>
+  <!-- TWO-COL: Health + Alerts -->
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;" class="me-bottom">
 
-        <div class="kpi-card c-out">
-            <div class="kpi-icon">📤</div>
-            <div class="kpi-label">Giờ Check-out</div>
-            <div class="kpi-val" id="kpiCheckOut" style="color:var(--accent-orange);">--:--:--</div>
-            <div class="kpi-desc">giờ ra ca</div>
-        </div>
+    <!-- Sức khỏe gần đây -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Sức khỏe gần đây</span>
+        <span class="panel-badge">Dữ liệu cảm biến</span>
+      </div>
+      <div style="max-height:240px; overflow-y:auto;">
+        <table class="data-table" id="health-table">
+          <thead>
+            <tr>
+              <th>Nhịp tim</th>
+              <th>SpO₂</th>
+              <th>Thời gian</th>
+            </tr>
+          </thead>
+          <tbody id="health-tbody">
+            <tr><td colspan="3" class="td-empty">Đang tải...</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
 
-    <!-- Attendance Details Card -->
-    <div class="card">
-        <div class="card-header">
-            <div class="card-title">
-                <span>📋</span> Chi tiết chấm công hôm nay
-            </div>
-            <div id="statusBadgeContainer">
-                <span class="status-badge not-checked" id="detailStatusBadge">Chưa chấm công</span>
-            </div>
-        </div>
-        <div class="card-body">
-            <div class="info-grid">
-                <div class="info-item">
-                    <div class="info-label">Nhân viên</div>
-                    <div class="info-value" id="detailName">--</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Mã số nhân viên</div>
-                    <div class="info-value" id="detailMaNV">--</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Ca phân công</div>
-                    <div class="info-value" id="detailShiftName">Không có ca</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Khung giờ ca</div>
-                    <div class="info-value" id="detailShiftHours">--:-- đến --:--</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Thời gian vào</div>
-                    <div class="info-value" id="detailCheckIn">Chưa ghi nhận</div>
-                </div>
-                <div class="info-item">
-                    <div class="info-label">Thời gian ra</div>
-                    <div class="info-value" id="detailCheckOut">Chưa ghi nhận</div>
-                </div>
-            </div>
-
-            <!-- Guide Box -->
-            <div class="guide-box">
-                <div class="guide-icon">💡</div>
-                <div class="guide-text">
-                    <strong>Hướng dẫn chấm công:</strong> Vui lòng quét thẻ RFID hoặc đưa khuôn mặt trước camera AI đặt tại cổng ra vào để hệ thống ghi nhận tự động giờ vào và giờ ra.
-                </div>
-            </div>
-        </div>
+    <!-- Cảnh báo của tôi -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Cảnh báo của tôi</span>
+        <span class="panel-badge">Gần nhất</span>
+      </div>
+      <div style="max-height:240px; overflow-y:auto;">
+        <table class="data-table" id="alert-table">
+          <thead>
+            <tr>
+              <th>Loại</th>
+              <th>Mô tả</th>
+              <th>Thời gian</th>
+            </tr>
+          </thead>
+          <tbody id="alert-tbody">
+            <tr><td colspan="3" class="td-empty">Đang tải...</td></tr>
+          </tbody>
+        </table>
+      </div>
     </div>
+
+  </div><!-- /me-bottom -->
+
 </main>
 
+<div id="toast-container"></div>
+
+<!-- ================================================================
+     JAVASCRIPT
+================================================================ -->
+<script src="{{ url_for('static', filename='js/ui.js') }}"></script>
 <script>
-// Clock update
-function updateClock() {
+/* ============================================================
+   CLOCK + DATE
+============================================================ */
+(function() {
+  const days   = ['Chủ nhật','Thứ Hai','Thứ Ba','Thứ Tư','Thứ Năm','Thứ Sáu','Thứ Bảy'];
+  const months = ['tháng 1','tháng 2','tháng 3','tháng 4','tháng 5','tháng 6',
+                  'tháng 7','tháng 8','tháng 9','tháng 10','tháng 11','tháng 12'];
+  function tick() {
     const now = new Date();
-    document.getElementById('clockTime').textContent = now.toLocaleTimeString('vi-VN');
-    document.getElementById('clockDate').textContent = now.toLocaleDateString('vi-VN', {
-        weekday: 'long', year: 'numeric', month: 'numeric', day: 'numeric'
-    });
+    const el  = document.getElementById('greetingDate');
+    if (el) el.textContent =
+      `${days[now.getDay()]}, ngày ${now.getDate()} ${months[now.getMonth()]} ${now.getFullYear()}`;
+  }
+  tick();
+  setInterval(tick, 60000);
+})();
+
+/* ============================================================
+   HELPERS
+============================================================ */
+function fmtTime(str) {
+  if (!str) return '--';
+  const m = str.match(/(\d{2}):(\d{2})/);
+  return m ? `${m[1]}:${m[2]}` : str;
 }
-setInterval(updateClock, 1000);
-updateClock();
 
-// Fetch Info and Attendance
-async function loadData() {
-    try {
-        // User Info
-        const infoRes = await fetch('/api/me/info');
-        if (infoRes.ok) {
-            const user = await infoRes.json();
-            const name = user.HoTen || 'Nhân viên';
-            document.getElementById('headerUserName').textContent = name;
-            document.getElementById('headerUserRole').textContent = user.TenVaiTro || 'Nhân viên';
-            document.getElementById('bannerName').textContent = name;
-            document.getElementById('bannerEmpId').textContent = 'Mã NV: #' + (user.MaNV || '--');
-            document.getElementById('bannerRole').textContent = user.TenVaiTro || 'Nhân viên';
-            document.getElementById('detailName').textContent = name;
-            document.getElementById('detailMaNV').textContent = '#' + (user.MaNV || '--');
+function initials(name) {
+  if (!name) return '?';
+  const parts = name.trim().split(' ');
+  return parts.length >= 2
+    ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    : name.substring(0, 2).toUpperCase();
+}
 
-            // Avatar 2 letters
-            const parts = name.trim().split(' ');
-            const initials = parts.length > 1 
-                ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-                : name.substring(0, 2).toUpperCase();
-            document.getElementById('userAvatar').textContent = initials;
-            document.getElementById('bannerAvatar').textContent = initials;
+function badgeForStatus(status) {
+  if (!status) return '<span class="badge badge-gray">--</span>';
+  const s = status.toLowerCase();
+  if (s.includes('đúng giờ'))         return `<span class="badge badge-green">${status}</span>`;
+  if (s.includes('trễ') || s.includes('đi trễ')) return `<span class="badge badge-orange">${status}</span>`;
+  if (s.includes('về sớm'))           return `<span class="badge badge-red">${status}</span>`;
+  if (s.includes('đang làm'))         return `<span class="badge badge-blue">${status}</span>`;
+  return `<span class="badge badge-gray">${status}</span>`;
+}
 
-            // Show admin link if Admin
-            if (user.MaVaiTro === 1) {
-                document.getElementById('adminLink').style.display = 'inline-flex';
-            }
-        }
+/* ============================================================
+   FETCH: Profile  (FIX: was /api/me/info — correct is /api/me/profile)
+============================================================ */
+async function loadProfile() {
+  try {
+    const res  = await fetch('/api/me/profile');
+    if (!res.ok) return;
+    const user = await res.json();
 
-        // Attendance Data
-        const attRes = await fetch('/api/me/attendance');
-        if (attRes.ok) {
-            const data = await attRes.json();
+    const name = user.HoTen || 'Nhân viên';
+    document.getElementById('bannerName').textContent     = name;
+    document.getElementById('headerUserName').textContent = name;
+    document.getElementById('headerUserRole').textContent = user.TenVaiTro || 'Nhân viên';
+    document.getElementById('userAvatar').textContent     = initials(name);
 
-            // Status
-            const status = data.TrangThai || 'Chưa chấm công';
-            document.getElementById('kpiStatus').textContent = status;
-
-            // Shift
-            if (data.CaHomNay) {
-                document.getElementById('kpiShift').textContent = data.CaHomNay.TenCa || 'Ca Ngày';
-                document.getElementById('kpiShiftTime').textContent = 
-                    (data.CaHomNay.GioBatDau || '--') + ' - ' + (data.CaHomNay.GioKetThuc || '--');
-                document.getElementById('detailShiftName').textContent = data.CaHomNay.TenCa || 'Ca Ngày';
-                document.getElementById('detailShiftHours').textContent = 
-                    (data.CaHomNay.GioBatDau || '--') + ' đến ' + (data.CaHomNay.GioKetThuc || '--');
-            } else {
-                document.getElementById('kpiShift').textContent = 'Chưa xếp ca';
-                document.getElementById('kpiShiftTime').textContent = 'Tự do';
-                document.getElementById('detailShiftName').textContent = 'Không có ca';
-                document.getElementById('detailShiftHours').textContent = 'Không áp dụng';
-            }
-
-            // Times
-            const cc = data.ChamCong;
-            const gioVao = cc && cc.GioVao ? cc.GioVao : null;
-            const gioRa  = cc && cc.GioRa ? cc.GioRa : null;
-
-            document.getElementById('kpiCheckIn').textContent = gioVao || '--:--:--';
-            document.getElementById('kpiCheckOut').textContent = gioRa || '--:--:--';
-            document.getElementById('detailCheckIn').textContent = gioVao || 'Chưa ghi nhận';
-            document.getElementById('detailCheckOut').textContent = gioRa || 'Chưa ghi nhận';
-
-            // Badge
-            const badge = document.getElementById('detailStatusBadge');
-            badge.textContent = status;
-            if (status.includes('Đang làm việc') || status.includes('Đúng giờ')) {
-                badge.className = 'status-badge working';
-            } else if (status.includes('Trễ') || status.includes('Muộn')) {
-                badge.className = 'status-badge late';
-            } else if (status.includes('Đã') || status.includes('ra')) {
-                badge.className = 'status-badge finished';
-            } else {
-                badge.className = 'status-badge not-checked';
-            }
-        }
-    } catch (err) {
-        console.error('Lỗi tải dữ liệu:', err);
+    if (user.MaVaiTro === 1) {
+      document.getElementById('adminLink').style.display = 'inline-flex';
     }
+  } catch(e) {
+    console.error('[me/profile]', e);
+  }
+}
+
+/* ============================================================
+   FETCH: Today status
+============================================================ */
+async function loadToday() {
+  try {
+    const res  = await fetch('/api/me/today');
+    if (!res.ok) return;
+    const data = await res.json();
+
+    // Shift info
+    if (data.CaHomNay) {
+      document.getElementById('kpiShift').textContent =
+        data.CaHomNay.TenCa || 'Ca làm việc';
+      document.getElementById('kpiShiftTime').textContent =
+        `${data.CaHomNay.GioBatDau || '--'} – ${data.CaHomNay.GioKetThuc || '--'}`;
+    } else {
+      document.getElementById('kpiShift').textContent     = 'Chưa xếp ca';
+      document.getElementById('kpiShiftTime').textContent = '--';
+    }
+
+    // Times
+    const cc   = data.ChamCong;
+    const vao  = cc && cc.GioVao ? fmtTime(cc.GioVao) : '--:--';
+    const ra   = cc && cc.GioRa  ? fmtTime(cc.GioRa)  : '--:--';
+    document.getElementById('kpiCheckIn').textContent  = vao;
+    document.getElementById('kpiCheckOut').textContent = ra;
+
+    // Status
+    const status = data.TrangThai || 'Chưa chấm công';
+    document.getElementById('kpiStatus').textContent = status;
+
+    // Badge
+    const badge = document.getElementById('detailStatusBadge');
+    badge.outerHTML = badgeForStatus(status).replace('class="badge', 'id="detailStatusBadge" class="badge');
+    // Re-set text since outerHTML replaces the element
+    const newBadge = document.getElementById('detailStatusBadge');
+    if (newBadge) newBadge.textContent = status;
+
+  } catch(e) {
+    console.error('[me/today]', e);
+  }
+}
+
+/* ============================================================
+   FETCH: Attendance history
+============================================================ */
+async function loadAttendanceHistory() {
+  try {
+    const res  = await fetch('/api/me/attendance');
+    if (!res.ok) return;
+    const data = await res.json();
+
+    const records = Array.isArray(data) ? data
+      : (data.records || data.Records || []);
+
+    const badge = document.getElementById('att-history-badge');
+    const tbody = document.getElementById('att-history-tbody');
+
+    badge.textContent = `${records.length} bản ghi`;
+
+    if (!records.length) {
+      tbody.innerHTML = '<tr><td colspan="5" class="td-empty">Chưa có lịch sử chấm công</td></tr>';
+      return;
+    }
+
+    tbody.innerHTML = records.map(r => {
+      // Determine status from available fields
+      const status = r.TrangThaiTongHop || r.TrangThaiVao || r.TrangThai || '--';
+      return `
+      <tr>
+        <td class="tabular text-sm">${r.Ngay || r.ngay || '--'}</td>
+        <td>
+          <div class="shift-name">${r.TenCa || '--'}</div>
+          <span class="shift-hours">${r.GioBatDau || '--'} – ${r.GioKetThuc || '--'}</span>
+        </td>
+        <td class="tabular fw-600" style="color:var(--success);">${r.GioVao ? fmtTime(r.GioVao) : '--'}</td>
+        <td class="tabular text-muted">${r.GioRa  ? fmtTime(r.GioRa)  : '--'}</td>
+        <td>${badgeForStatus(status)}</td>
+      </tr>`;
+    }).join('');
+
+  } catch(e) {
+    console.error('[me/attendance]', e);
+  }
+}
+
+/* ============================================================
+   FETCH: Health (personal)
+============================================================ */
+async function loadHealth() {
+  try {
+    const res  = await fetch('/api/me/health');
+    if (!res.ok) return;
+    const data = await res.json();
+    const tbody = document.getElementById('health-tbody');
+
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="3" class="td-empty">Chưa có dữ liệu</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.map(r => `
+      <tr>
+        <td><span class="fw-600" style="color:var(--danger);">${r.NhipTim}</span> <span class="text-xs text-muted">bpm</span></td>
+        <td><span class="fw-600">${r.SpO2}</span><span class="text-xs text-muted">%</span></td>
+        <td class="text-xs text-muted tabular">${r.ThoiGian}</td>
+      </tr>
+    `).join('');
+  } catch(e) {
+    console.error('[me/health]', e);
+  }
+}
+
+/* ============================================================
+   FETCH: Alerts (personal)
+============================================================ */
+async function loadAlerts() {
+  try {
+    const res  = await fetch('/api/me/alerts');
+    if (!res.ok) return;
+    const data = await res.json();
+    const tbody = document.getElementById('alert-tbody');
+
+    if (!data.length) {
+      tbody.innerHTML = '<tr><td colspan="3" class="td-empty">Không có cảnh báo</td></tr>';
+      return;
+    }
+    tbody.innerHTML = data.map(r => {
+      const loai = (r.LoaiCanhBao || '').toLowerCase();
+      const cls  = loai.includes('ngu') || loai.includes('buồn') ? 'badge-red'
+        : loai.includes('guc') || loai.includes('tilt') ? 'badge-orange' : 'badge-gray';
+      return `
+      <tr>
+        <td><span class="badge ${cls}">${r.LoaiCanhBao || '--'}</span></td>
+        <td class="text-xs text-muted">${r.MoTa || '--'}</td>
+        <td class="text-xs text-muted tabular">${r.ThoiGian}</td>
+      </tr>`;
+    }).join('');
+  } catch(e) {
+    console.error('[me/alerts]', e);
+  }
+}
+
+/* ============================================================
+   LOAD ALL DATA
+============================================================ */
+async function loadData() {
+  await Promise.all([
+    loadProfile(),
+    loadToday(),
+    loadAttendanceHistory(),
+    loadHealth(),
+    loadAlerts(),
+  ]);
 }
 
 loadData();
-// Poll every 10 seconds
-setInterval(loadData, 10000);
+setInterval(loadToday, 10000);
 </script>
 
+<style>
+@media (max-width: 700px) {
+  .me-bottom { grid-template-columns: 1fr !important; }
+}
+</style>
 </body>
 </html>

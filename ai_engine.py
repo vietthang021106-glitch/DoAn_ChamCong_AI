@@ -767,7 +767,34 @@ class DrowsinessDetector:
 
 
 # ============================================================
-# Singleton
+# Singleton — với fallback nếu MediaPipe lỗi version/environment
 # ============================================================
 
-detector = DrowsinessDetector()
+class _DummyDetector:
+    """
+    Fallback khi MediaPipe không khởi tạo được.
+    Cung cấp đủ interface để app.py không bị AttributeError.
+    analyze_frame trả frame gốc và không có alert.
+    """
+    active_ma_nv = None
+
+    def analyze_frame(self, frame):
+        return frame, None
+
+    def set_active_employee(self, ma_nv):
+        self.active_ma_nv = ma_nv
+
+    def clear_active_employee(self):
+        self.active_ma_nv = None
+
+    def get_current_status(self):
+        return {"status": "AI_UNAVAILABLE", "message": "MediaPipe init failed"}
+
+
+try:
+    detector = DrowsinessDetector()
+except Exception as _ai_init_err:
+    import traceback as _tb
+    print(f"[ai_engine] WARN: MediaPipe init failed — using DummyDetector.\n"
+          f"            Error: {_ai_init_err}")
+    detector = _DummyDetector()

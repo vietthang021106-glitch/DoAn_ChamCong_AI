@@ -7,6 +7,7 @@ app.py — Flask Controller (Tầng Presentation)
 - Login / Logout + phân quyền theo VaiTro
 """
 
+import os
 import threading
 import functools
 import cv2
@@ -18,7 +19,9 @@ import services
 import ai_engine
 
 app = Flask(__name__)
-app.secret_key = 'doan_chamcong_ai_secret_2024'
+app.secret_key = os.getenv("SECRET_KEY", "dev-secret-change-me")
+app.config["SESSION_COOKIE_HTTPONLY"] = True
+app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
 
 # ============================================================
@@ -221,6 +224,7 @@ def me_page():
 # ============================================================
 
 @app.route('/video_feed')
+@login_required
 def video_feed():
     return Response(
         generate_frames(),
@@ -268,6 +272,11 @@ def receive_cham_cong():
     POST /api/chamcong
     Body: {"MaNV": int, "MaTB": int (optional)}
     PUBLIC — ESP32 gọi trực tiếp.
+
+    Nếu camera singleton đang mở, capture 1 frame và encode JPG
+    để lưu làm bằng chứng. Không tạo camera mới.
+    Nếu camera chưa mở hoặc có lỗi, image_bytes = None —
+    chấm công vẫn hoạt động bình thường.
     """
     data = request.get_json()
 
@@ -280,7 +289,22 @@ def receive_cham_cong():
     if ma_nv is None:
         return jsonify({"status": "error", "message": "Thiếu MaNV"}), 400
 
-    result = services.process_attendance(ma_nv, ma_tb)
+    # --- Capture frame từ singleton camera ---
+    # Dùng get_camera() thay vì check _camera is not None trực tiếp,
+    # để camera được khởi tạo ngay cả khi /video_feed chưa được gọi trước.
+    image_bytes = None
+    try:
+        cam = get_camera()
+        with _camera_lock:
+            if cam is not None and cam.isOpened():
+                ok, frame = cam.read()
+                if ok and frame is not None:
+                    image_bytes = services.encode_frame_to_jpg(frame)
+    except Exception as _cap_err:
+        # Không được để lỗi camera block chấm công
+        print(f"[app] Canh bao: khong the capture frame: {_cap_err}")
+
+    result = services.process_attendance(ma_nv, ma_tb, image_bytes)
 
     # Đồng bộ AI Engine
     if result.get("action") == "checkin" and result.get("status") == "success":
@@ -294,18 +318,57 @@ def receive_cham_cong():
     return jsonify(result), http_code
 
 
+
+# ============================================================
+# Routes — Ảnh bằng chứng chấm công (admin only)
+# ============================================================
+
+import database as _db
+
+@app.route('/api/attendance/<int:ma_cc>/image/in')
+@admin_required
+def attendance_image_in(ma_cc):
+    """
+    GET /api/attendance/<ma_cc>/image/in
+    Trả AnhVao của bản ghi MaCC dưới dạng image/jpeg.
+    """
+    img = _db.get_attendance_image(ma_cc, "in")
+    if img is None:
+        return jsonify({
+            "status":  "error",
+            "message": "Không có ảnh bằng chứng",
+        }), 404
+    return Response(img, mimetype="image/jpeg")
+
+
+@app.route('/api/attendance/<int:ma_cc>/image/out')
+@admin_required
+def attendance_image_out(ma_cc):
+    """
+    GET /api/attendance/<ma_cc>/image/out
+    Trả AnhRa của bản ghi MaCC dưới dạng image/jpeg.
+    """
+    img = _db.get_attendance_image(ma_cc, "out")
+    if img is None:
+        return jsonify({
+            "status":  "error",
+            "message": "Không có ảnh bằng chứng",
+        }), 404
+    return Response(img, mimetype="image/jpeg")
+
+
 # ============================================================
 # Routes — Dashboard API (admin required)
 # ============================================================
 
 @app.route('/api/get_health')
-@login_required
+@admin_required
 def get_health():
     return jsonify(services.fetch_health_data())
 
 
 @app.route('/api/chart/health')
-@login_required
+@admin_required
 def chart_health():
     return jsonify(services.fetch_health_chart_data())
 
@@ -323,31 +386,31 @@ def chart_environment():
 
 
 @app.route('/api/get_chamcong')
-@login_required
+@admin_required
 def get_chamcong():
     return jsonify(services.fetch_attendance_history())
 
 
 @app.route('/api/get_chamcong_today')
-@login_required
+@admin_required
 def get_chamcong_today():
     return jsonify(services.fetch_today_attendance_summary())
 
 
 @app.route('/api/get_chamcong_weekly')
-@login_required
+@admin_required
 def get_chamcong_weekly():
     return jsonify(services.fetch_attendance_weekly())
 
 
 @app.route('/api/dashboard/attendance')
-@login_required
+@admin_required
 def dashboard_attendance():
     return jsonify(services.fetch_attendance_dashboard())
 
 
 @app.route('/api/attendance/today')
-@login_required
+@admin_required
 def attendance_today():
     data = services.fetch_attendance_dashboard()
     return jsonify(data.get("Records", []))
@@ -358,7 +421,7 @@ def attendance_today():
 # ============================================================
 
 @app.route('/api/shifts')
-@login_required
+@admin_required
 def get_shifts():
     return jsonify(services.fetch_all_shifts())
 
@@ -384,7 +447,7 @@ def post_assign_shift():
 # ============================================================
 
 @app.route('/api/get_alerts')
-@login_required
+@admin_required
 def get_alerts():
     limit = request.args.get('limit', 10, type=int)
     return jsonify(services.fetch_alert_history(limit=limit))
@@ -466,6 +529,107 @@ def update_employee(ma_nv):
 
 
 # ============================================================
+# Routes — Face Enrollment (admin)
+# ============================================================
+
+import time as _time
+import database as _db
+
+@app.route('/api/employees/<int:ma_nv>/face/register', methods=['POST'])
+@admin_required
+def register_face(ma_nv):
+    """
+    POST /api/employees/<ma_nv>/face/register
+
+    Dang ky khuon mat cho nhan vien qua InsightFace.
+    Thu 5 frame tu camera singleton (khong tao camera moi).
+    Moi frame phai co dung 1 khuon mat.
+    Luu 5 embedding 512D vao FaceEmbedding.
+
+    Neu da co embedding: tra loi 409, KHONG ghi de am tham.
+    """
+    # 1. Kiem tra nhan vien ton tai
+    emp = services.fetch_employee(ma_nv)
+    if emp is None:
+        return jsonify({
+            "status":  "error",
+            "message": "Khong tim thay nhan vien",
+        }), 404
+
+    # 2. Kiem tra da co embedding chua
+    existing = _db.count_face_embeddings(ma_nv)
+    if existing > 0:
+        return jsonify({
+            "status":  "error",
+            "message": f"Nhan vien da dang ky khuon mat ({existing} embedding). "
+                       f"Dung endpoint re-register de dang ky lai.",
+        }), 409
+
+    # 3. Thu frame tu camera singleton
+    TARGET_FRAMES = 5
+    FRAME_INTERVAL = 0.3   # giay giua cac frame
+    MAX_ATTEMPTS  = 25     # so lan thu toi da
+
+    frames = []
+    attempts = 0
+
+    cam = get_camera()
+    if cam is None or not cam.isOpened():
+        return jsonify({
+            "status":  "error",
+            "message": "Camera khong kha dung",
+        }), 503
+
+    while len(frames) < TARGET_FRAMES and attempts < MAX_ATTEMPTS:
+        attempts += 1
+        with _camera_lock:
+            ok, frame = cam.read()
+
+        if not ok or frame is None:
+            _time.sleep(0.1)
+            continue
+
+        frames.append(frame)
+
+        if len(frames) < TARGET_FRAMES:
+            _time.sleep(FRAME_INTERVAL)
+
+    if not frames:
+        return jsonify({
+            "status":  "error",
+            "message": "Khong doc duoc frame tu camera",
+        }), 503
+
+    # 4. Dang ky qua services
+    result = services.register_face(ma_nv=ma_nv, frames=frames, target_count=TARGET_FRAMES)
+
+    if not result.get("success"):
+        msg = result.get("message", "Dang ky that bai")
+        errors = result.get("errors", [])
+
+        # Chon HTTP code phu hop
+        if "khuon mat" in msg.lower() or "mot khuon mat" in msg.lower():
+            http_code = 400
+        else:
+            http_code = 500
+
+        return jsonify({
+            "status":  "error",
+            "message": msg,
+            "errors":  errors,
+        }), http_code
+
+    return jsonify({
+        "status":           "success",
+        "message":          "Dang ky khuon mat thanh cong",
+        "MaNV":             ma_nv,
+        "embeddings_saved": result["embeddings_saved"],
+        "dimensions":       result["dimensions"],
+        "errors":           result.get("errors", []),
+    }), 200
+
+
+# ============================================================
 # Routes — Trang cá nhân API
 # ============================================================
 
@@ -477,16 +641,32 @@ def api_me_attendance():
     return jsonify(services.fetch_my_attendance(ma_nv))
 
 
-@app.route('/api/me/info')
+@app.route('/api/me/profile')
 @login_required
-def api_me_info():
-    """GET /api/me/info — Thông tin user đang login."""
-    return jsonify({
-        "MaNV":      session.get('MaNV'),
-        "HoTen":     session.get('HoTen'),
-        "MaVaiTro":  session.get('MaVaiTro'),
-        "TenVaiTro": session.get('TenVaiTro'),
-    })
+def api_me_profile():
+    ma_nv = session.get('MaNV')
+    return jsonify(services.fetch_employee_profile(ma_nv))
+
+
+@app.route('/api/me/today')
+@login_required
+def api_me_today():
+    ma_nv = session.get('MaNV')
+    return jsonify(services.fetch_my_today_status(ma_nv))
+
+
+@app.route('/api/me/health')
+@login_required
+def api_me_health():
+    ma_nv = session.get('MaNV')
+    return jsonify(services.fetch_my_health(ma_nv))
+
+
+@app.route('/api/me/alerts')
+@login_required
+def api_me_alerts():
+    ma_nv = session.get('MaNV')
+    return jsonify(services.fetch_my_alerts(ma_nv))
 
 
 # ============================================================

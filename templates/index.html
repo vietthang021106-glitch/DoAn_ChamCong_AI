@@ -1,769 +1,488 @@
 <!DOCTYPE html>
 <html lang="vi">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="Hệ thống quản lý chấm công thông minh AI — Dashboard tổng quan">
-    <title>AI Chấm Công — Dashboard</title>
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
-    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
-    <style>
-    /* ====================================================
-       Design Tokens — Dark Theme
-    ==================================================== */
-    :root {
-        --bg-base:       #070b12;
-        --bg-surface:    #0c1120;
-        --bg-card:       #111827;
-        --bg-card-hover: #161f30;
-        --bg-sidebar:    #090e1d;
-
-        --border:        #1e2d45;
-        --border-subtle: #162035;
-        --border-glow:   rgba(99,179,237,0.35);
-
-        --accent-blue:   #3b82f6;
-        --accent-cyan:   #06b6d4;
-        --accent-green:  #10b981;
-        --accent-red:    #ef4444;
-        --accent-orange: #f59e0b;
-        --accent-purple: #8b5cf6;
-        --accent-teal:   #14b8a6;
-        --accent-rose:   #f43f5e;
-
-        --grad-primary: linear-gradient(135deg,#3b82f6 0%,#06b6d4 100%);
-        --grad-green:   linear-gradient(135deg,#10b981 0%,#06b6d4 100%);
-        --grad-red:     linear-gradient(135deg,#ef4444 0%,#f97316 100%);
-        --grad-orange:  linear-gradient(135deg,#f59e0b 0%,#f97316 100%);
-        --grad-purple:  linear-gradient(135deg,#8b5cf6 0%,#ec4899 100%);
-        --grad-teal:    linear-gradient(135deg,#14b8a6 0%,#06b6d4 100%);
-        --grad-rose:    linear-gradient(135deg,#f43f5e 0%,#fb923c 100%);
-        --grad-sidebar: linear-gradient(180deg,#090e1d 0%,#07101e 100%);
-
-        --text-primary:   #f1f5f9;
-        --text-secondary: #94a3b8;
-        --text-muted:     #475569;
-
-        --radius-sm:  8px;
-        --radius-md:  12px;
-        --radius-lg:  16px;
-
-        --sidebar-w:  240px;
-        --header-h:   64px;
-
-        --shadow-sm:  0 2px 8px rgba(0,0,0,.4);
-        --shadow-md:  0 4px 20px rgba(0,0,0,.5);
-        --shadow-glow:0 0 20px rgba(59,130,246,.15);
-
-        --ease:       all .2s cubic-bezier(.4,0,.2,1);
-        --ease-slow:  all .35s cubic-bezier(.4,0,.2,1);
-    }
-
-    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0;}
-    html{scroll-behavior:smooth;}
-    body{font-family:'Inter',system-ui,sans-serif;background:var(--bg-base);color:var(--text-primary);min-height:100vh;line-height:1.6;-webkit-font-smoothing:antialiased;}
-    a{text-decoration:none;color:inherit;}
-    button{cursor:pointer;border:none;background:none;font-family:inherit;}
-
-    ::-webkit-scrollbar{width:5px;height:5px;}
-    ::-webkit-scrollbar-track{background:transparent;}
-    ::-webkit-scrollbar-thumb{background:#1e3a5f;border-radius:10px;}
-    ::-webkit-scrollbar-thumb:hover{background:var(--accent-blue);}
-
-    /* ====================================================
-       Layout
-    ==================================================== */
-    .app-shell{
-        display:grid;
-        grid-template-columns:var(--sidebar-w) 1fr;
-        grid-template-rows:var(--header-h) 1fr;
-        grid-template-areas:"sidebar header" "sidebar main";
-        min-height:100vh;
-    }
-
-    /* ====================================================
-       SIDEBAR
-    ==================================================== */
-    .sidebar{
-        grid-area:sidebar;
-        background:var(--grad-sidebar);
-        border-right:1px solid var(--border-subtle);
-        display:flex;flex-direction:column;
-        position:fixed;top:0;left:0;
-        width:var(--sidebar-w);height:100vh;
-        z-index:200;overflow:hidden;
-    }
-    .sidebar::after{
-        content:'';position:absolute;top:0;right:0;width:1px;height:100%;
-        background:linear-gradient(180deg,transparent 0%,rgba(59,130,246,.4) 30%,rgba(6,182,212,.4) 70%,transparent 100%);
-    }
-    .sidebar-brand{
-        display:flex;align-items:center;gap:10px;
-        padding:0 18px;height:var(--header-h);
-        border-bottom:1px solid var(--border-subtle);flex-shrink:0;
-    }
-    .brand-icon{
-        width:36px;height:36px;background:var(--grad-primary);border-radius:var(--radius-sm);
-        display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;
-        box-shadow:0 0 16px rgba(59,130,246,.4);
-    }
-    .brand-text{display:flex;flex-direction:column;line-height:1.2;}
-    .brand-name{font-size:.82rem;font-weight:700;color:var(--text-primary);letter-spacing:.2px;}
-    .brand-sub{font-size:.62rem;color:var(--text-muted);letter-spacing:.5px;text-transform:uppercase;}
-
-    .sidebar-nav{flex:1;padding:12px 10px;display:flex;flex-direction:column;gap:2px;overflow-y:auto;}
-    .nav-label-group{font-size:.6rem;font-weight:600;letter-spacing:1px;text-transform:uppercase;color:var(--text-muted);padding:10px 10px 5px;}
-
-    .nav-item{
-        display:flex;align-items:center;gap:10px;padding:9px 12px;
-        border-radius:var(--radius-sm);font-size:.845rem;font-weight:500;
-        color:var(--text-secondary);transition:var(--ease);position:relative;cursor:pointer;
-    }
-    .nav-item:hover{background:rgba(59,130,246,.08);color:var(--text-primary);}
-    .nav-item.active{background:rgba(59,130,246,.15);color:var(--accent-blue);}
-    .nav-item.active::before{
-        content:'';position:absolute;left:0;top:50%;transform:translateY(-50%);
-        width:3px;height:60%;background:var(--grad-primary);border-radius:0 3px 3px 0;
-    }
-    .nav-icon{
-        width:32px;height:32px;border-radius:6px;display:flex;align-items:center;
-        justify-content:center;font-size:14px;flex-shrink:0;
-        background:rgba(255,255,255,.04);transition:var(--ease);
-    }
-    .nav-item.active .nav-icon{background:rgba(59,130,246,.2);}
-    .nav-item:hover .nav-icon{background:rgba(59,130,246,.12);}
-
-    .sidebar-footer{padding:12px 10px;border-top:1px solid var(--border-subtle);flex-shrink:0;}
-    .sidebar-version{font-size:.65rem;color:var(--text-muted);text-align:center;}
-
-    /* ====================================================
-       HEADER
-    ==================================================== */
-    .header{
-        grid-area:header;
-        background:rgba(12,17,32,.95);backdrop-filter:blur(12px);
-        border-bottom:1px solid var(--border);
-        display:flex;align-items:center;padding:0 24px;gap:14px;
-        position:sticky;top:0;z-index:100;
-        margin-left:var(--sidebar-w);
-    }
-    .header-title{display:flex;flex-direction:column;}
-    .header-title-main{
-        font-size:.95rem;font-weight:700;
-        background:var(--grad-primary);-webkit-background-clip:text;
-        -webkit-text-fill-color:transparent;background-clip:text;line-height:1.2;
-    }
-    .header-title-sub{font-size:.68rem;color:var(--text-muted);}
-    .header-divider{width:1px;height:30px;background:var(--border);margin:0 2px;}
-    .header-right{margin-left:auto;display:flex;align-items:center;gap:12px;}
-    .header-datetime{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2;}
-    .datetime-time{font-size:.88rem;font-weight:700;color:var(--text-primary);font-variant-numeric:tabular-nums;}
-    .datetime-date{font-size:.65rem;color:var(--text-muted);}
-
-    .live-badge{
-        display:flex;align-items:center;gap:6px;font-size:.7rem;font-weight:700;
-        color:var(--accent-green);background:rgba(16,185,129,.1);
-        border:1px solid rgba(16,185,129,.25);padding:5px 12px;border-radius:20px;letter-spacing:.5px;
-    }
-    .live-dot{
-        width:7px;height:7px;background:var(--accent-green);border-radius:50%;
-        animation:livePulse 1.5s ease-in-out infinite;box-shadow:0 0 6px var(--accent-green);
-    }
-    @keyframes livePulse{0%,100%{opacity:1;transform:scale(1);}50%{opacity:.5;transform:scale(.75);}}
-
-    .ai-badge{padding:5px 12px;border-radius:20px;font-size:.7rem;font-weight:700;letter-spacing:.4px;transition:var(--ease);}
-    .ai-badge.normal {background:rgba(16,185,129,.15);color:#10b981;border:1px solid rgba(16,185,129,.3);}
-    .ai-badge.warning{background:rgba(239,68,68,.2);color:#ef4444;border:1px solid rgba(239,68,68,.4);animation:alertBlink .7s infinite;}
-    .ai-badge.tilt   {background:rgba(245,158,11,.2);color:#f59e0b;border:1px solid rgba(245,158,11,.4);animation:alertBlink .7s infinite;}
-    .ai-badge.none   {background:rgba(71,85,105,.2);color:var(--text-secondary);border:1px solid var(--border);}
-    @keyframes alertBlink{0%,100%{opacity:1;}50%{opacity:.55;}}
-
-    .user-avatar{
-        width:34px;height:34px;border-radius:50%;background:var(--grad-purple);
-        display:flex;align-items:center;justify-content:center;font-size:.75rem;font-weight:700;
-        color:#fff;border:2px solid rgba(139,92,246,.4);cursor:pointer;transition:var(--ease);flex-shrink:0;
-    }
-    .user-avatar:hover{transform:scale(1.08);box-shadow:0 0 14px rgba(139,92,246,.4);}
-
-    /* ====================================================
-       MAIN
-    ==================================================== */
-    .main{
-        grid-area:main;margin-left:var(--sidebar-w);
-        padding:22px 24px;display:flex;flex-direction:column;gap:20px;min-width:0;
-    }
-    .page-heading{display:flex;align-items:center;justify-content:space-between;}
-    .page-heading-title{font-size:1.2rem;font-weight:700;}
-    .page-heading-sub{font-size:.78rem;color:var(--text-muted);margin-top:2px;}
-
-    /* ====================================================
-       KPI GRID — 7 thẻ
-    ==================================================== */
-    .kpi-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:12px;}
-
-    @media(max-width:1400px){.kpi-grid{grid-template-columns:repeat(4,1fr);}}
-    @media(max-width:900px) {.kpi-grid{grid-template-columns:repeat(2,1fr);}}
-
-    .kpi-card{
-        background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-md);
-        padding:15px 16px;position:relative;overflow:hidden;transition:var(--ease-slow);cursor:default;
-    }
-    .kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;opacity:.7;transition:var(--ease);}
-    .kpi-card.c-blue::before  {background:var(--grad-primary);}
-    .kpi-card.c-cyan::before  {background:linear-gradient(135deg,#06b6d4,#3b82f6);}
-    .kpi-card.c-green::before {background:var(--grad-green);}
-    .kpi-card.c-orange::before{background:var(--grad-orange);}
-    .kpi-card.c-red::before   {background:var(--grad-red);}
-    .kpi-card.c-rose::before  {background:var(--grad-rose);}
-    .kpi-card.c-teal::before  {background:var(--grad-teal);}
-
-    .kpi-card:hover{border-color:var(--border-glow);background:var(--bg-card-hover);transform:translateY(-3px);box-shadow:var(--shadow-glow),var(--shadow-md);}
-    .kpi-card:hover::before{opacity:1;}
-
-    .kpi-icon{
-        width:32px;height:32px;border-radius:7px;display:flex;align-items:center;
-        justify-content:center;font-size:15px;margin-bottom:9px;
-    }
-    .kpi-card.c-blue   .kpi-icon{background:rgba(59,130,246,.15);}
-    .kpi-card.c-cyan   .kpi-icon{background:rgba(6,182,212,.15);}
-    .kpi-card.c-green  .kpi-icon{background:rgba(16,185,129,.15);}
-    .kpi-card.c-orange .kpi-icon{background:rgba(245,158,11,.15);}
-    .kpi-card.c-red    .kpi-icon{background:rgba(239,68,68,.15);}
-    .kpi-card.c-rose   .kpi-icon{background:rgba(244,63,94,.15);}
-    .kpi-card.c-teal   .kpi-icon{background:rgba(20,184,166,.15);}
-
-    .kpi-label{font-size:.64rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;font-weight:600;margin-bottom:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-    .kpi-value{font-size:1.7rem;font-weight:800;line-height:1;font-variant-numeric:tabular-nums;}
-    .kpi-card.c-blue   .kpi-value{color:var(--accent-blue);}
-    .kpi-card.c-cyan   .kpi-value{color:var(--accent-cyan);}
-    .kpi-card.c-green  .kpi-value{color:var(--accent-green);}
-    .kpi-card.c-orange .kpi-value{color:var(--accent-orange);}
-    .kpi-card.c-red    .kpi-value{color:var(--accent-red);}
-    .kpi-card.c-rose   .kpi-value{color:var(--accent-rose);}
-    .kpi-card.c-teal   .kpi-value{color:var(--accent-teal);}
-    .kpi-sub{font-size:.64rem;color:var(--text-muted);margin-top:4px;}
-
-    /* ====================================================
-       Section Header
-    ==================================================== */
-    .section-hdr{display:flex;align-items:center;gap:10px;}
-    .section-hdr-title{font-size:.74rem;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:var(--text-secondary);white-space:nowrap;}
-    .section-hdr-line{flex:1;height:1px;background:linear-gradient(90deg,var(--border) 0%,transparent 100%);}
-
-    /* ====================================================
-       CARD
-    ==================================================== */
-    .card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden;box-shadow:var(--shadow-sm);transition:var(--ease-slow);}
-    .card:hover{border-color:rgba(59,130,246,.2);box-shadow:var(--shadow-md);}
-    .card-hdr{display:flex;align-items:center;justify-content:space-between;padding:13px 16px;border-bottom:1px solid var(--border-subtle);}
-    .card-title{font-size:.85rem;font-weight:600;color:var(--text-primary);display:flex;align-items:center;gap:8px;}
-    .card-icon{width:26px;height:26px;border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:13px;flex-shrink:0;}
-    .card-icon.blue  {background:rgba(59,130,246,.15);}
-    .card-icon.green {background:rgba(16,185,129,.15);}
-    .card-icon.red   {background:rgba(239,68,68,.15);}
-    .card-icon.orange{background:rgba(245,158,11,.15);}
-    .card-icon.purple{background:rgba(139,92,246,.15);}
-    .card-icon.cyan  {background:rgba(6,182,212,.15);}
-    .card-badge{font-size:.65rem;font-weight:600;color:var(--text-muted);background:rgba(255,255,255,.04);border:1px solid var(--border-subtle);padding:2px 8px;border-radius:10px;white-space:nowrap;}
-    .card-body{padding:16px;}
-
-    /* ====================================================
-       ATTENDANCE LAYOUT — 65% table + 35% camera
-    ==================================================== */
-    .attendance-layout{display:grid;grid-template-columns:1fr 340px;gap:18px;align-items:start;}
-    @media(max-width:1300px){.attendance-layout{grid-template-columns:1fr 300px;}}
-    @media(max-width:1100px){.attendance-layout{grid-template-columns:1fr;}}
-
-    /* ====================================================
-       ATTENDANCE TABLE
-    ==================================================== */
-    .table-scroll-lg{max-height:460px;overflow-y:auto;}
-    .table-scroll   {max-height:250px;overflow-y:auto;}
-
-    .data-table{width:100%;border-collapse:collapse;font-size:.8rem;}
-    .data-table thead th{
-        padding:9px 13px;text-align:left;font-size:.66rem;font-weight:700;
-        text-transform:uppercase;letter-spacing:.6px;color:var(--text-muted);
-        border-bottom:1px solid var(--border-subtle);background:rgba(0,0,0,.2);
-        position:sticky;top:0;backdrop-filter:blur(4px);
-    }
-    .data-table tbody tr{border-bottom:1px solid var(--border-subtle);transition:var(--ease);}
-    .data-table tbody tr:last-child{border-bottom:none;}
-    .data-table tbody tr:hover{background:rgba(59,130,246,.05);}
-    .data-table tbody td{padding:9px 13px;color:var(--text-primary);vertical-align:middle;}
-
-    /* Employee cell */
-    .emp-cell{display:flex;align-items:center;gap:9px;}
-    .emp-avatar{
-        width:28px;height:28px;border-radius:50%;background:var(--grad-primary);
-        display:flex;align-items:center;justify-content:center;font-size:.66rem;font-weight:700;color:#fff;flex-shrink:0;
-    }
-    .emp-name{font-weight:600;font-size:.82rem;}
-    .emp-id{font-size:.65rem;color:var(--text-muted);}
-
-    /* Shift info */
-    .shift-cell{display:flex;flex-direction:column;gap:1px;}
-    .shift-name{font-size:.78rem;font-weight:500;}
-    .shift-hours{font-size:.67rem;color:var(--text-muted);}
-
-    /* ====================================================
-       BADGES
-    ==================================================== */
-    .badge{display:inline-flex;align-items:center;gap:3px;padding:3px 9px;border-radius:10px;font-size:.67rem;font-weight:600;white-space:nowrap;}
-    .badge-green  {background:rgba(16,185,129,.15);color:#10b981;border:1px solid rgba(16,185,129,.25);}
-    .badge-blue   {background:rgba(59,130,246,.15);color:#3b82f6;border:1px solid rgba(59,130,246,.25);}
-    .badge-orange {background:rgba(245,158,11,.15);color:#f59e0b;border:1px solid rgba(245,158,11,.25);}
-    .badge-red    {background:rgba(239,68,68,.15);color:#ef4444;border:1px solid rgba(239,68,68,.25);}
-    .badge-gray   {background:rgba(71,85,105,.15);color:#94a3b8;border:1px solid rgba(71,85,105,.2);}
-    .badge-purple {background:rgba(139,92,246,.15);color:#8b5cf6;border:1px solid rgba(139,92,246,.25);}
-    .badge-cyan   {background:rgba(6,182,212,.15);color:#06b6d4;border:1px solid rgba(6,182,212,.25);}
-    .badge-rose   {background:rgba(244,63,94,.15);color:#f43f5e;border:1px solid rgba(244,63,94,.25);}
-
-    /* No data */
-    .no-data{padding:28px;text-align:center;color:var(--text-muted);font-size:.8rem;}
-    .no-data-icon{font-size:26px;margin-bottom:6px;display:block;opacity:.5;}
-
-    /* ====================================================
-       CAMERA
-    ==================================================== */
-    .cam-wrapper{position:relative;background:#000;border-radius:0 0 var(--radius-md) var(--radius-md);overflow:hidden;aspect-ratio:4/3;}
-    .cam-wrapper img{width:100%;height:100%;object-fit:cover;display:block;}
-    .cam-overlay{position:absolute;inset:0;background:linear-gradient(to bottom,transparent 60%,rgba(0,0,0,.5) 100%);pointer-events:none;}
-    .cam-top-bar{position:absolute;top:8px;left:8px;right:8px;display:flex;justify-content:space-between;align-items:center;}
-    .scan-corner{position:absolute;width:16px;height:16px;opacity:.7;}
-    .scan-corner.tl{top:6px;left:6px;border-top:2px solid var(--accent-cyan);border-left:2px solid var(--accent-cyan);}
-    .scan-corner.tr{top:6px;right:6px;border-top:2px solid var(--accent-cyan);border-right:2px solid var(--accent-cyan);}
-    .scan-corner.bl{bottom:38px;left:6px;border-bottom:2px solid var(--accent-cyan);border-left:2px solid var(--accent-cyan);}
-    .scan-corner.br{bottom:38px;right:6px;border-bottom:2px solid var(--accent-cyan);border-right:2px solid var(--accent-cyan);}
-
-    /* Env bar */
-    .env-bar{padding:9px 14px;display:flex;align-items:center;gap:12px;border-top:1px solid var(--border-subtle);background:rgba(7,11,18,.8);flex-wrap:wrap;}
-    .env-item{display:flex;flex-direction:column;gap:1px;}
-    .env-label{font-size:.6rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;font-weight:600;}
-    .env-val{font-size:.9rem;font-weight:700;}
-    .env-sep{width:1px;height:22px;background:var(--border-subtle);}
-    .env-time{margin-left:auto;font-size:.6rem;color:var(--text-muted);text-align:right;line-height:1.4;}
-
-    /* AI alert mini */
-    .cam-alerts{padding:10px 14px;border-top:1px solid var(--border-subtle);}
-    .cam-alerts-title{font-size:.63rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:.6px;margin-bottom:7px;}
-    .cam-alert-item{display:flex;align-items:center;gap:6px;padding:5px 9px;border-radius:var(--radius-sm);background:rgba(239,68,68,.07);border:1px solid rgba(239,68,68,.15);margin-bottom:5px;font-size:.72rem;}
-    .cam-alert-item:last-child{margin-bottom:0;}
-    .cai-name{font-weight:600;}
-    .cai-type{color:var(--accent-red);}
-    .cai-time{margin-left:auto;color:var(--text-muted);font-size:.65rem;}
-    .cam-no-alert{font-size:.73rem;color:var(--accent-green);display:flex;align-items:center;gap:5px;}
-
-    /* ====================================================
-       CHARTS GRID
-    ==================================================== */
-    .charts-grid{display:grid;grid-template-columns:300px 1fr;gap:18px;align-items:start;}
-    @media(max-width:1100px){.charts-grid{grid-template-columns:1fr;}}
-    .chart-container{position:relative;}
-    .chart-donut{height:220px;}
-    .chart-bar  {height:200px;}
-
-    .donut-legend{display:flex;flex-direction:column;gap:7px;margin-top:14px;}
-    .legend-item{display:flex;align-items:center;justify-content:space-between;font-size:.75rem;}
-    .legend-left{display:flex;align-items:center;gap:7px;}
-    .legend-dot{width:9px;height:9px;border-radius:50%;flex-shrink:0;}
-    .legend-label{color:var(--text-secondary);}
-    .legend-count{font-weight:700;}
-
-    /* ====================================================
-       Bottom grid: health + env + alerts
-    ==================================================== */
-    .bottom-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;}
-
-    /* ====================================================
-       Text utils
-    ==================================================== */
-    .text-green {color:var(--accent-green)!important;}
-    .text-blue  {color:var(--accent-blue)!important;}
-    .text-cyan  {color:var(--accent-cyan)!important;}
-    .text-orange{color:var(--accent-orange)!important;}
-    .text-red   {color:var(--accent-red)!important;}
-    .text-muted {color:var(--text-muted)!important;}
-    .text-sm    {font-size:.75rem!important;}
-    .text-xs    {font-size:.67rem!important;}
-    .fw-600     {font-weight:600;}
-
-    /* ====================================================
-       Responsive
-    ==================================================== */
-    @media(max-width:900px){
-        :root{--sidebar-w:58px;}
-        .brand-text,.nav-item .nav-label,.nav-label-group,.sidebar-version,.brand-sub{display:none;}
-        .nav-item{justify-content:center;padding:10px;}
-        .nav-icon{margin:0;}
-        .brand-icon{margin:0 auto;}
-        .sidebar-brand{justify-content:center;padding:0 10px;}
-    }
-    @media(max-width:600px){
-        .kpi-grid{grid-template-columns:repeat(2,1fr);}
-        .main{padding:14px;}
-    }
-    </style>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Tổng quan chấm công — Smart Attendance">
+  <title>Tổng quan — Smart Attendance</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/app.css') }}">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
+
 <div class="app-shell">
 
-<!-- =========================================================
+<!-- ================================================================
      SIDEBAR
-========================================================= -->
-<aside class="sidebar" role="navigation" aria-label="Navigation chính">
-    <div class="sidebar-brand">
-        <div class="brand-icon">🤖</div>
-        <div class="brand-text">
-            <span class="brand-name">AI ChamCong</span>
-            <span class="brand-sub">Smart Attendance</span>
-        </div>
+================================================================ -->
+<aside class="sidebar" role="navigation" aria-label="Menu chính">
+  <a class="sidebar-brand" href="/">
+    <div class="brand-logo">
+      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10"/>
+        <polyline points="12 6 12 12 16 14"/>
+      </svg>
     </div>
-
-    <nav class="sidebar-nav">
-        <span class="nav-label-group">Tổng quan</span>
-        <a class="nav-item active" id="nav-dashboard" href="#dashboard" onclick="return navTo('dashboard')">
-            <div class="nav-icon">🏠</div><span class="nav-label">Dashboard</span>
-        </a>
-
-        <span class="nav-label-group">Quản lý</span>
-        <a class="nav-item" id="nav-employees" href="/employees">
-            <div class="nav-icon">👥</div><span class="nav-label">Nhân viên</span>
-        </a>
-
-        <span class="nav-label-group">Chấm công</span>
-        <a class="nav-item" id="nav-chamcong" href="#chamcong" onclick="return navTo('chamcong')">
-            <div class="nav-icon">✅</div><span class="nav-label">Chấm công hôm nay</span>
-        </a>
-        <a class="nav-item" id="nav-thongke" href="#thongke" onclick="return navTo('thongke')">
-            <div class="nav-icon">📊</div><span class="nav-label">Thống kê</span>
-        </a>
-
-        <span class="nav-label-group">Giám sát</span>
-        <a class="nav-item" id="nav-camera" href="#camera" onclick="return navTo('camera')">
-            <div class="nav-icon">📷</div><span class="nav-label">Camera AI</span>
-        </a>
-        <a class="nav-item" id="nav-canhbao" href="#canhbao" onclick="return navTo('canhbao')">
-            <div class="nav-icon">⚠️</div><span class="nav-label">Cảnh báo AI</span>
-        </a>
-
-        <span class="nav-label-group">Hỗ trợ</span>
-        <a class="nav-item" id="nav-suckhoe" href="#suckhoe" onclick="return navTo('suckhoe')">
-            <div class="nav-icon">💊</div><span class="nav-label">Sức khỏe</span>
-        </a>
-        <a class="nav-item" id="nav-moitruong" href="#moitruong" onclick="return navTo('moitruong')">
-            <div class="nav-icon">🌡️</div><span class="nav-label">Môi trường</span>
-        </a>
-    </nav>
-
-    <div class="sidebar-footer">
-        <div class="sidebar-version">v2.0.0 · DoAn 2024</div>
+    <div>
+      <div class="brand-name">Smart Attendance</div>
+      <div class="brand-tagline">Hệ thống chấm công</div>
     </div>
+  </a>
+
+  <nav class="sidebar-nav">
+
+    <a class="nav-item active" id="nav-dashboard" href="/" onclick="return navTo('dashboard')">
+      <span class="nav-icon">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/>
+          <rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/>
+        </svg>
+      </span>
+      Tổng quan
+    </a>
+
+    <div class="nav-section-label">Quản lý</div>
+
+    <a class="nav-item" id="nav-employees" href="/employees">
+      <span class="nav-icon">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/>
+          <circle cx="9" cy="7" r="4"/>
+          <path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/>
+        </svg>
+      </span>
+      Nhân viên
+    </a>
+
+    <div class="nav-section-label">Chấm công</div>
+
+    <a class="nav-item" id="nav-chamcong" href="#chamcong" onclick="return navTo('chamcong')">
+      <span class="nav-icon">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M9 11l3 3L22 4"/>
+          <path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>
+        </svg>
+      </span>
+      Chấm công hôm nay
+    </a>
+
+    <a class="nav-item" id="nav-thongke" href="#thongke" onclick="return navTo('thongke')">
+      <span class="nav-icon">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <line x1="18" y1="20" x2="18" y2="10"/>
+          <line x1="12" y1="20" x2="12" y2="4"/>
+          <line x1="6"  y1="20" x2="6"  y2="14"/>
+        </svg>
+      </span>
+      Thống kê
+    </a>
+
+    <div class="nav-section-label">Giám sát</div>
+
+    <a class="nav-item" id="nav-camera" href="#camera" onclick="return navTo('camera')">
+      <span class="nav-icon">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M23 7l-7 5 7 5V7z"/>
+          <rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
+        </svg>
+      </span>
+      Camera AI
+    </a>
+
+    <a class="nav-item" id="nav-canhbao" href="#canhbao" onclick="return navTo('canhbao')">
+      <span class="nav-icon">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+      </span>
+      Cảnh báo
+    </a>
+
+    <div class="nav-section-label">Hỗ trợ</div>
+
+    <a class="nav-item" id="nav-suckhoe" href="#suckhoe" onclick="return navTo('suckhoe')">
+      <span class="nav-icon">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z"/>
+        </svg>
+      </span>
+      Sức khỏe
+    </a>
+
+    <a class="nav-item" id="nav-moitruong" href="#moitruong" onclick="return navTo('moitruong')">
+      <span class="nav-icon">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/>
+        </svg>
+      </span>
+      Môi trường
+    </a>
+
+  </nav>
+
+  <div class="sidebar-footer">
+    <div class="sidebar-footer-text">Smart Attendance v2.0</div>
+  </div>
 </aside>
 
-<!-- =========================================================
-     HEADER
-========================================================= -->
-<header class="header" role="banner">
-    <div class="header-title">
-        <div class="header-title-main">Hệ thống Chấm công AI</div>
-        <div class="header-title-sub">Attendance Management &amp; AI Monitoring</div>
-    </div>
+<!-- ================================================================
+     TOPBAR
+================================================================ -->
+<header class="topbar" role="banner">
+  <div>
+    <div class="topbar-title" id="page-title">Tổng quan</div>
+    <div id="topbar-date" class="topbar-date" style="font-size:12px; color:var(--text-muted); margin-top:1px;"></div>
+  </div>
 
-    <div class="header-divider"></div>
+  <div style="margin-left:12px;">
     <span id="ai-status-badge" class="ai-badge none">Khởi động...</span>
+  </div>
 
-    <div class="header-right">
-        <div class="live-badge">
-            <span class="live-dot"></span>LIVE
+  <div class="topbar-right">
+    <!-- User menu -->
+    <div class="user-menu">
+      <button class="user-btn" id="userBtn" aria-label="Tài khoản">
+        <div class="user-avatar-sm" id="topbarAvatar">AD</div>
+        <div class="user-info-text">
+          <span class="user-name-sm" id="topbarName">Admin</span>
+          <span class="user-role-sm" id="topbarRole">Quản trị viên</span>
         </div>
-        <div class="header-datetime">
-            <div class="datetime-time" id="header-clock">--:--:--</div>
-            <div class="datetime-date" id="header-date">--</div>
-        </div>
-        <div class="user-avatar" title="Admin">AD</div>
-        <a href="/logout" title="Đăng xuất" style="padding:6px 12px;background:rgba(239,68,68,0.12);border:1px solid rgba(239,68,68,0.3);color:#fca5a5;border-radius:8px;font-size:0.75rem;font-weight:600;display:flex;align-items:center;gap:4px;text-decoration:none;transition:all 0.2s;" onmouseover="this.style.background='rgba(239,68,68,0.25)'" onmouseout="this.style.background='rgba(239,68,68,0.12)'">⎋ Đăng xuất</a>
+        <svg class="user-chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <polyline points="6 9 12 15 18 9"/>
+        </svg>
+      </button>
+      <div class="user-dropdown">
+        <a class="dropdown-item" href="/me">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.58-7 8-7s8 3 8 7"/></svg>
+          Trang cá nhân
+        </a>
+        <div class="dropdown-divider"></div>
+        <a class="dropdown-item danger" href="/logout">
+          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+          Đăng xuất
+        </a>
+      </div>
     </div>
+  </div>
 </header>
 
-<!-- =========================================================
+<!-- ================================================================
      MAIN
-========================================================= -->
+================================================================ -->
 <main class="main" role="main">
 
-    <!-- PAGE HEADING -->
-    <div class="page-heading" id="dashboard">
-        <div>
-            <div class="page-heading-title">Dashboard Chấm Công</div>
-            <div class="page-heading-sub">Tổng quan hôm nay · cập nhật mỗi 3 giây</div>
-        </div>
+  <!-- PAGE HEADER -->
+  <div class="page-header" id="dashboard">
+    <div class="page-header-left">
+      <div class="page-title">Tổng quan</div>
+      <div class="page-subtitle">Theo dõi tình hình chấm công hôm nay · cập nhật mỗi 3 giây</div>
+    </div>
+  </div>
+
+  <!-- ============================================================
+       KPI — 4 cards
+  ============================================================ -->
+  <div class="kpi-grid">
+
+    <div class="kpi-card">
+      <div class="kpi-label">Tổng nhân viên</div>
+      <div class="kpi-value" id="kpi-tong-nv">--</div>
+      <div class="kpi-sub">trong hệ thống</div>
     </div>
 
-    <!-- ============ KPI — 7 thẻ ============ -->
-    <div class="kpi-grid">
-
-        <div class="kpi-card c-blue">
-            <div class="kpi-icon">👥</div>
-            <div class="kpi-label">Tổng nhân viên</div>
-            <div class="kpi-value" id="kpi-tong-nv">--</div>
-            <div class="kpi-sub">trong hệ thống</div>
-        </div>
-
-        <div class="kpi-card c-cyan">
-            <div class="kpi-icon">📋</div>
-            <div class="kpi-label">Đã chấm công</div>
-            <div class="kpi-value" id="kpi-da-cham">--</div>
-            <div class="kpi-sub">hôm nay</div>
-        </div>
-
-        <div class="kpi-card c-green">
-            <div class="kpi-icon">🟢</div>
-            <div class="kpi-label">Đang làm việc</div>
-            <div class="kpi-value" id="kpi-dang-lam">--</div>
-            <div class="kpi-sub">chưa check-out</div>
-        </div>
-
-        <div class="kpi-card c-orange">
-            <div class="kpi-icon">⏰</div>
-            <div class="kpi-label">Đi trễ</div>
-            <div class="kpi-value" id="kpi-di-tre">--</div>
-            <div class="kpi-sub">sau giờ chuẩn</div>
-        </div>
-
-        <div class="kpi-card c-rose">
-            <div class="kpi-icon">🏃</div>
-            <div class="kpi-label">Về sớm</div>
-            <div class="kpi-value" id="kpi-ve-som">--</div>
-            <div class="kpi-sub">trước giờ tan ca</div>
-        </div>
-
-        <div class="kpi-card c-red">
-            <div class="kpi-icon">❌</div>
-            <div class="kpi-label">Chưa chấm công</div>
-            <div class="kpi-value" id="kpi-chua-cham">--</div>
-            <div class="kpi-sub">vắng mặt</div>
-        </div>
-
-        <div class="kpi-card c-teal">
-            <div class="kpi-icon">⚠️</div>
-            <div class="kpi-label">Cảnh báo AI</div>
-            <div class="kpi-value" id="kpi-canh-bao">--</div>
-            <div class="kpi-sub">hôm nay</div>
-        </div>
-
-    </div><!-- /kpi-grid -->
-
-    <!-- ============ CHẤM CÔNG HÔM NAY + CAMERA ============ -->
-    <div class="section-hdr" id="chamcong">
-        <span class="section-hdr-title">✅ Chấm công hôm nay</span>
-        <div class="section-hdr-line"></div>
+    <div class="kpi-card">
+      <div class="kpi-label">Đã chấm công</div>
+      <div class="kpi-value" id="kpi-da-cham">--</div>
+      <div class="kpi-sub" id="kpi-da-cham-sub">hôm nay</div>
     </div>
 
-    <div class="attendance-layout">
-
-        <!-- Bảng chấm công chính (65%) -->
-        <div class="card">
-            <div class="card-hdr">
-                <div class="card-title">
-                    <div class="card-icon green">✅</div>
-                    Bảng chấm công hôm nay
-                </div>
-                <span class="card-badge" id="chamcong-badge">Đang tải...</span>
-            </div>
-            <div class="table-scroll-lg">
-                <table class="data-table" id="chamcong-table">
-                    <thead>
-                        <tr>
-                            <th>Nhân viên</th>
-                            <th>Ca / Giờ chuẩn</th>
-                            <th>Giờ vào</th>
-                            <th>Trạng thái vào</th>
-                            <th>Giờ ra</th>
-                            <th>Trạng thái ra</th>
-                        </tr>
-                    </thead>
-                    <tbody id="chamcong-tbody">
-                        <tr><td colspan="6" class="no-data"><span class="no-data-icon">⏳</span>Đang tải dữ liệu...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <!-- Camera AI (33%) -->
-        <div class="card" id="camera">
-            <div class="card-hdr">
-                <div class="card-title">
-                    <div class="card-icon blue">📷</div>Camera AI
-                </div>
-                <span class="card-badge">EAR · Tilt</span>
-            </div>
-            <div class="cam-wrapper">
-                <img id="camera-feed" src="{{ url_for('video_feed') }}" alt="Camera stream AI">
-                <div class="cam-overlay"></div>
-                <div class="scan-corner tl"></div>
-                <div class="scan-corner tr"></div>
-                <div class="scan-corner bl"></div>
-                <div class="scan-corner br"></div>
-                <div class="cam-top-bar">
-                    <span id="ear-display" class="ai-badge none">EAR --</span>
-                </div>
-            </div>
-            <div class="env-bar" id="moitruong">
-                <div class="env-item">
-                    <span class="env-label">Nhiệt độ</span>
-                    <span class="env-val text-blue"><span id="nhiet-do">--</span>°C</span>
-                </div>
-                <div class="env-sep"></div>
-                <div class="env-item">
-                    <span class="env-label">Độ ẩm</span>
-                    <span class="env-val text-green"><span id="do-am">--</span>%</span>
-                </div>
-                <div class="env-time">🕐 Cập nhật:<br><span id="thoi-gian-mt">--</span></div>
-            </div>
-            <div class="cam-alerts" id="canhbao">
-                <div class="cam-alerts-title">⚠️ Cảnh báo gần nhất (hôm nay)</div>
-                <div id="cam-alerts-body">
-                    <div class="cam-no-alert">✅ Chưa có cảnh báo</div>
-                </div>
-            </div>
-        </div>
-
-    </div><!-- /attendance-layout -->
-
-    <!-- ============ THỐNG KÊ ============ -->
-    <div class="section-hdr" id="thongke">
-        <span class="section-hdr-title">📊 Thống kê chấm công</span>
-        <div class="section-hdr-line"></div>
+    <div class="kpi-card">
+      <div class="kpi-label">Đi trễ</div>
+      <div class="kpi-value" id="kpi-di-tre" style="color:var(--warning);">--</div>
+      <div class="kpi-sub">so với giờ chuẩn</div>
     </div>
 
-    <div class="charts-grid">
-
-        <!-- Donut — trạng thái hôm nay -->
-        <div class="card">
-            <div class="card-hdr">
-                <div class="card-title"><div class="card-icon green">🥧</div>Cơ cấu hôm nay</div>
-                <span class="card-badge">Donut</span>
-            </div>
-            <div class="card-body">
-                <div class="chart-container chart-donut">
-                    <canvas id="chart-donut"></canvas>
-                </div>
-                <div class="donut-legend">
-                    <div class="legend-item">
-                        <div class="legend-left"><span class="legend-dot" style="background:#10b981"></span><span class="legend-label">Đúng giờ</span></div>
-                        <span class="legend-count" id="leg-dung-gio">--</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-left"><span class="legend-dot" style="background:#3b82f6"></span><span class="legend-label">Đang làm việc</span></div>
-                        <span class="legend-count" id="leg-dang-lam">--</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-left"><span class="legend-dot" style="background:#f59e0b"></span><span class="legend-label">Đi trễ</span></div>
-                        <span class="legend-count" id="leg-di-tre">--</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-left"><span class="legend-dot" style="background:#f43f5e"></span><span class="legend-label">Về sớm</span></div>
-                        <span class="legend-count" id="leg-ve-som">--</span>
-                    </div>
-                    <div class="legend-item">
-                        <div class="legend-left"><span class="legend-dot" style="background:#475569"></span><span class="legend-label">Chưa chấm công</span></div>
-                        <span class="legend-count" id="leg-chua-cham">--</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Bar — 7 ngày -->
-        <div class="card">
-            <div class="card-hdr">
-                <div class="card-title"><div class="card-icon blue">📈</div>Chấm công 7 ngày gần nhất</div>
-                <span class="card-badge">Bar chart</span>
-            </div>
-            <div class="card-body">
-                <div class="chart-container chart-bar">
-                    <canvas id="chart-weekly"></canvas>
-                </div>
-            </div>
-        </div>
-
-    </div><!-- /charts-grid -->
-
-    <!-- ============ PHẦN PHỤ: Sức khỏe · Môi trường · Cảnh báo ============ -->
-    <div class="section-hdr" id="suckhoe">
-        <span class="section-hdr-title">🔍 Dữ liệu hỗ trợ</span>
-        <div class="section-hdr-line"></div>
+    <div class="kpi-card">
+      <div class="kpi-label">Chưa chấm công</div>
+      <div class="kpi-value" id="kpi-chua-cham" style="color:var(--danger);">--</div>
+      <div class="kpi-sub">vắng mặt hôm nay</div>
     </div>
 
-    <div class="bottom-grid">
+  </div><!-- /kpi-grid -->
 
-        <!-- Sức khỏe THEO NHÂN VIÊN -->
-        <div class="card">
-            <div class="card-hdr">
-                <div class="card-title"><div class="card-icon purple">💊</div>Lịch sử sức khỏe</div>
-                <span class="card-badge">Theo nhân viên</span>
-            </div>
-            <div class="table-scroll">
-                <table class="data-table" id="health-table">
-                    <thead>
-                        <tr>
-                            <th>Nhân viên</th>
-                            <th>Nhịp tim</th>
-                            <th>SpO₂</th>
-                            <th>Thời gian</th>
-                        </tr>
-                    </thead>
-                    <tbody id="health-tbody">
-                        <tr><td colspan="4" class="no-data"><span class="no-data-icon">⏳</span>Đang tải...</td></tr>
-                    </tbody>
-                </table>
-            </div>
+  <!-- Hidden KPI elements (JS cần nhưng không hiện) -->
+  <span id="kpi-dang-lam"  style="display:none;"></span>
+  <span id="kpi-ve-som"    style="display:none;"></span>
+  <span id="kpi-canh-bao"  style="display:none;"></span>
+  <span id="chamcong-badge" style="display:none;"></span>
+
+  <!-- ============================================================
+       CHẤM CÔNG HÔM NAY + PANEL PHẢI (70/30)
+  ============================================================ -->
+  <div class="content-grid-7030" id="chamcong">
+
+    <!-- LEFT: Attendance table -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Chấm công hôm nay</span>
+        <span class="panel-badge" id="attendance-count">Đang tải...</span>
+      </div>
+      <div class="table-scroll-body">
+        <table class="data-table" id="chamcong-table">
+          <thead>
+            <tr>
+              <th>Nhân viên</th>
+              <th>Ca làm việc</th>
+              <th>Giờ vào</th>
+              <th>Trạng thái vào</th>
+              <th>Giờ ra</th>
+              <th>Trạng thái ra</th>
+            </tr>
+          </thead>
+          <tbody id="chamcong-tbody">
+            <tr><td colspan="6" class="td-empty">Đang tải dữ liệu...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- RIGHT column -->
+    <div class="right-col">
+
+      <!-- Status summary -->
+      <div class="panel">
+        <div class="panel-header">
+          <span class="panel-title">Tình trạng hôm nay</span>
         </div>
-
-        <!-- Cảnh báo AI -->
-        <div class="card" id="canhbao-full">
-            <div class="card-hdr">
-                <div class="card-title"><div class="card-icon red">⚠️</div>Cảnh báo AI gần đây</div>
-                <span class="card-badge">10 mới nhất</span>
-            </div>
-            <div class="table-scroll">
-                <table class="data-table" id="alert-table">
-                    <thead>
-                        <tr>
-                            <th>Nhân viên</th>
-                            <th>Loại</th>
-                            <th>Mô tả</th>
-                            <th>Thời gian</th>
-                        </tr>
-                    </thead>
-                    <tbody id="alert-tbody">
-                        <tr><td colspan="4" class="no-data"><span class="no-data-icon">⏳</span>Đang tải...</td></tr>
-                    </tbody>
-                </table>
-            </div>
+        <div class="stat-list">
+          <div class="stat-list-item">
+            <span class="stat-list-label">
+              <span class="stat-list-dot" style="background:var(--success);"></span>
+              Đúng giờ
+            </span>
+            <span class="stat-list-value" id="leg-dung-gio">--</span>
+          </div>
+          <div class="stat-list-item">
+            <span class="stat-list-label">
+              <span class="stat-list-dot" style="background:var(--warning);"></span>
+              Đi trễ
+            </span>
+            <span class="stat-list-value" id="leg-di-tre">--</span>
+          </div>
+          <div class="stat-list-item">
+            <span class="stat-list-label">
+              <span class="stat-list-dot" style="background:var(--primary);"></span>
+              Đang làm việc
+            </span>
+            <span class="stat-list-value" id="leg-dang-lam">--</span>
+          </div>
+          <div class="stat-list-item">
+            <span class="stat-list-label">
+              <span class="stat-list-dot" style="background:var(--danger);"></span>
+              Về sớm
+            </span>
+            <span class="stat-list-value" id="leg-ve-som">--</span>
+          </div>
+          <div class="stat-list-item">
+            <span class="stat-list-label">
+              <span class="stat-list-dot" style="background:var(--text-muted);"></span>
+              Chưa chấm công
+            </span>
+            <span class="stat-list-value" id="leg-chua-cham">--</span>
+          </div>
         </div>
+      </div>
 
-        <!-- Môi trường -->
-        <div class="card">
-            <div class="card-hdr">
-                <div class="card-title"><div class="card-icon cyan">🌡️</div>Môi trường làm việc</div>
-                <span class="card-badge">Biểu đồ</span>
-            </div>
-            <div class="card-body">
-                <div class="chart-container" style="height:150px;">
-                    <canvas id="chart-temperature"></canvas>
-                </div>
-            </div>
+      <!-- Recent alerts (5 records) -->
+      <div class="panel" id="canhbao">
+        <div class="panel-header">
+          <span class="panel-title">Cảnh báo gần đây</span>
+          <span class="panel-badge">5 gần nhất</span>
         </div>
+        <div id="cam-alerts-body">
+          <div class="alert-list-item" style="padding:12px 16px; color:var(--text-muted); font-size:12.5px;">
+            Đang tải...
+          </div>
+        </div>
+      </div>
 
-    </div><!-- /bottom-grid -->
+      <!-- Camera AI widget -->
+      <div class="panel" id="camera">
+        <div class="panel-header">
+          <span class="panel-title">Camera AI</span>
+          <span id="ear-display" class="ai-badge none" style="font-size:10.5px;">EAR --</span>
+        </div>
+        <div class="cam-preview">
+          <img id="camera-feed" src="{{ url_for('video_feed') }}" alt="Camera stream AI">
+        </div>
+        <!-- Environment -->
+        <div class="cam-status-bar" id="moitruong" style="border-top:1px solid var(--border); gap:16px; flex-wrap:wrap;">
+          <div>
+            <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Nhiệt độ</div>
+            <div style="font-weight:700; font-size:13px;"><span id="nhiet-do">--</span>°C</div>
+          </div>
+          <div>
+            <div style="font-size:10px; color:var(--text-muted); text-transform:uppercase; letter-spacing:.04em; margin-bottom:2px;">Độ ẩm</div>
+            <div style="font-weight:700; font-size:13px;"><span id="do-am">--</span>%</div>
+          </div>
+          <div style="margin-left:auto; text-align:right;">
+            <div style="font-size:10px; color:var(--text-muted);">Cập nhật</div>
+            <div style="font-size:11px; color:var(--text-muted);"><span id="thoi-gian-mt">--</span></div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /right-col -->
+
+  </div><!-- /content-grid-7030 -->
+
+  <!-- ============================================================
+       THỐNG KÊ — Charts
+  ============================================================ -->
+  <div id="thongke" style="margin-top:8px;">
+    <div style="font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.06em; margin-bottom:16px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+      Thống kê chấm công
+    </div>
+  </div>
+
+  <div class="charts-grid">
+
+    <!-- Donut -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Cơ cấu hôm nay</span>
+        <span class="panel-badge">Donut</span>
+      </div>
+      <div class="panel-body">
+        <div class="chart-container chart-donut-wrap">
+          <canvas id="chart-donut"></canvas>
+        </div>
+        <div class="donut-legend">
+          <div class="legend-row">
+            <span class="legend-left"><span class="legend-dot" style="background:#16A34A;"></span>Đúng giờ</span>
+            <span class="legend-count" id="leg-dung-gio-chart">--</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-left"><span class="legend-dot" style="background:#2563EB;"></span>Đang làm việc</span>
+            <span class="legend-count" id="leg-dang-lam-chart">--</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-left"><span class="legend-dot" style="background:#D97706;"></span>Đi trễ</span>
+            <span class="legend-count" id="leg-di-tre-chart">--</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-left"><span class="legend-dot" style="background:#DC2626;"></span>Về sớm</span>
+            <span class="legend-count" id="leg-ve-som-chart">--</span>
+          </div>
+          <div class="legend-row">
+            <span class="legend-left"><span class="legend-dot" style="background:#9CA3AF;"></span>Chưa chấm</span>
+            <span class="legend-count" id="leg-chua-cham-chart">--</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bar 7 ngày -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Chấm công 7 ngày gần nhất</span>
+        <span class="panel-badge">Bar chart</span>
+      </div>
+      <div class="panel-body">
+        <div class="chart-container chart-bar-wrap">
+          <canvas id="chart-weekly"></canvas>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /charts-grid -->
+
+  <!-- ============================================================
+       SỨC KHỎE + CẢNH BÁO (table-first)
+  ============================================================ -->
+  <div id="suckhoe" style="margin-top:8px;">
+    <div style="font-size:12px; font-weight:600; color:var(--text-secondary); text-transform:uppercase; letter-spacing:.06em; margin-bottom:16px; padding-bottom:10px; border-bottom:1px solid var(--border);">
+      Dữ liệu hỗ trợ
+    </div>
+  </div>
+
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;" class="bottom-section">
+
+    <!-- Health table -->
+    <div class="panel">
+      <div class="panel-header">
+        <span class="panel-title">Dữ liệu sức khỏe</span>
+        <span class="panel-badge">Theo nhân viên</span>
+      </div>
+      <div style="max-height:240px; overflow-y:auto;">
+        <table class="data-table" id="health-table">
+          <thead>
+            <tr>
+              <th>Nhân viên</th>
+              <th>Nhịp tim</th>
+              <th>SpO₂</th>
+              <th>Thời gian</th>
+            </tr>
+          </thead>
+          <tbody id="health-tbody">
+            <tr><td colspan="4" class="td-empty">Đang tải...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Full alert table -->
+    <div class="panel" id="canhbao-full">
+      <div class="panel-header">
+        <span class="panel-title">Cảnh báo AI gần đây</span>
+        <span class="panel-badge">10 mới nhất</span>
+      </div>
+      <div style="max-height:240px; overflow-y:auto;">
+        <table class="data-table" id="alert-table">
+          <thead>
+            <tr>
+              <th>Nhân viên</th>
+              <th>Loại</th>
+              <th>Mô tả</th>
+              <th>Thời gian</th>
+            </tr>
+          </thead>
+          <tbody id="alert-tbody">
+            <tr><td colspan="4" class="td-empty">Đang tải...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /bottom-section -->
+
+  <!-- Environment chart -->
+  <div class="panel" style="margin-top:0;">
+    <div class="panel-header">
+      <span class="panel-title">Biểu đồ nhiệt độ môi trường</span>
+      <span class="panel-badge">Line chart</span>
+    </div>
+    <div class="panel-body">
+      <div class="chart-container chart-line-wrap">
+        <canvas id="chart-temperature"></canvas>
+      </div>
+    </div>
+  </div>
 
 </main>
 </div><!-- /app-shell -->
 
-<!-- =========================================================
+<div id="toast-container"></div>
+
+<!-- ================================================================
      JAVASCRIPT
-========================================================= -->
+================================================================ -->
+<script src="{{ url_for('static', filename='js/ui.js') }}"></script>
 <script>
 /* ============================================================
    NAVIGATION
@@ -771,440 +490,465 @@
 const NAV_IDS = ['dashboard','chamcong','thongke','camera','canhbao','suckhoe','moitruong'];
 
 function navTo(id) {
-    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-    const nav = document.getElementById('nav-' + id);
-    if (nav) nav.classList.add('active');
-    const anchor = document.getElementById(id);
-    if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    return false;
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  const nav = document.getElementById('nav-' + id);
+  if (nav) nav.classList.add('active');
+  const anchor = document.getElementById(id);
+  if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  return false;
 }
 
 window.addEventListener('scroll', () => {
-    let cur = 'dashboard';
-    for (const id of NAV_IDS) {
-        const el = document.getElementById(id);
-        if (el && el.getBoundingClientRect().top <= 120) cur = id;
-    }
-    document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
-    const active = document.getElementById('nav-' + cur);
-    if (active) active.classList.add('active');
+  let cur = 'dashboard';
+  for (const id of NAV_IDS) {
+    const el = document.getElementById(id);
+    if (el && el.getBoundingClientRect().top <= 100) cur = id;
+  }
+  document.querySelectorAll('.nav-item').forEach(el => el.classList.remove('active'));
+  const active = document.getElementById('nav-' + cur);
+  if (active) active.classList.add('active');
 }, { passive: true });
 
 /* ============================================================
-   HEADER CLOCK
+   CLOCK + DATE
 ============================================================ */
-const DAYS   = ['Chủ nhật','Thứ Hai','Thứ Ba','Thứ Tư','Thứ Năm','Thứ Sáu','Thứ Bảy'];
-const MONTHS = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
-
-function updateClock() {
+(function() {
+  const dateEl = document.getElementById('topbar-date');
+  function tick() {
     const now = new Date();
-    const hh = String(now.getHours()).padStart(2,'0');
-    const mm = String(now.getMinutes()).padStart(2,'0');
-    const ss = String(now.getSeconds()).padStart(2,'0');
-    document.getElementById('header-clock').textContent = `${hh}:${mm}:${ss}`;
-    document.getElementById('header-date').textContent  =
-        `${DAYS[now.getDay()]}, ${now.getDate()} ${MONTHS[now.getMonth()]} ${now.getFullYear()}`;
-}
-updateClock();
-setInterval(updateClock, 1000);
+    const days   = ['Chủ nhật','Thứ Hai','Thứ Ba','Thứ Tư','Thứ Năm','Thứ Sáu','Thứ Bảy'];
+    const months = ['T1','T2','T3','T4','T5','T6','T7','T8','T9','T10','T11','T12'];
+    if (dateEl) dateEl.textContent = `${days[now.getDay()]}, ${now.getDate()} tháng ${now.getMonth()+1} năm ${now.getFullYear()}`;
+  }
+  tick();
+  setInterval(tick, 60000);
+})();
 
 /* ============================================================
-   CHART.JS — defaults
+   CHART.JS — defaults (light theme)
 ============================================================ */
 const CHART_BASE = {
-    responsive: true,
-    maintainAspectRatio: false,
-    animation: { duration: 500 },
-    plugins: {
-        legend: { display: false },
-        tooltip: {
-            backgroundColor: '#111827', borderColor: '#1e2d45', borderWidth: 1,
-            titleColor: '#f1f5f9', bodyColor: '#94a3b8', padding: 10, cornerRadius: 8
-        }
+  responsive: true,
+  maintainAspectRatio: false,
+  animation: { duration: 400 },
+  plugins: {
+    legend: { display: false },
+    tooltip: {
+      backgroundColor: '#fff',
+      borderColor: '#E5E7EB',
+      borderWidth: 1,
+      titleColor: '#111827',
+      bodyColor: '#667085',
+      padding: 10,
+      cornerRadius: 6,
     }
+  }
 };
 
 /* Donut */
 const donutChart = new Chart(
-    document.getElementById('chart-donut').getContext('2d'),
-    {
-        type: 'doughnut',
-        data: {
-            labels: ['Đúng giờ', 'Đang làm', 'Đi trễ', 'Về sớm', 'Chưa chấm'],
-            datasets: [{
-                data: [0,0,0,0,1],
-                backgroundColor: [
-                    'rgba(16,185,129,.85)',
-                    'rgba(59,130,246,.85)',
-                    'rgba(245,158,11,.85)',
-                    'rgba(244,63,94,.85)',
-                    'rgba(71,85,105,.55)'
-                ],
-                borderColor: '#111827', borderWidth: 3, hoverOffset: 8
-            }]
-        },
-        options: {
-            ...CHART_BASE, cutout: '68%',
-            plugins: {
-                ...CHART_BASE.plugins,
-                tooltip: { ...CHART_BASE.plugins.tooltip,
-                    callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed} người` }
-                }
-            }
+  document.getElementById('chart-donut').getContext('2d'),
+  {
+    type: 'doughnut',
+    data: {
+      labels: ['Đúng giờ','Đang làm','Đi trễ','Về sớm','Chưa chấm'],
+      datasets: [{
+        data: [0,0,0,0,1],
+        backgroundColor: ['#16A34A','#2563EB','#D97706','#DC2626','#9CA3AF'],
+        borderColor: '#fff',
+        borderWidth: 3,
+        hoverOffset: 6,
+      }]
+    },
+    options: {
+      ...CHART_BASE, cutout: '70%',
+      plugins: {
+        ...CHART_BASE.plugins,
+        tooltip: { ...CHART_BASE.plugins.tooltip,
+          callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed} người` }
         }
+      }
     }
+  }
 );
 
-/* Bar — 7 ngày */
+/* Bar 7 ngày */
 const weeklyChart = new Chart(
-    document.getElementById('chart-weekly').getContext('2d'),
-    {
-        type: 'bar',
-        data: {
-            labels: [],
-            datasets: [
-                { label: 'Người vào', data: [], backgroundColor: 'rgba(59,130,246,.7)', borderColor: '#3b82f6', borderWidth: 1, borderRadius: 4, borderSkipped: false },
-                { label: 'Người ra',  data: [], backgroundColor: 'rgba(16,185,129,.7)', borderColor: '#10b981', borderWidth: 1, borderRadius: 4, borderSkipped: false }
-            ]
-        },
-        options: {
-            ...CHART_BASE,
-            plugins: {
-                ...CHART_BASE.plugins,
-                legend: { display: true, position: 'top', labels: { color: '#94a3b8', font: { size: 11 }, boxWidth: 11, padding: 10 } }
-            },
-            scales: {
-                x: { grid: { color: '#1a2540' }, ticks: { color: '#475569', font: { size: 10 } } },
-                y: { grid: { color: '#1a2540' }, ticks: { color: '#475569', font: { size: 10 }, stepSize: 1 }, beginAtZero: true }
-            }
-        }
+  document.getElementById('chart-weekly').getContext('2d'),
+  {
+    type: 'bar',
+    data: {
+      labels: [],
+      datasets: [
+        { label: 'Người vào', data: [], backgroundColor: '#BFDBFE', borderColor: '#2563EB', borderWidth: 1, borderRadius: 4, borderSkipped: false },
+        { label: 'Người ra',  data: [], backgroundColor: '#BBF7D0', borderColor: '#16A34A', borderWidth: 1, borderRadius: 4, borderSkipped: false }
+      ]
+    },
+    options: {
+      ...CHART_BASE,
+      plugins: {
+        ...CHART_BASE.plugins,
+        legend: { display: true, position: 'top', labels: { color: '#667085', font: { size: 11 }, boxWidth: 10, padding: 10 } }
+      },
+      scales: {
+        x: { grid: { color: '#F3F4F6' }, ticks: { color: '#98A2B3', font: { size: 10 } } },
+        y: { grid: { color: '#F3F4F6' }, ticks: { color: '#98A2B3', font: { size: 10 }, stepSize: 1 }, beginAtZero: true }
+      }
     }
+  }
 );
 
-/* Temperature */
+/* Temperature line */
 const tempChart = new Chart(
-    document.getElementById('chart-temperature').getContext('2d'),
-    {
-        type: 'line',
-        data: {
-            labels: [],
-            datasets: [{
-                label: 'Nhiệt độ (°C)', data: [],
-                borderColor: '#3b82f6',
-                backgroundColor: ctx => {
-                    const g = ctx.chart.ctx.createLinearGradient(0,0,0,150);
-                    g.addColorStop(0,'rgba(59,130,246,.22)'); g.addColorStop(1,'rgba(59,130,246,0)'); return g;
-                },
-                borderWidth: 2, pointRadius: 3, pointBackgroundColor: '#3b82f6',
-                pointBorderColor: '#111827', pointBorderWidth: 1.5, fill: true, tension: 0.4
-            }]
-        },
-        options: {
-            ...CHART_BASE,
-            scales: {
-                x: { grid: { color: '#1a2540' }, ticks: { color: '#475569', font: { size: 9 }, maxTicksLimit: 6 } },
-                y: { grid: { color: '#1a2540' }, ticks: { color: '#475569', font: { size: 9 } }, min: 20, max: 40 }
-            }
-        }
+  document.getElementById('chart-temperature').getContext('2d'),
+  {
+    type: 'line',
+    data: {
+      labels: [],
+      datasets: [{
+        label: 'Nhiệt độ (°C)', data: [],
+        borderColor: '#2563EB',
+        backgroundColor: 'rgba(37,99,235,0.05)',
+        borderWidth: 1.5,
+        pointRadius: 3,
+        pointBackgroundColor: '#2563EB',
+        pointBorderColor: '#fff',
+        pointBorderWidth: 1.5,
+        fill: true,
+        tension: 0.4
+      }]
+    },
+    options: {
+      ...CHART_BASE,
+      scales: {
+        x: { grid: { color: '#F3F4F6' }, ticks: { color: '#98A2B3', font: { size: 9 }, maxTicksLimit: 8 } },
+        y: { grid: { color: '#F3F4F6' }, ticks: { color: '#98A2B3', font: { size: 9 } }, min: 20, max: 40 }
+      }
     }
+  }
 );
 
 /* ============================================================
    HELPERS
 ============================================================ */
 function initials(name) {
-    if (!name) return '?';
-    const parts = name.trim().split(' ');
-    return parts.length >= 2
-        ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
-        : parts[0].substring(0, 2).toUpperCase();
+  if (!name) return '?';
+  const parts = name.trim().split(' ');
+  return parts.length >= 2
+    ? (parts[0][0] + parts[parts.length - 1][0]).toUpperCase()
+    : name.substring(0, 2).toUpperCase();
 }
 
 function fmtTime(str) {
-    if (!str) return '--';
-    // "HH:MM:SS" hoặc datetime string
-    const m = str.match(/(\d{2}):(\d{2})(?::(\d{2}))?/);
-    return m ? `${m[1]}:${m[2]}` : str;
+  if (!str) return '--';
+  const m = str.match(/(\d{2}):(\d{2})(?::(\d{2}))?/);
+  return m ? `${m[1]}:${m[2]}` : str;
 }
 
-/** Badge màu cho Trạng thái vào */
 function badgeVao(trang_thai) {
-    if (!trang_thai || trang_thai === 'Chưa chấm công')
-        return `<span class="badge badge-gray">${trang_thai || 'Chưa chấm công'}</span>`;
-    if (trang_thai === 'Đúng giờ')
-        return `<span class="badge badge-green">✓ Đúng giờ</span>`;
-    if (trang_thai === 'Đi trễ')
-        return `<span class="badge badge-orange">⏰ Đi trễ</span>`;
-    return `<span class="badge badge-gray">${trang_thai}</span>`;
+  if (!trang_thai || trang_thai === 'Chưa chấm công')
+    return `<span class="badge badge-gray">${trang_thai || 'Chưa chấm công'}</span>`;
+  if (trang_thai === 'Đúng giờ')
+    return `<span class="badge badge-green">Đúng giờ</span>`;
+  if (trang_thai === 'Đi trễ')
+    return `<span class="badge badge-orange">Đi trễ</span>`;
+  return `<span class="badge badge-gray">${trang_thai}</span>`;
 }
 
-/** Badge màu cho Trạng thái ra */
 function badgeRa(trang_thai) {
-    if (!trang_thai || trang_thai === '--')
-        return '<span class="text-xs text-muted">--</span>';
-    if (trang_thai === 'Đang làm việc')
-        return `<span class="badge badge-blue">🟢 Đang làm</span>`;
-    if (trang_thai === 'Đúng giờ')
-        return `<span class="badge badge-green">✓ Đúng giờ</span>`;
-    if (trang_thai === 'Về sớm')
-        return `<span class="badge badge-rose">⚡ Về sớm</span>`;
-    return `<span class="badge badge-gray">${trang_thai}</span>`;
+  if (!trang_thai || trang_thai === '--')
+    return '<span class="text-xs text-muted">--</span>';
+  if (trang_thai === 'Đang làm việc')
+    return `<span class="badge badge-blue">Đang làm việc</span>`;
+  if (trang_thai === 'Đúng giờ')
+    return `<span class="badge badge-green">Đúng giờ</span>`;
+  if (trang_thai === 'Về sớm')
+    return `<span class="badge badge-red">Về sớm</span>`;
+  return `<span class="badge badge-gray">${trang_thai}</span>`;
 }
 
 function badgeAlert(loai) {
-    if (!loai) return `<span class="badge badge-gray">--</span>`;
-    const l = loai.toLowerCase();
-    if (l.includes('ngu') || l.includes('buồn'))
-        return `<span class="badge badge-red">😴 ${loai}</span>`;
-    if (l.includes('guc') || l.includes('tilt'))
-        return `<span class="badge badge-orange">📐 ${loai}</span>`;
-    return `<span class="badge badge-gray">${loai}</span>`;
+  if (!loai) return `<span class="badge badge-gray">--</span>`;
+  const l = loai.toLowerCase();
+  if (l.includes('ngu') || l.includes('buồn'))
+    return `<span class="badge badge-red">${loai}</span>`;
+  if (l.includes('guc') || l.includes('tilt'))
+    return `<span class="badge badge-orange">${loai}</span>`;
+  return `<span class="badge badge-gray">${loai}</span>`;
 }
 
 /* ============================================================
-   FETCH: Dashboard Attendance (CORE — gọi mỗi 3 giây)
+   FETCH: Dashboard Attendance (gọi mỗi 3 giây)
 ============================================================ */
 function fetchDashboard() {
-    fetch('/api/dashboard/attendance')
-        .then(r => r.json())
-        .then(data => {
-            const s = data.Summary || {};
-            const recs = data.Records || [];
+  fetch('/api/dashboard/attendance')
+    .then(r => r.json())
+    .then(data => {
+      const s    = data.Summary || {};
+      const recs = data.Records  || [];
 
-            // KPI
-            document.getElementById('kpi-tong-nv').textContent   = s.TongNhanVien  ?? '--';
-            document.getElementById('kpi-da-cham').textContent   = s.DaChamCong    ?? '--';
-            document.getElementById('kpi-dang-lam').textContent  = s.DangLamViec   ?? '--';
-            document.getElementById('kpi-di-tre').textContent    = s.DiTre         ?? '--';
-            document.getElementById('kpi-ve-som').textContent    = s.VeSom         ?? '--';
-            document.getElementById('kpi-chua-cham').textContent = s.ChuaChamCong  ?? '--';
-            document.getElementById('kpi-canh-bao').textContent  = s.CanhBaoHomNay ?? '--';
+      // KPI
+      document.getElementById('kpi-tong-nv').textContent   = s.TongNhanVien  ?? '--';
+      document.getElementById('kpi-da-cham').textContent   = s.DaChamCong    ?? '--';
+      document.getElementById('kpi-dang-lam').textContent  = s.DangLamViec   ?? '--';
+      document.getElementById('kpi-di-tre').textContent    = s.DiTre         ?? '--';
+      document.getElementById('kpi-ve-som').textContent    = s.VeSom         ?? '--';
+      document.getElementById('kpi-chua-cham').textContent = s.ChuaChamCong  ?? '--';
+      document.getElementById('kpi-canh-bao').textContent  = s.CanhBaoHomNay ?? '--';
+      document.getElementById('chamcong-badge').textContent =
+        `${s.DaChamCong ?? 0}/${s.TongNhanVien ?? 0} người`;
 
-            // Badge header
-            document.getElementById('chamcong-badge').textContent =
-                `${s.DaChamCong ?? 0}/${s.TongNhanVien ?? 0} người · ${s.DangLamViec ?? 0} đang làm`;
+      // Sub KPI
+      document.getElementById('kpi-da-cham-sub').textContent =
+        `/ ${s.TongNhanVien ?? '--'} nhân viên`;
 
-            // Bảng chấm công
-            if (!recs.length) {
-                document.getElementById('chamcong-tbody').innerHTML =
-                    '<tr><td colspan="6" class="no-data"><span class="no-data-icon">📭</span>Chưa có dữ liệu hôm nay</td></tr>';
-            } else {
-                document.getElementById('chamcong-tbody').innerHTML = recs.map(r => `
-                    <tr>
-                        <td>
-                            <div class="emp-cell">
-                                <div class="emp-avatar">${initials(r.HoTen)}</div>
-                                <div>
-                                    <div class="emp-name">${r.HoTen}</div>
-                                    <div class="emp-id">NV${String(r.MaNV || '').padStart(3,'0')}</div>
-                                </div>
-                            </div>
-                        </td>
-                        <td>
-                            <div class="shift-cell">
-                                <span class="shift-name">${r.TenCa || '--'}</span>
-                                <span class="shift-hours">${r.GioBatDau} – ${r.GioKetThuc}</span>
-                            </div>
-                        </td>
-                        <td class="text-green fw-600">${r.GioVao ? fmtTime(r.GioVao) : '<span class="text-muted">--</span>'}</td>
-                        <td>${badgeVao(r.TrangThaiVao)}</td>
-                        <td class="text-muted">${r.GioRa ? fmtTime(r.GioRa) : '<span class="text-muted">--</span>'}</td>
-                        <td>${badgeRa(r.TrangThaiRa)}</td>
-                    </tr>
-                `).join('');
-            }
+      // Count badge
+      document.getElementById('attendance-count').textContent =
+        `${recs.length} bản ghi`;
 
-            // Donut chart
-            const dungGio  = recs.filter(r => r.TrangThaiVao === 'Đúng giờ' && r.TrangThaiRa !== 'Đang làm việc' && r.TrangThaiRa !== 'Về sớm').length;
-            const dangLam  = s.DangLamViec  || 0;
-            const diTre    = s.DiTre        || 0;
-            const veSom    = s.VeSom        || 0;
-            const chuaCham = s.ChuaChamCong || 0;
+      // Table
+      if (!recs.length) {
+        document.getElementById('chamcong-tbody').innerHTML =
+          '<tr><td colspan="6" class="td-empty">Chưa có dữ liệu chấm công hôm nay</td></tr>';
+      } else {
+        document.getElementById('chamcong-tbody').innerHTML = recs.map(r => `
+          <tr>
+            <td>
+              <div class="emp-cell">
+                <div class="emp-avatar">${initials(r.HoTen)}</div>
+                <div>
+                  <div class="emp-name">${r.HoTen}</div>
+                  <div class="emp-id">NV${String(r.MaNV||'').padStart(3,'0')}</div>
+                </div>
+              </div>
+            </td>
+            <td>
+              <div class="shift-name">${r.TenCa || '--'}</div>
+              <span class="shift-hours">${r.GioBatDau || '--'} – ${r.GioKetThuc || '--'}</span>
+            </td>
+            <td class="tabular fw-600" style="color:var(--success);">
+              ${r.GioVao ? fmtTime(r.GioVao) : '<span class="text-muted">--</span>'}
+            </td>
+            <td>${badgeVao(r.TrangThaiVao)}</td>
+            <td class="tabular text-muted">
+              ${r.GioRa ? fmtTime(r.GioRa) : '<span class="text-muted">--</span>'}
+            </td>
+            <td>${badgeRa(r.TrangThaiRa)}</td>
+          </tr>
+        `).join('');
+      }
 
-            donutChart.data.datasets[0].data = [dungGio, dangLam, diTre, veSom, chuaCham];
-            donutChart.update();
+      // Right panel stat list
+      const dungGio  = recs.filter(r => r.TrangThaiVao === 'Đúng giờ' && r.TrangThaiRa !== 'Về sớm').length;
+      const dangLam  = s.DangLamViec  || 0;
+      const diTre    = s.DiTre        || 0;
+      const veSom    = s.VeSom        || 0;
+      const chuaCham = s.ChuaChamCong || 0;
 
-            document.getElementById('leg-dung-gio').textContent  = dungGio;
-            document.getElementById('leg-dang-lam').textContent  = dangLam;
-            document.getElementById('leg-di-tre').textContent    = diTre;
-            document.getElementById('leg-ve-som').textContent    = veSom;
-            document.getElementById('leg-chua-cham').textContent = chuaCham;
-        })
-        .catch(e => console.error('[dashboard]', e));
+      document.getElementById('leg-dung-gio').textContent  = dungGio;
+      document.getElementById('leg-dang-lam').textContent  = dangLam;
+      document.getElementById('leg-di-tre').textContent    = diTre;
+      document.getElementById('leg-ve-som').textContent    = veSom;
+      document.getElementById('leg-chua-cham').textContent = chuaCham;
+
+      // Chart legend (alternate IDs)
+      document.getElementById('leg-dung-gio-chart').textContent  = dungGio;
+      document.getElementById('leg-dang-lam-chart').textContent  = dangLam;
+      document.getElementById('leg-di-tre-chart').textContent    = diTre;
+      document.getElementById('leg-ve-som-chart').textContent    = veSom;
+      document.getElementById('leg-chua-cham-chart').textContent = chuaCham;
+
+      // Donut chart
+      donutChart.data.datasets[0].data = [dungGio, dangLam, diTre, veSom, chuaCham];
+      donutChart.update();
+    })
+    .catch(e => console.error('[dashboard]', e));
 }
 
 /* ============================================================
    FETCH: Weekly chart
 ============================================================ */
 function fetchWeekly() {
-    fetch('/api/get_chamcong_weekly')
-        .then(r => r.json())
-        .then(data => {
-            const labels = data.map(r => {
-                if (!r.Ngay || r.Ngay === '--') return '--';
-                const d = new Date(r.Ngay);
-                const dow = ['CN','T2','T3','T4','T5','T6','T7'][d.getDay()];
-                return `${dow} ${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
-            });
-            weeklyChart.data.labels = labels;
-            weeklyChart.data.datasets[0].data = data.map(r => r.SoNguoiVao);
-            weeklyChart.data.datasets[1].data = data.map(r => r.SoNguoiRa);
-            weeklyChart.update();
-        })
-        .catch(e => console.error('[weekly]', e));
+  fetch('/api/get_chamcong_weekly')
+    .then(r => r.json())
+    .then(data => {
+      const labels = data.map(r => {
+        if (!r.Ngay || r.Ngay === '--') return '--';
+        const d   = new Date(r.Ngay);
+        const dow = ['CN','T2','T3','T4','T5','T6','T7'][d.getDay()];
+        return `${dow} ${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+      });
+      weeklyChart.data.labels = labels;
+      weeklyChart.data.datasets[0].data = data.map(r => r.SoNguoiVao);
+      weeklyChart.data.datasets[1].data = data.map(r => r.SoNguoiRa);
+      weeklyChart.update();
+    })
+    .catch(e => console.error('[weekly]', e));
 }
 
 /* ============================================================
    FETCH: Environment
 ============================================================ */
 function fetchEnv() {
-    fetch('/api/get_environment')
-        .then(r => r.json())
-        .then(data => {
-            document.getElementById('nhiet-do').textContent     = data.NhietDo;
-            document.getElementById('do-am').textContent        = data.DoAm;
-            document.getElementById('thoi-gian-mt').textContent = data.ThoiGian;
-        })
-        .catch(e => console.error('[env]', e));
+  fetch('/api/get_environment')
+    .then(r => r.json())
+    .then(data => {
+      document.getElementById('nhiet-do').textContent     = data.NhietDo;
+      document.getElementById('do-am').textContent        = data.DoAm;
+      document.getElementById('thoi-gian-mt').textContent = data.ThoiGian;
+    })
+    .catch(e => console.error('[env]', e));
 }
 
 function fetchTempChart() {
-    fetch('/api/chart/environment')
-        .then(r => r.json())
-        .then(data => {
-            tempChart.data.labels = data.map(r => r.ThoiGian);
-            tempChart.data.datasets[0].data = data.map(r => r.NhietDo);
-            tempChart.update();
-        })
-        .catch(e => console.error('[temp_chart]', e));
+  fetch('/api/chart/environment')
+    .then(r => r.json())
+    .then(data => {
+      tempChart.data.labels = data.map(r => r.ThoiGian);
+      tempChart.data.datasets[0].data = data.map(r => r.NhietDo);
+      tempChart.update();
+    })
+    .catch(e => console.error('[temp_chart]', e));
 }
 
 /* ============================================================
    FETCH: Health
 ============================================================ */
 function fetchHealth() {
-    fetch('/api/get_health')
-        .then(r => r.json())
-        .then(data => {
-            if (!data.length) {
-                document.getElementById('health-tbody').innerHTML =
-                    '<tr><td colspan="4" class="no-data"><span class="no-data-icon">📭</span>Chưa có dữ liệu</td></tr>';
-                return;
-            }
-            document.getElementById('health-tbody').innerHTML = data.map(r => `
-                <tr>
-                    <td><strong>${r.HoTen}</strong></td>
-                    <td><strong class="text-red">${r.NhipTim}</strong> <span class="text-xs text-muted">bpm</span></td>
-                    <td><strong class="text-purple">${r.SpO2}</strong><span class="text-xs text-muted">%</span></td>
-                    <td class="text-xs text-muted">${r.ThoiGian}</td>
-                </tr>
-            `).join('');
-        })
-        .catch(e => console.error('[health]', e));
+  fetch('/api/get_health')
+    .then(r => r.json())
+    .then(data => {
+      if (!data.length) {
+        document.getElementById('health-tbody').innerHTML =
+          '<tr><td colspan="4" class="td-empty">Chưa có dữ liệu sức khỏe</td></tr>';
+        return;
+      }
+      document.getElementById('health-tbody').innerHTML = data.map(r => `
+        <tr>
+          <td>
+            <div class="emp-cell">
+              <div class="emp-avatar" style="width:26px;height:26px;font-size:10px;">${initials(r.HoTen)}</div>
+              <span class="fw-600">${r.HoTen}</span>
+            </div>
+          </td>
+          <td><span class="fw-600" style="color:var(--danger);">${r.NhipTim}</span> <span class="text-xs text-muted">bpm</span></td>
+          <td><span class="fw-600">${r.SpO2}</span><span class="text-xs text-muted">%</span></td>
+          <td class="text-xs text-muted tabular">${r.ThoiGian}</td>
+        </tr>
+      `).join('');
+    })
+    .catch(e => console.error('[health]', e));
 }
 
 /* ============================================================
    FETCH: Alerts
 ============================================================ */
 function fetchAlerts() {
-    fetch('/api/get_alerts?limit=10')
-        .then(r => r.json())
-        .then(data => {
-            // Bảng cảnh báo đầy đủ
-            if (!data.length) {
-                document.getElementById('alert-tbody').innerHTML =
-                    '<tr><td colspan="4" class="no-data"><span class="no-data-icon">✅</span>Chưa có cảnh báo</td></tr>';
-            } else {
-                document.getElementById('alert-tbody').innerHTML = data.map(r => `
-                    <tr>
-                        <td><strong>${r.HoTen}</strong></td>
-                        <td>${badgeAlert(r.LoaiCanhBao)}</td>
-                        <td class="text-xs text-muted">${r.MoTa || '--'}</td>
-                        <td class="text-xs text-muted">${r.ThoiGian}</td>
-                    </tr>
-                `).join('');
-            }
+  fetch('/api/get_alerts?limit=10')
+    .then(r => r.json())
+    .then(data => {
+      // Full table
+      if (!data.length) {
+        document.getElementById('alert-tbody').innerHTML =
+          '<tr><td colspan="4" class="td-empty">Chưa có cảnh báo</td></tr>';
+      } else {
+        document.getElementById('alert-tbody').innerHTML = data.map(r => `
+          <tr>
+            <td class="fw-600">${r.HoTen}</td>
+            <td>${badgeAlert(r.LoaiCanhBao)}</td>
+            <td class="text-xs text-muted">${r.MoTa || '--'}</td>
+            <td class="text-xs text-muted tabular">${r.ThoiGian}</td>
+          </tr>
+        `).join('');
+      }
 
-            // Mini panel dưới camera (hôm nay)
-            const today = new Date().toDateString();
-            const todayAlerts = data.filter(r => {
-                if (!r.ThoiGian || r.ThoiGian === '--') return false;
-                try { return new Date(r.ThoiGian).toDateString() === today; } catch { return false; }
-            });
+      // Mini panel (right col) — 5 gần nhất hôm nay
+      const today       = new Date().toDateString();
+      const todayAlerts = data.filter(r => {
+        if (!r.ThoiGian || r.ThoiGian === '--') return false;
+        try { return new Date(r.ThoiGian).toDateString() === today; } catch { return false; }
+      });
 
-            const camBody = document.getElementById('cam-alerts-body');
-            if (!todayAlerts.length) {
-                camBody.innerHTML = '<div class="cam-no-alert">✅ Không có cảnh báo hôm nay</div>';
-            } else {
-                camBody.innerHTML = todayAlerts.slice(0, 3).map(r => `
-                    <div class="cam-alert-item">
-                        <span class="cai-name">${r.HoTen}</span>
-                        <span class="cai-type">${r.LoaiCanhBao || 'Cảnh báo'}</span>
-                        <span class="cai-time">${fmtTime(r.ThoiGian)}</span>
-                    </div>
-                `).join('');
-            }
-        })
-        .catch(e => console.error('[alerts]', e));
+      const camBody = document.getElementById('cam-alerts-body');
+      if (!todayAlerts.length) {
+        camBody.innerHTML = `<div class="alert-list-item"><span class="text-xs text-muted">Không có cảnh báo hôm nay</span></div>`;
+      } else {
+        camBody.innerHTML = todayAlerts.slice(0, 5).map(r => {
+          const loai = (r.LoaiCanhBao || '').toLowerCase();
+          const dotClass = loai.includes('ngu') || loai.includes('buồn') ? 'alert-dot-red'
+            : loai.includes('guc') || loai.includes('tilt') ? 'alert-dot-orange' : 'alert-dot-gray';
+          return `
+          <div class="alert-list-item">
+            <span class="alert-dot ${dotClass}"></span>
+            <div style="flex:1; min-width:0;">
+              <div class="alert-name">${r.HoTen}</div>
+              <div class="alert-type">${r.LoaiCanhBao || '--'}</div>
+            </div>
+            <span class="alert-time">${fmtTime(r.ThoiGian)}</span>
+          </div>`;
+        }).join('');
+      }
+    })
+    .catch(e => console.error('[alerts]', e));
 }
 
 /* ============================================================
    FETCH: AI Status
 ============================================================ */
 function fetchAiStatus() {
-    fetch('/api/ai_status')
-        .then(r => r.json())
-        .then(data => {
-            const badge    = document.getElementById('ai-status-badge');
-            const earBadge = document.getElementById('ear-display');
+  fetch('/api/ai_status')
+    .then(r => r.json())
+    .then(data => {
+      const badge    = document.getElementById('ai-status-badge');
+      const earBadge = document.getElementById('ear-display');
 
-            const stateMap = {
-                'binh_thuong':        { label: '✅ Bình thường',     cls: 'normal' },
-                'buon_ngu':           { label: '⚠️ Buồn ngủ!',       cls: 'warning' },
-                'guc_dau':            { label: '⚠️ Gục đầu!',        cls: 'tilt' },
-                'khong_co_khuon_mat': { label: '👤 Không phát hiện', cls: 'none' }
-            };
+      const stateMap = {
+        'binh_thuong':        { label: 'Bình thường',      cls: 'normal'  },
+        'buon_ngu':           { label: 'Buồn ngủ',          cls: 'warning' },
+        'guc_dau':            { label: 'Gục đầu',           cls: 'tilt'   },
+        'khong_co_khuon_mat': { label: 'Không phát hiện',   cls: 'none'   },
+      };
 
-            const info = stateMap[data.state] || { label: data.state || 'N/A', cls: 'none' };
-            badge.textContent = info.label;
-            badge.className   = `ai-badge ${info.cls}`;
+      const info     = stateMap[data.state] || { label: data.state || 'N/A', cls: 'none' };
+      badge.textContent = info.label;
+      badge.className   = `ai-badge ${info.cls}`;
 
-            earBadge.textContent = `EAR ${data.ear ?? '--'}`;
-            earBadge.className   = `ai-badge ${data.state === 'buon_ngu' ? 'warning' : 'none'}`;
-        })
-        .catch(e => console.error('[ai_status]', e));
+      earBadge.textContent = `EAR ${data.ear ?? '--'}`;
+      earBadge.className   = `ai-badge ${data.state === 'buon_ngu' ? 'warning' : 'none'}`;
+      earBadge.style.fontSize = '10.5px';
+    })
+    .catch(e => console.error('[ai_status]', e));
 }
 
 /* ============================================================
    POLLING
 ============================================================ */
 function initPolling() {
-    // Tải ngay lần đầu
-    fetchDashboard();
-    fetchWeekly();
-    fetchEnv();
-    fetchTempChart();
-    fetchHealth();
-    fetchAlerts();
-    fetchAiStatus();
+  fetchDashboard();
+  fetchWeekly();
+  fetchEnv();
+  fetchTempChart();
+  fetchHealth();
+  fetchAlerts();
+  fetchAiStatus();
 
-    // Chấm công (trung tâm): 3 giây
-    setInterval(fetchDashboard, 3000);
-
-    // Môi trường & cảnh báo: 5 giây
-    setInterval(fetchEnv,      5000);
-    setInterval(fetchTempChart,5000);
-    setInterval(fetchAlerts,   5000);
-    setInterval(fetchHealth,   5000);
-
-    // Biểu đồ tuần: 30 giây
-    setInterval(fetchWeekly, 30000);
-
-    // AI status: 1.5 giây (real-time)
-    setInterval(fetchAiStatus, 1500);
+  setInterval(fetchDashboard,  3000);
+  setInterval(fetchEnv,        5000);
+  setInterval(fetchTempChart,  5000);
+  setInterval(fetchAlerts,     5000);
+  setInterval(fetchHealth,     5000);
+  setInterval(fetchWeekly,    30000);
+  setInterval(fetchAiStatus,   1500);
 }
 
 document.addEventListener('DOMContentLoaded', initPolling);
 </script>
+
+<style>
+/* Responsive bottom-section */
+@media (max-width: 900px) {
+  .bottom-section { grid-template-columns: 1fr !important; }
+}
+</style>
 </body>
 </html>

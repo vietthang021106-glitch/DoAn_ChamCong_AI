@@ -17,6 +17,39 @@ from datetime import date, datetime, time
 import database
 from werkzeug.security import generate_password_hash, check_password_hash
 
+try:
+    import cv2 as _cv2
+except ImportError:
+    _cv2 = None
+
+
+# ============================================================
+# Helper: Encode frame camera sang JPEG bytes
+# ============================================================
+
+def encode_frame_to_jpg(frame):
+    """
+    Encode numpy frame thành bytes JPEG để lưu vào DB.
+
+    Không lưu raw frame;
+    dùng JPEG quality 85 để giảm kích thước.
+
+    Trả về bytes hoặc None.
+    """
+    if frame is None or _cv2 is None:
+        return None
+
+    success, buffer = _cv2.imencode(
+        ".jpg",
+        frame,
+        [_cv2.IMWRITE_JPEG_QUALITY, 85],
+    )
+
+    if not success:
+        return None
+
+    return buffer.tobytes()
+
 
 # ============================================================
 # Hàm tính trạng thái chấm công
@@ -183,7 +216,7 @@ def assign_shift(data):
 # ChamCong — Check-in / Check-out
 # ============================================================
 
-def process_attendance(ma_nv, ma_tb=1):
+def process_attendance(ma_nv, ma_tb=1, image_bytes=None):
     """
     Xử lý chấm công theo quy tắc:
 
@@ -197,6 +230,10 @@ def process_attendance(ma_nv, ma_tb=1):
 
     3. CHECK-IN thành công → set_active_employee (caller xử lý)
        CHECK-OUT thành công → clear_active_employee nếu đúng người
+
+    image_bytes: bytes JPEG hoặc None.
+                 Nếu None, chấm công vẫn hoạt động bình thường;
+                 AnhVao / AnhRa sẽ lưu NULL.
 
     Trả về dict:
         action   : "checkin" | "checkout" | "completed" | "error"
@@ -241,7 +278,7 @@ def process_attendance(ma_nv, ma_tb=1):
     # --- CHECK-IN ---
     if today_rec is None:
         try:
-            database.insert_checkin(ma_nv, ma_ca, ma_tb)
+            database.insert_checkin(ma_nv, ma_ca, ma_tb, image_bytes)
             return {
                 "action":  "checkin",
                 "status":  "success",
@@ -263,7 +300,7 @@ def process_attendance(ma_nv, ma_tb=1):
     # --- CHECK-OUT ---
     if gio_vao is not None and gio_ra is None:
         try:
-            database.update_checkout(ma_cc)
+            database.update_checkout(ma_cc, image_bytes)
             return {
                 "action":  "checkout",
                 "status":  "success",
@@ -286,6 +323,7 @@ def process_attendance(ma_nv, ma_tb=1):
         "MaCa":    ma_ca,
         "TenCa":   ten_ca,
     }
+
 
 
 # ============================================================
@@ -1039,14 +1077,164 @@ def fetch_my_attendance(ma_nv):
     except Exception as e:
         print(f"[services] Loi lay cham cong ca nhan {ma_nv}: {e}")
 
-    # Lịch sử 10 bản ghi gần nhất
+    # Lịch sử 30 bản ghi gần nhất
     try:
-        recent = database.get_recent_cham_cong(limit=10)
+        recent = database.get_employee_attendance_history(ma_nv, limit=30)
         for row in recent:
-            # row: (HoTen, GioVao, GioRa) — lọc theo MaNV không được
-            # vì hàm cũ không trả MaNV, nên lấy hết rồi filter.
-            pass
-    except Exception:
-        pass
+            result["LichSu"].append({
+                "GioVao": row[0].strftime("%Y-%m-%d %H:%M:%S") if row[0] else None,
+                "GioRa": row[1].strftime("%Y-%m-%d %H:%M:%S") if row[1] else None,
+            })
+    except Exception as e:
+        print(f"[services] Loi lay lich su cham cong ca nhan {ma_nv}: {e}")
 
     return result
+
+def fetch_employee_profile(ma_nv):
+    emp = database.get_employee_by_id(ma_nv)
+    if not emp:
+        return {}
+    return {
+        "MaNV": emp[0],
+        "HoTen": emp[1],
+        "MaVaiTro": emp[3],
+        "TenVaiTro": emp[4]
+    }
+
+def fetch_my_today_status(ma_nv):
+    # Trả về status chấm công hôm nay
+    today = date.today().isoformat()
+    try:
+        shift_row = database.get_employee_shift(ma_nv, today)
+        today_rec = database.get_today_record(ma_nv)
+        
+        ca = None
+        if shift_row:
+            gbd = _to_time(shift_row[2])
+            gkt = _to_time(shift_row[3])
+            ca = {
+                "TenCa": shift_row[1],
+                "GioBatDau": gbd.strftime("%H:%M") if gbd else "--",
+                "GioKetThuc": gkt.strftime("%H:%M") if gkt else "--",
+            }
+        
+        cc = None
+        status = "Chưa chấm công"
+        if today_rec:
+            gio_vao = today_rec[1]
+            gio_ra = today_rec[2]
+            cc = {
+                "GioVao": gio_vao.strftime("%H:%M:%S") if gio_vao else None,
+                "GioRa": gio_ra.strftime("%H:%M:%S") if gio_ra else None,
+            }
+            if shift_row:
+                st = calc_attendance_status(shift_row[2], shift_row[3], gio_vao, gio_ra)
+                status = st["TrangThaiTongHop"]
+            else:
+                status = "Đã chấm công ra" if gio_ra else "Đang làm việc"
+                
+        return {"CaHomNay": ca, "ChamCong": cc, "TrangThai": status}
+    except Exception as e:
+        print(f"[services] Loi lay trang thai hom nay {ma_nv}: {e}")
+        return {}
+
+def fetch_my_health(ma_nv):
+    try:
+        rows = database.get_employee_health_history(ma_nv, limit=30)
+        return [{
+            "NhipTim": r[0],
+            "SpO2": r[1],
+            "ThoiGian": r[2].strftime("%Y-%m-%d %H:%M:%S") if r[2] else "--"
+        } for r in rows]
+    except Exception as e:
+        print(f"[services] Loi lay suc khoe ca nhan {ma_nv}: {e}")
+        return []
+
+def fetch_my_alerts(ma_nv):
+    try:
+        rows = database.get_employee_alert_history(ma_nv, limit=20)
+        return [{
+            "LoaiCanhBao": r[0] if r[0] else "Cảnh báo AI",
+            "MoTa": r[1] if r[1] else "",
+            "ThoiGian": r[2].strftime("%Y-%m-%d %H:%M:%S") if r[2] else "--"
+        } for r in rows]
+    except Exception as e:
+        print(f"[services] Loi lay canh bao ca nhan {ma_nv}: {e}")
+        return []
+
+
+# ============================================================
+# Face Enrollment — PHASE 1
+# ============================================================
+
+def register_face(ma_nv, frames, target_count=5):
+    """
+    Đăng ký khuôn mặt nhân viên từ danh sách frame OpenCV.
+
+    Tham so:
+        ma_nv        : MaNV (int)
+        frames       : list[ndarray] — BGR frames từ camera
+        target_count : số embedding cần lưu (mặc định 5)
+
+    Quy tac:
+        - Mỗi frame phải có đúng 1 khuôn mặt
+        - Lưu mỗi embedding thành 1 row riêng biệt (không average)
+        - KHÔNG xóa dữ liệu cũ nếu đã tồn tại
+
+    Tra ve dict:
+        success  : bool
+        message  : str
+        embeddings_saved : int (nếu success)
+        dimensions       : int (nếu success)
+        errors           : list[str] (các frame bị lỗi)
+    """
+    import face_engine as _fe
+
+    # Khởi tạo engine nếu chưa làm
+    try:
+        _fe.face_engine.initialize()
+    except RuntimeError as e:
+        return {
+            "success": False,
+            "message": str(e),
+        }
+
+    saved_ids = []
+    errors = []
+
+    for i, frame in enumerate(frames):
+        try:
+            vector_bytes, emb_np = _fe.face_engine.extract_embedding(frame)
+            ma_emb = database.insert_face_embedding(
+                ma_nv=ma_nv,
+                vector_bytes=vector_bytes,
+                so_chieu=int(emb_np.size),
+            )
+            if ma_emb:
+                saved_ids.append(ma_emb)
+                print(
+                    f"[services/register_face] Frame {i+1}: MaEmbedding={ma_emb}, "
+                    f"norm={float(__import__('numpy').linalg.norm(emb_np)):.4f}"
+                )
+            else:
+                errors.append(f"Frame {i+1}: INSERT khong tra ve MaEmbedding")
+        except RuntimeError as e:
+            errors.append(f"Frame {i+1}: {e}")
+        except Exception as e:
+            errors.append(f"Frame {i+1}: loi khong xac dinh: {e}")
+
+    if not saved_ids:
+        return {
+            "success": False,
+            "message": "Khong luu duoc embedding nao. Kiem tra camera va khuon mat.",
+            "errors": errors,
+        }
+
+    return {
+        "success": True,
+        "message": "Dang ky khuon mat thanh cong",
+        "embeddings_saved": len(saved_ids),
+        "embedding_ids": saved_ids,
+        "dimensions": 512,
+        "errors": errors,  # frame bi truot (neu co)
+    }

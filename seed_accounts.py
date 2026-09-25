@@ -25,32 +25,30 @@ def seed_accounts():
 
         for emp in employees:
             ma_nv = emp[0]
-            # username mặc định: nv + MaNV, hoặc admin nếu MaVaiTro = 1
-            if emp[2] == 1:
-                username = f"admin{ma_nv}" if ma_nv > 1 else "admin"
-            else:
-                username = f"nv{ma_nv}"
-
-            # Mật khẩu mặc định
-            password = "123" if username == "admin" else "123456"
-            hashed_pw = generate_password_hash(password)
-
+            
             # Kiểm tra tài khoản đã tồn tại chưa
-            cursor.execute("SELECT MaTK FROM TaiKhoan WHERE MaNV = ?", (ma_nv,))
+            cursor.execute("SELECT MaTK, TenDangNhap FROM TaiKhoan WHERE MaNV = ?", (ma_nv,))
             row = cursor.fetchone()
 
             if row:
-                print(f"Updating password for {username} (MaNV: {ma_nv})")
-                cursor.execute(
-                    "UPDATE TaiKhoan SET MatKhau = ?, TenDangNhap = ? WHERE MaNV = ?",
-                    (hashed_pw, username, ma_nv)
-                )
+                username = row[1]
+                print(f"Account {username} (MaNV: {ma_nv}) already exists. Skipping overwrite.")
+                continue
             else:
-                print(f"Creating account {username} (MaNV: {ma_nv})")
-                cursor.execute(
-                    "INSERT INTO TaiKhoan (MaNV, TenDangNhap, MatKhau) VALUES (?, ?, ?)",
-                    (ma_nv, username, hashed_pw)
-                )
+                if emp[2] == 1:
+                    username = f"admin{ma_nv}" if ma_nv > 1 else "admin"
+                else:
+                    username = "user01" if ma_nv == 2 else f"user{ma_nv:02d}"
+
+            # Mật khẩu mặc định thống nhất
+            password = "123456"
+            hashed_pw = generate_password_hash(password)
+
+            print(f"Creating account {username} (MaNV: {ma_nv}) with password 123456")
+            cursor.execute(
+                "INSERT INTO TaiKhoan (MaNV, TenDangNhap, MatKhau) VALUES (?, ?, ?)",
+                (ma_nv, username, hashed_pw)
+            )
         
         conn.commit()
         print("Done seeding accounts.")
