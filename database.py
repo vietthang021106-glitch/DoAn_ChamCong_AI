@@ -1150,3 +1150,54 @@ def get_all_face_embeddings():
         return cursor.fetchall()
     finally:
         conn.close()
+
+
+def get_attendance_history_filtered(tu_ngay=None, den_ngay=None, keyword=None, page=1, limit=20):
+    """
+    Lấy danh sách lịch sử chấm công với bộ lọc bằng SQL và phân trang.
+    Dùng cho trang Lịch sử chấm công của admin.
+    """
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        
+        base_query = """
+            FROM ChamCong CC
+            JOIN NhanVien NV ON CC.MaNV = NV.MaNV
+            LEFT JOIN CaLamViec CLV ON CC.MaCa = CLV.MaCa
+            WHERE 1=1
+        """
+        params = []
+        if tu_ngay:
+            base_query += " AND CAST(CC.GioVao AS DATE) >= ?"
+            params.append(tu_ngay)
+        if den_ngay:
+            base_query += " AND CAST(CC.GioVao AS DATE) <= ?"
+            params.append(den_ngay)
+        if keyword:
+            keyword = keyword.strip()
+            base_query += " AND (NV.HoTen LIKE ? OR CC.MaNV LIKE ?)"
+            params.append(f"%{keyword}%")
+            params.append(f"%{keyword}%")
+            
+        # Count total
+        cursor.execute(f"SELECT COUNT(CC.MaCC) {base_query}", tuple(params))
+        total_row = cursor.fetchone()
+        total = total_row[0] if total_row else 0
+        
+        # Data query
+        query = f"""
+            SELECT 
+                CC.MaCC, CC.MaNV, NV.HoTen, CC.MaCa, CLV.TenCa, 
+                CLV.GioBatDau, CLV.GioKetThuc, CC.GioVao, CC.GioRa
+            {base_query}
+            ORDER BY CC.GioVao DESC
+            OFFSET ? ROWS FETCH NEXT ? ROWS ONLY
+        """
+        offset = (page - 1) * limit
+        params.extend([offset, limit])
+        
+        cursor.execute(query, tuple(params))
+        return cursor.fetchall(), total
+    finally:
+        conn.close()

@@ -116,11 +116,6 @@
         <svg class="user-chevron" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
       <div class="user-dropdown">
-        <a class="dropdown-item" href="/me">
-          <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 3.58-7 8-7s8 3 8 7"/></svg>
-          Trang cá nhân
-        </a>
-        <div class="dropdown-divider"></div>
         <a class="dropdown-item danger" href="/logout">
           <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
           Đăng xuất
@@ -208,17 +203,54 @@
   <div class="section-header">
     <div>
       <div class="section-title">Quản lý nhân viên</div>
-      <div class="section-subtitle">Thêm, sửa, xoá nhân viên trong hệ thống</div>
+      <div class="section-subtitle">Quản lý hồ sơ và trạng thái đăng ký khuôn mặt.</div>
+    </div>
+    <div>
+      <button class="btn btn-primary" id="btn-add-employee" onclick="openAddModal()">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        Thêm nhân viên
+      </button>
     </div>
   </div>
-  <div style="text-align:center;padding:48px 20px;">
-    <svg fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24" style="width:48px;height:48px;margin:0 auto 16px;color:var(--text-muted);opacity:.5;"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87M16 3.13a4 4 0 010 7.75"/></svg>
-    <div style="font-size:15px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Trang quản lý nhân viên</div>
-    <div style="font-size:13px;color:var(--text-secondary);margin-bottom:20px;">Truy cập trang quản lý đầy đủ chức năng CRUD nhân viên</div>
-    <a href="/employees" class="btn btn-primary" style="display:inline-flex;">
-      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width:14px;height:14px;"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-      Mở trang Nhân viên
-    </a>
+  <div class="stat-strip">
+    <div class="stat-strip-item">
+      <div class="stat-strip-num blue" id="stat-total">--</div>
+      <div class="stat-strip-label">Tổng nhân viên</div>
+    </div>
+    <div class="stat-strip-item">
+      <div class="stat-strip-num green" id="stat-registered">--</div>
+      <div class="stat-strip-label">Đã đăng ký khuôn mặt</div>
+    </div>
+    <div class="stat-strip-item">
+      <div class="stat-strip-num orange" id="stat-pending">--</div>
+      <div class="stat-strip-label">Chưa đăng ký</div>
+    </div>
+  </div>
+  <div class="toolbar">
+    <div class="search-wrap">
+      <span class="search-icon">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+      </span>
+      <input type="text" id="emp-search-input" class="search-input" placeholder="Tìm theo tên hoặc mã nhân viên..." oninput="empFilterTable(this.value)">
+    </div>
+    <span class="panel-badge" id="emp-table-badge">Đang tải...</span>
+  </div>
+  <div class="panel">
+    <div class="table-wrap">
+      <table class="data-table" id="emp-table">
+        <thead>
+          <tr>
+            <th>Nhân viên</th>
+            <th>Vai trò</th>
+            <th>Khuôn mặt</th>
+            <th style="width:80px;text-align:center;">Thao tác</th>
+          </tr>
+        </thead>
+        <tbody id="emp-tbody">
+          <tr><td colspan="4" class="td-empty">Đang tải dữ liệu...</td></tr>
+        </tbody>
+      </table>
+    </div>
   </div>
 </div>
 
@@ -233,23 +265,45 @@
   <div class="attendance-toolbar" style="border:1px solid var(--border);border-radius:var(--radius-md);background:var(--surface);">
     <div class="search-wrap" style="flex:1;max-width:320px;">
       <span class="search-icon"><svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2"><circle cx="8.5" cy="8.5" r="5.5"/><path d="M15 15l-3.5-3.5"/></svg></span>
-      <input type="text" id="attendance-search" class="search-input" placeholder="Tìm tên hoặc mã nhân viên..." autocomplete="off">
+      <input type="text" id="attendance-history-search" class="search-input" placeholder="Tìm tên hoặc mã nhân viên..." autocomplete="off">
     </div>
-    <div class="attendance-date-wrap">
-      <input type="date" id="attendance-date" class="attendance-date-input">
-      <button id="attendance-today-btn" class="attendance-today-btn">Hôm nay</button>
+    <div class="attendance-date-wrap" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap;">
+      <input type="date" id="attendance-from-date" class="attendance-date-input" title="Từ ngày">
+      <span style="color:var(--text-muted);font-size:13px;">đến</span>
+      <input type="date" id="attendance-to-date" class="attendance-date-input" title="Đến ngày">
+      <button id="attendance-search-btn" class="btn btn-primary" style="padding:0 16px;height:36px;font-size:13px;" onclick="fetchAttendanceHistory()">Tìm kiếm</button>
+      <button id="attendance-clear-btn" class="btn btn-ghost" style="padding:0 16px;height:36px;font-size:13px;" onclick="clearAttendanceFilters()">Xóa lọc</button>
     </div>
   </div>
   <div class="panel" style="margin:0;">
     <div class="panel-header">
-      <span class="panel-title" id="attendance-panel-title">Chấm công hôm nay</span>
-      <span class="panel-badge" id="attendance-count">Đang tải...</span>
+      <span class="panel-title" id="attendance-panel-title">Kết quả tra cứu</span>
+      <span class="panel-badge" id="attendance-history-count">Đang tải...</span>
     </div>
     <div style="overflow-x:auto;">
       <table class="data-table" id="chamcong-table">
-        <thead><tr><th>Nhân viên</th><th>Ca làm việc</th><th>Giờ vào</th><th>Trạng thái vào</th><th>Giờ ra</th><th>Trạng thái ra</th></tr></thead>
-        <tbody id="chamcong-tbody"><tr><td colspan="6" class="td-empty">Đang tải dữ liệu...</td></tr></tbody>
+        <thead>
+          <tr>
+            <th>Nhân viên</th>
+            <th>Ngày</th>
+            <th>Ca làm việc</th>
+            <th>Giờ vào</th>
+            <th>Trạng thái vào</th>
+            <th>Giờ ra</th>
+            <th>Trạng thái ra</th>
+          </tr>
+        </thead>
+        <tbody id="chamcong-tbody">
+          <tr><td colspan="7" class="td-empty">Đang tải dữ liệu...</td></tr>
+        </tbody>
       </table>
+    </div>
+    <div class="pagination-wrap" style="display:flex;justify-content:space-between;align-items:center;padding:12px 16px;border-top:1px solid var(--border);">
+      <div style="font-size:13px;color:var(--text-muted);" id="attendance-pagination-info">Hiển thị 0 - 0 / 0</div>
+      <div style="display:flex;gap:8px;">
+        <button class="btn btn-ghost" style="padding:4px 12px;font-size:13px;" id="attendance-prev-btn" onclick="prevAttendancePage()" disabled>Trước</button>
+        <button class="btn btn-ghost" style="padding:4px 12px;font-size:13px;" id="attendance-next-btn" onclick="nextAttendancePage()" disabled>Sau</button>
+      </div>
     </div>
   </div>
 </div>
@@ -378,6 +432,111 @@
 </div><!-- /main-wrapper -->
 </div><!-- /app-shell -->
 
+<!-- ================================================================
+     MODAL: THÊM NHÂN VIÊN
+================================================================ -->
+<div class="modal-backdrop" id="modal-add" role="dialog" aria-modal="true" aria-labelledby="modal-add-title">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modal-add-title">Thêm nhân viên</div>
+        <div class="modal-subtitle">Điền thông tin bên dưới. Khuôn mặt đăng ký ở bước tiếp theo.</div>
+      </div>
+      <button class="modal-close" onclick="closeAddModal()" aria-label="Đóng">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label" for="add-hoten">Họ và tên <span class="required">*</span></label>
+        <input class="form-control" type="text" id="add-hoten" placeholder="Nguyễn Văn A" maxlength="150" autocomplete="off">
+        <div class="form-error" id="add-hoten-err">Vui lòng nhập họ tên</div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label class="form-label" for="add-vaitro">Vai trò <span class="required">*</span></label>
+        <select class="form-control" id="add-vaitro">
+          <option value="">-- Chọn vai trò --</option>
+        </select>
+        <div class="form-error" id="add-vaitro-err">Vui lòng chọn vai trò</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeAddModal()">Hủy</button>
+      <button class="btn btn-primary" id="btn-submit-add" onclick="submitAdd()">Lưu</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
+     MODAL: SỬA NHÂN VIÊN
+================================================================ -->
+<div class="modal-backdrop" id="modal-edit" role="dialog" aria-modal="true" aria-labelledby="modal-edit-title">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modal-edit-title">Sửa nhân viên</div>
+        <div class="modal-subtitle">Chỉ Họ tên và Vai trò có thể thay đổi.</div>
+      </div>
+      <button class="modal-close" onclick="closeEditModal()" aria-label="Đóng">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Mã nhân viên</label>
+        <div class="form-control-static" id="edit-manv-display">--</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="edit-hoten">Họ và tên <span class="required">*</span></label>
+        <input class="form-control" type="text" id="edit-hoten" maxlength="150" autocomplete="off">
+        <div class="form-error" id="edit-hoten-err">Vui lòng nhập họ tên</div>
+      </div>
+      <div class="form-group">
+        <label class="form-label" for="edit-vaitro">Vai trò <span class="required">*</span></label>
+        <select class="form-control" id="edit-vaitro">
+          <option value="">-- Chọn vai trò --</option>
+        </select>
+        <div class="form-error" id="edit-vaitro-err">Vui lòng chọn vai trò</div>
+      </div>
+      <div class="form-group" style="margin-bottom:0;">
+        <label class="form-label">Trạng thái khuôn mặt</label>
+        <div class="form-control-static" id="edit-khuonmat-display">--</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeEditModal()">Hủy</button>
+      <button class="btn btn-primary" id="btn-submit-edit" onclick="submitEdit()">Lưu thay đổi</button>
+    </div>
+  </div>
+</div>
+
+<!-- ================================================================
+     MODAL: ĐĂNG KÝ KHUÔN MẶT
+================================================================ -->
+<div class="modal-backdrop" id="modal-face" role="dialog" aria-modal="true" aria-labelledby="modal-face-title">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="modal-face-title">Đăng ký khuôn mặt</div>
+        <div class="modal-subtitle" id="modal-face-sub">--</div>
+      </div>
+      <button class="modal-close" onclick="closeFaceModal()" aria-label="Đóng">
+        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </div>
+    <div class="modal-body">
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-md);padding:24px;text-align:center;">
+        <svg style="width:36px;height:36px;color:var(--text-muted);margin:0 auto 12px;" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+        <div style="font-weight:600;color:var(--text-secondary);margin-bottom:6px;">Tính năng sắp ra mắt</div>
+        <div style="font-size:12.5px;color:var(--text-muted);line-height:1.6;">Chức năng đăng ký khuôn mặt sẽ được triển khai ở bước tiếp theo.<br>Nhân viên sẽ đứng trước camera để hệ thống ghi nhận khuôn mặt.</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeFaceModal()">Đóng</button>
+    </div>
+  </div>
+</div>
+
 <div id="toast-container"></div>
 <script src="{{ url_for('static', filename='js/ui.js') }}"></script>
 <script>
@@ -462,28 +621,92 @@ function getTodayStr(){const n=new Date();return`${n.getFullYear()}-${String(n.g
 function normVi(s){return(s||'').normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/\u0111/g,'d').replace(/\u0110/g,'D').toLowerCase();}
 
 /* =====================================================================
-   ATTENDANCE STATE
+   ATTENDANCE HISTORY STATE
    ===================================================================== */
-let attendanceRecords=[], selectedDate='', searchDebounce=null;
+let historyLoaded = false;
+let attendanceCurrentPage = 1;
+const attendanceLimit = 20;
+let selectedDate = getTodayStr();
 
-function filterAndRender(){
-  const si=document.getElementById('attendance-search'),q=si?(si.value||'').trim():'',nq=normVi(q);
-  const filtered=q?attendanceRecords.filter(r=>normVi(r.HoTen).includes(nq)||String(r.MaNV).includes(q)):attendanceRecords;
-  const ce=document.getElementById('attendance-count');
-  if(ce) ce.textContent=q?`${filtered.length} / ${attendanceRecords.length} nhân viên`:`${attendanceRecords.length} nhân viên`;
-  const tbody=document.getElementById('chamcong-tbody');
-  if(!tbody) return;
-  if(!filtered.length){tbody.innerHTML=q?'<tr><td colspan="6" class="td-empty">Không tìm thấy nhân viên phù hợp</td></tr>':'<tr><td colspan="6" class="td-empty">Chưa có dữ liệu chấm công ngày này</td></tr>';return;}
-  tbody.innerHTML=filtered.map(r=>`
-    <tr>
-      <td><div class="emp-cell"><div class="emp-avatar">${initials(r.HoTen)}</div><div><div class="emp-name">${r.HoTen}</div><div class="emp-id">NV${String(r.MaNV||'').padStart(3,'0')}</div></div></div></td>
-      <td><div class="shift-name">${r.TenCa||'--'}</div><span class="shift-hours">${r.GioBatDau||'--'} – ${r.GioKetThuc||'--'}</span></td>
-      <td class="tabular fw-600" style="color:var(--success);">${r.GioVao?fmtTime(r.GioVao):'<span class="text-muted">--</span>'}</td>
-      <td>${badgeVao(r.TrangThaiVao)}</td>
-      <td class="tabular text-muted">${r.GioRa?fmtTime(r.GioRa):'<span class="text-muted">--</span>'}</td>
-      <td>${badgeRa(r.TrangThaiRa)}</td>
-    </tr>`).join('');
+async function fetchAttendanceHistory(page = 1) {
+  attendanceCurrentPage = page;
+  const q = document.getElementById('attendance-history-search').value.trim();
+  const f = document.getElementById('attendance-from-date').value;
+  const t = document.getElementById('attendance-to-date').value;
+  
+  const ce = document.getElementById('attendance-history-count');
+  const tbody = document.getElementById('chamcong-tbody');
+  const pagInfo = document.getElementById('attendance-pagination-info');
+  const prevBtn = document.getElementById('attendance-prev-btn');
+  const nextBtn = document.getElementById('attendance-next-btn');
+  
+  if(ce) ce.textContent = 'Đang tải...';
+  if(tbody) tbody.innerHTML = '<tr><td colspan="7" class="td-empty">Đang tải dữ liệu...</td></tr>';
+  
+  try {
+    let url = `/api/attendance/history?page=${page}&limit=${attendanceLimit}&`;
+    if(q) url += `keyword=${encodeURIComponent(q)}&`;
+    if(f) url += `tu_ngay=${encodeURIComponent(f)}&`;
+    if(t) url += `den_ngay=${encodeURIComponent(t)}`;
+    
+    const resp = await fetch(url);
+    const data = await resp.json();
+    
+    const records = data.records || [];
+    const total = data.total || 0;
+    
+    if(ce) ce.textContent = `${total} bản ghi`;
+    
+    if(!records.length) {
+      if(tbody) tbody.innerHTML = '<tr><td colspan="7" class="td-empty">Không tìm thấy dữ liệu phù hợp</td></tr>';
+      if(pagInfo) pagInfo.textContent = `Hiển thị 0 - 0 / 0`;
+      if(prevBtn) prevBtn.disabled = true;
+      if(nextBtn) nextBtn.disabled = true;
+      return;
+    }
+    
+    const startIdx = (page - 1) * attendanceLimit + 1;
+    const endIdx = Math.min(page * attendanceLimit, total);
+    if(pagInfo) pagInfo.textContent = `Hiển thị ${startIdx} - ${endIdx} / ${total}`;
+    
+    if(prevBtn) prevBtn.disabled = page <= 1;
+    if(nextBtn) nextBtn.disabled = endIdx >= total;
+    
+    if(tbody) {
+      tbody.innerHTML = records.map(r => `
+        <tr>
+          <td><div class="emp-cell"><div class="emp-avatar">${initials(r.HoTen)}</div><div><div class="emp-name">${r.HoTen}</div><div class="emp-id">NV${String(r.MaNV||'').padStart(3,'0')}</div></div></div></td>
+          <td class="tabular">${r.Ngay || '--'}</td>
+          <td><div class="shift-name">${r.TenCa||'--'}</div><span class="shift-hours">${r.GioBatDau||'--'} – ${r.GioKetThuc||'--'}</span></td>
+          <td class="tabular fw-600" style="color:var(--success);">${r.GioVao?fmtTime(r.GioVao):'<span class="text-muted">--</span>'}</td>
+          <td>${badgeVao(r.TrangThaiVao)}</td>
+          <td class="tabular text-muted">${r.GioRa?fmtTime(r.GioRa):'<span class="text-muted">--</span>'}</td>
+          <td>${badgeRa(r.TrangThaiRa)}</td>
+        </tr>`).join('');
+    }
+  } catch(e) {
+    console.error(e);
+    if(tbody) tbody.innerHTML = '<tr><td colspan="7" class="td-empty text-red-500">Lỗi kết nối máy chủ</td></tr>';
+  }
 }
+
+function prevAttendancePage() {
+  if (attendanceCurrentPage > 1) {
+    fetchAttendanceHistory(attendanceCurrentPage - 1);
+  }
+}
+
+function nextAttendancePage() {
+  fetchAttendanceHistory(attendanceCurrentPage + 1);
+}
+
+function clearAttendanceFilters() {
+  document.getElementById('attendance-history-search').value = '';
+  document.getElementById('attendance-from-date').value = '';
+  document.getElementById('attendance-to-date').value = '';
+  fetchAttendanceHistory(1);
+}
+
 
 /* =====================================================================
    CHART INSTANCES
@@ -497,6 +720,7 @@ let chartsInitialized = { statistics: false, environment: false };
    SECTION ENTER — lazy init
    ===================================================================== */
 function onSectionEnter(sec) {
+  if (sec === 'employees') initEmployeesSection();
   if (sec === 'attendance') initAttendanceSection();
   if (sec === 'statistics' && !chartsInitialized.statistics) initStatisticsSection();
   if (sec === 'alerts') fetchAlerts();
@@ -506,29 +730,13 @@ function onSectionEnter(sec) {
 }
 
 function initAttendanceSection() {
-  const today = getTodayStr(); selectedDate = today;
-  const di = document.getElementById('attendance-date'); if(di) di.value = today;
-  const si = document.getElementById('attendance-search');
-  if(si) {
-    si.value = '';
-    // Remove previous listeners by cloning
-    const newSi = si.cloneNode(true);
-    si.parentNode.replaceChild(newSi, si);
-    newSi.addEventListener('input', () => { clearTimeout(searchDebounce); searchDebounce = setTimeout(filterAndRender, 250); });
+  if(!historyLoaded) {
+    const today = getTodayStr();
+    document.getElementById('attendance-from-date').value = today;
+    document.getElementById('attendance-to-date').value = today;
+    fetchAttendanceHistory();
+    historyLoaded = true;
   }
-  const diEl = document.getElementById('attendance-date');
-  if(diEl) {
-    const newDi = diEl.cloneNode(true);
-    diEl.parentNode.replaceChild(newDi, diEl);
-    newDi.addEventListener('change', () => { const v=newDi.value; if(!v) return; selectedDate=v; const s=document.getElementById('attendance-search'); if(s) s.value=''; fetchDashboard(v); });
-  }
-  const tb = document.getElementById('attendance-today-btn');
-  if(tb) {
-    const newTb = tb.cloneNode(true);
-    tb.parentNode.replaceChild(newTb, tb);
-    newTb.addEventListener('click', () => { const t=getTodayStr(); selectedDate=t; const d=document.getElementById('attendance-date'); if(d) d.value=t; const s=document.getElementById('attendance-search'); if(s) s.value=''; fetchDashboard(t); });
-  }
-  fetchDashboard(selectedDate);
 }
 
 function initStatisticsSection() {
@@ -593,10 +801,6 @@ function fetchDashboard(dateOverride){
     // Statistics legend
     ['stat-leg-dung-gio','stat-leg-dang-lam','stat-leg-di-tre','stat-leg-ve-som','stat-leg-chua-cham'].forEach((id,i)=>{const e=document.getElementById(id);if(e) e.textContent=[dungGio,dangLam,diTre,veSom,chuaCham][i];});
     if(donutChart){donutChart.data.datasets[0].data=[dungGio,dangLam,diTre,veSom,chuaCham];donutChart.update();}
-    // Attendance panel title
-    const today=getTodayStr(),te=document.getElementById('attendance-panel-title');
-    if(te){if(selectedDate===today){te.textContent='Chấm công hôm nay';}else{const dd=new Date(selectedDate+'T00:00:00');te.textContent=`Chấm công ngày ${String(dd.getDate()).padStart(2,'0')}/${String(dd.getMonth()+1).padStart(2,'0')}/${dd.getFullYear()}`;}}
-    attendanceRecords=recs;filterAndRender();
   }).catch(e=>console.error('[dashboard]',e));
 }
 
@@ -686,6 +890,190 @@ function initPolling(){
   setInterval(fetchAiStatus,1500);
 }
 document.addEventListener('DOMContentLoaded',initPolling);
+
+/* =====================================================================
+   EMPLOYEES CRUD — full inline management
+   ===================================================================== */
+let _employees = [];
+let _roles = [];
+let _editMaNV = null;
+let _empLoaded = false;
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+async function initEmployeesSection() {
+  if (!_empLoaded) {
+    await empLoadRoles();
+    _empLoaded = true;
+  }
+  await empLoadEmployees();
+}
+
+async function empLoadRoles() {
+  try {
+    const resp = await fetch('/api/roles');
+    _roles = await resp.json();
+    empPopulateRoleSelect('add-vaitro', _roles, '');
+    empPopulateRoleSelect('edit-vaitro', _roles, '');
+  } catch(e) { console.error('empLoadRoles error', e); }
+}
+
+function empPopulateRoleSelect(selectId, roles, selectedVal) {
+  const sel = document.getElementById(selectId);
+  if (!sel) return;
+  while (sel.options.length > 1) sel.remove(1);
+  for (const r of roles) {
+    const opt = document.createElement('option');
+    opt.value = r.MaVaiTro;
+    opt.textContent = r.TenVaiTro;
+    if (String(r.MaVaiTro) === String(selectedVal)) opt.selected = true;
+    sel.appendChild(opt);
+  }
+}
+
+async function empLoadEmployees() {
+  try {
+    const resp = await fetch('/api/employees');
+    _employees = await resp.json();
+    empRenderTable(_employees);
+    empRenderStats(_employees);
+  } catch(e) {
+    console.error('empLoadEmployees error', e);
+    document.getElementById('emp-tbody').innerHTML = '<tr><td colspan="4" class="td-empty">Không thể tải dữ liệu</td></tr>';
+  }
+}
+
+function empRenderStats(emps) {
+  const total = emps.length;
+  const registered = emps.filter(e => e.DaDangKyKhuonMat).length;
+  document.getElementById('stat-total').textContent = total;
+  document.getElementById('stat-registered').textContent = registered;
+  document.getElementById('stat-pending').textContent = total - registered;
+}
+
+function empRenderTable(emps) {
+  const tbody = document.getElementById('emp-tbody');
+  document.getElementById('emp-table-badge').textContent = `${emps.length} nhân viên`;
+  if (!emps.length) {
+    tbody.innerHTML = '<tr><td colspan="4" class="td-empty">Chưa có nhân viên nào</td></tr>';
+    return;
+  }
+  tbody.innerHTML = emps.map(emp => {
+    const av = initials(emp.HoTen);
+    const isAdmin = (emp.TenVaiTro || '').toLowerCase().includes('quản trị') || emp.MaVaiTro === 1;
+    const roleChip = isAdmin
+      ? `<span class="role-chip admin">${escHtml(emp.TenVaiTro || '--')}</span>`
+      : `<span class="role-chip">${escHtml(emp.TenVaiTro || '--')}</span>`;
+    const faceHtml = emp.DaDangKyKhuonMat
+      ? `<span class="badge badge-green">Đã đăng ký</span>`
+      : `<button class="btn btn-ghost btn-sm" onclick="openFaceModal(${emp.MaNV}, '${escHtml(emp.HoTen)}')" title="Đăng ký khuôn mặt">
+           <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width:13px;height:13px;"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
+           Chưa đăng ký
+         </button>`;
+    return `
+    <tr>
+      <td><div class="emp-cell"><div class="emp-avatar">${av}</div><div><div class="emp-name">${escHtml(emp.HoTen)}</div><div class="emp-id">NV${String(emp.MaNV).padStart(3,'0')}</div></div></div></td>
+      <td>${roleChip}</td>
+      <td>${faceHtml}</td>
+      <td style="text-align:center;"><button class="btn-icon" onclick="openEditModal(${emp.MaNV})" title="Sửa thông tin"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></button></td>
+    </tr>`;
+  }).join('');
+}
+
+function empFilterTable(query) {
+  const q = query.trim().toLowerCase();
+  if (!q) { empRenderTable(_employees); return; }
+  const filtered = _employees.filter(emp => {
+    const name = (emp.HoTen || '').toLowerCase();
+    const code = `nv${String(emp.MaNV).padStart(3,'0')}`;
+    const id = String(emp.MaNV);
+    return name.includes(q) || code.includes(q) || id.includes(q);
+  });
+  empRenderTable(filtered);
+}
+
+/* --- Modal ADD --- */
+function openAddModal() {
+  document.getElementById('add-hoten').value = '';
+  document.getElementById('add-vaitro').value = '';
+  empHideErr('add-hoten-err'); empHideErr('add-vaitro-err');
+  empPopulateRoleSelect('add-vaitro', _roles, '');
+  openModal('modal-add');
+  setTimeout(() => document.getElementById('add-hoten').focus(), 60);
+}
+function closeAddModal() { closeModal('modal-add'); }
+
+async function submitAdd() {
+  const hoTen = document.getElementById('add-hoten').value.trim();
+  const maVaiTro = document.getElementById('add-vaitro').value;
+  let valid = true;
+  if (!hoTen) { empShowErr('add-hoten-err', 'Vui lòng nhập họ tên'); valid = false; } else { empHideErr('add-hoten-err'); }
+  if (!maVaiTro) { empShowErr('add-vaitro-err', 'Vui lòng chọn vai trò'); valid = false; } else { empHideErr('add-vaitro-err'); }
+  if (!valid) return;
+  const btn = document.getElementById('btn-submit-add');
+  btn.disabled = true; btn.textContent = 'Đang xử lý...';
+  try {
+    const resp = await fetch('/api/employees', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({HoTen:hoTen,MaVaiTro:parseInt(maVaiTro)}) });
+    const data = await resp.json();
+    if (resp.status === 201) { closeAddModal(); showToast(`Thêm nhân viên thành công (MaNV: ${data.MaNV})`, 'success'); await empLoadEmployees(); }
+    else { showToast(data.message || 'Lỗi khi thêm nhân viên', 'error'); }
+  } catch(e) { showToast('Lỗi kết nối server', 'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Lưu'; }
+}
+
+/* --- Modal EDIT --- */
+function openEditModal(maNV) {
+  const emp = _employees.find(e => e.MaNV === maNV);
+  if (!emp) { showToast('Không tìm thấy nhân viên', 'error'); return; }
+  _editMaNV = maNV;
+  document.getElementById('edit-manv-display').textContent = `#${emp.MaNV} — ${emp.HoTen}`;
+  document.getElementById('edit-hoten').value = emp.HoTen;
+  empPopulateRoleSelect('edit-vaitro', _roles, emp.MaVaiTro);
+  document.getElementById('edit-khuonmat-display').textContent = emp.DaDangKyKhuonMat ? 'Đã đăng ký khuôn mặt' : 'Chưa đăng ký khuôn mặt';
+  empHideErr('edit-hoten-err'); empHideErr('edit-vaitro-err');
+  openModal('modal-edit');
+  setTimeout(() => document.getElementById('edit-hoten').focus(), 60);
+}
+function closeEditModal() { closeModal('modal-edit'); _editMaNV = null; }
+
+async function submitEdit() {
+  if (!_editMaNV) return;
+  const hoTen = document.getElementById('edit-hoten').value.trim();
+  const maVaiTro = document.getElementById('edit-vaitro').value;
+  let valid = true;
+  if (!hoTen) { empShowErr('edit-hoten-err', 'Vui lòng nhập họ tên'); valid = false; } else { empHideErr('edit-hoten-err'); }
+  if (!maVaiTro) { empShowErr('edit-vaitro-err', 'Vui lòng chọn vai trò'); valid = false; } else { empHideErr('edit-vaitro-err'); }
+  if (!valid) return;
+  const btn = document.getElementById('btn-submit-edit');
+  btn.disabled = true; btn.textContent = 'Đang lưu...';
+  try {
+    const resp = await fetch(`/api/employees/${_editMaNV}`, { method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify({HoTen:hoTen,MaVaiTro:parseInt(maVaiTro)}) });
+    const data = await resp.json();
+    if (resp.status === 200) { closeEditModal(); showToast('Cập nhật nhân viên thành công', 'success'); await empLoadEmployees(); }
+    else if (resp.status === 404) { showToast('Không tìm thấy nhân viên', 'error'); }
+    else { showToast(data.message || 'Lỗi khi cập nhật', 'error'); }
+  } catch(e) { showToast('Lỗi kết nối server', 'error'); }
+  finally { btn.disabled = false; btn.textContent = 'Lưu thay đổi'; }
+}
+
+/* --- Modal FACE --- */
+function openFaceModal(maNV, hoTen) {
+  document.getElementById('modal-face-sub').textContent = `Nhân viên: ${hoTen} (MaNV: ${maNV})`;
+  openModal('modal-face');
+}
+function closeFaceModal() { closeModal('modal-face'); }
+
+function empShowErr(id, msg) { const el=document.getElementById(id); if(el){el.textContent=msg;el.classList.add('show');} }
+function empHideErr(id) { const el=document.getElementById(id); if(el) el.classList.remove('show'); }
+
+// Close modal backdrop also clears edit state
+document.addEventListener('DOMContentLoaded', () => {
+  document.querySelectorAll('.modal-backdrop').forEach(bd => {
+    bd.addEventListener('backdropClose', () => { _editMaNV = null; });
+  });
+});
 </script>
 </body>
 </html>

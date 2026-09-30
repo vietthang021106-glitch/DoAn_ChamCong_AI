@@ -1262,3 +1262,65 @@ def register_face(ma_nv, frames, target_count=5):
         "dimensions": 512,
         "errors": errors,  # frame bi truot (neu co)
     }
+
+def fetch_attendance_history_filtered(tu_ngay=None, den_ngay=None, keyword=None, page=1, limit=20):
+    """
+    Format data từ database.get_attendance_history_filtered.
+    """
+    try:
+        rows, total = database.get_attendance_history_filtered(tu_ngay, den_ngay, keyword, page, limit)
+        records = []
+        for row in rows:
+            ma_cc        = row[0]
+            ma_nv        = row[1]
+            ho_ten       = row[2]
+            ma_ca        = row[3]
+            ten_ca       = row[4]
+            gio_bat_dau  = row[5]
+            gio_ket_thuc = row[6]
+            gio_vao      = row[7]   # datetime
+            gio_ra       = row[8]   # datetime
+            
+            gbd_t = _to_time(gio_bat_dau)
+            gkt_t = _to_time(gio_ket_thuc)
+            
+            status = calc_attendance_status(
+                gio_bat_dau, gio_ket_thuc, gio_vao, gio_ra
+            )
+            
+            records.append({
+                "MaCC":  ma_cc,
+                "MaNV":  ma_nv,
+                "HoTen": ho_ten,
+                "MaCa":       ma_ca,
+                "TenCa":      ten_ca or "--",
+                "GioBatDau":  gbd_t.strftime("%H:%M") if gbd_t else "--",
+                "GioKetThuc": gkt_t.strftime("%H:%M") if gkt_t else "--",
+                "GioVao": (
+                    gio_vao.strftime("%H:%M:%S")
+                    if gio_vao else None
+                ),
+                "GioRa": (
+                    gio_ra.strftime("%H:%M:%S")
+                    if gio_ra else None
+                ),
+                "TrangThaiVao":     status["TrangThaiVao"],
+                "TrangThaiRa":      status["TrangThaiRa"],
+                "TrangThaiTongHop": status["TrangThaiTongHop"],
+                # Return the full date of GioVao so we can group or display
+                "Ngay": gio_vao.strftime("%Y-%m-%d") if gio_vao else None
+            })
+        return {
+            "records": records,
+            "total": total,
+            "page": page,
+            "limit": limit
+        }
+    except Exception as e:
+        print(f"[services] Loi fetch_attendance_history_filtered: {e}")
+        return {
+            "records": [],
+            "total": 0,
+            "page": page,
+            "limit": limit
+        }

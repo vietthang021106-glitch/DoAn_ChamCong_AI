@@ -216,6 +216,8 @@ def employees_page():
 @login_required
 def me_page():
     """GET /me — Trang cá nhân nhân viên."""
+    if session.get('MaVaiTro') == 1:
+        return redirect(url_for('index'))
     return render_template('me.html')
 
 
@@ -424,6 +426,31 @@ def dashboard_attendance():
 def attendance_today():
     data = services.fetch_attendance_dashboard()
     return jsonify(data.get("Records", []))
+
+
+@app.route('/api/attendance/history')
+@admin_required
+def attendance_history_filtered():
+    tu_ngay = request.args.get('tu_ngay')
+    den_ngay = request.args.get('den_ngay')
+    keyword = request.args.get('keyword')
+    
+    # validate date format if provided
+    from datetime import datetime as _dt
+    for date_str in [tu_ngay, den_ngay]:
+        if date_str:
+            try:
+                _dt.strptime(date_str.strip(), '%Y-%m-%d')
+            except ValueError:
+                return jsonify({
+                    'status': 'error',
+                    'message': 'Ngày không hợp lệ. Định dạng yêu cầu: YYYY-MM-DD'
+                }), 400
+    page = request.args.get('page', 1, type=int)
+    limit = request.args.get('limit', 20, type=int)
+                
+    data = services.fetch_attendance_history_filtered(tu_ngay, den_ngay, keyword, page, limit)
+    return jsonify(data)
 
 
 # ============================================================
