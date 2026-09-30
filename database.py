@@ -11,6 +11,7 @@ Schema bổ sung (đã tạo ngoài code):
 """
 
 import pyodbc
+from datetime import date as _date
 
 
 # ============================================================
@@ -313,21 +314,28 @@ def get_employee_attendance_history(ma_nv, limit=30):
         conn.close()
 
 
-def get_today_attendance():
+def get_attendance_by_date(target_date):
     """
-    Toàn bộ nhân viên kèm tình trạng chấm công hôm nay.
+    Toàn bộ nhân viên kèm tình trạng chấm công theo ngày được chọn.
 
     Dùng OUTER APPLY + SELECT TOP 1 để đảm bảo mỗi nhân viên
     CHỈ xuất hiện đúng 1 dòng, kể cả khi ChamCong có nhiều
-    bản ghi trong ngày (tránh duplicate nhân vật gây sai KPI).
+    bản ghi trong ngày (tránh duplicate nhân viên gây sai KPI).
 
     Ưu tiên bản ghi có GioVao sớm nhất trong ngày.
+
+    Tham số:
+        target_date : date object hoặc string 'YYYY-MM-DD'
 
     Trả về:
         MaNV, HoTen,
         MaCa, TenCa, GioBatDau, GioKetThuc,
-        GioVao, GioRa
+        GioVao, GioRa, MaCC
     """
+    if isinstance(target_date, str):
+        from datetime import datetime
+        target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+
     conn = get_connection()
     try:
         cursor = conn.cursor()
@@ -341,36 +349,43 @@ def get_today_attendance():
                 CLV.GioBatDau,
                 CLV.GioKetThuc,
 
-                CC_TODAY.GioVao,
-                CC_TODAY.GioRa
+                CC_DAY.GioVao,
+                CC_DAY.GioRa,
+                CC_DAY.MaCC
 
             FROM NhanVien NV
 
-            -- Ca làm việc hôm nay (nếu được phân ca)
+            -- Ca làm việc ngày được chọn (parameterized)
             LEFT JOIN PhanCaNhanVien PCN
                 ON  NV.MaNV = PCN.MaNV
-                AND PCN.NgayLamViec = CAST(GETDATE() AS DATE)
+                AND PCN.NgayLamViec = ?
 
             LEFT JOIN CaLamViec CLV
                 ON PCN.MaCa = CLV.MaCa
 
-            -- Lấy đúng 1 bản ghi ChamCong hôm nay (GioVao sớm nhất)
+            -- Lấy đúng 1 bản ghi ChamCong ngày được chọn (GioVao sớm nhất)
             OUTER APPLY (
                 SELECT TOP 1
+                    CC.MaCC,
                     CC.GioVao,
                     CC.GioRa
                 FROM ChamCong CC
                 WHERE
                     CC.MaNV = NV.MaNV
-                    AND CAST(CC.GioVao AS DATE) = CAST(GETDATE() AS DATE)
+                    AND CAST(CC.GioVao AS DATE) = ?
                 ORDER BY CC.GioVao ASC
-            ) AS CC_TODAY
+            ) AS CC_DAY
 
             ORDER BY NV.MaNV
-        """)
+        """, (target_date, target_date))
         return cursor.fetchall()
     finally:
         conn.close()
+
+
+def get_today_attendance():
+    """Wrapper backward-compatible: chấm công hôm nay."""
+    return get_attendance_by_date(_date.today())
 
 
 def get_today_cham_cong():
@@ -738,20 +753,29 @@ def get_employee_alert_history(ma_nv, limit=20):
         conn.close()
 
 
-def get_today_alert_count():
-    """Số cảnh báo AI hôm nay."""
+def get_alert_count_by_date(target_date):
+    """Số cảnh báo AI theo ngày được chọn (parameterized)."""
+    if isinstance(target_date, str):
+        from datetime import datetime
+        target_date = datetime.strptime(target_date, '%Y-%m-%d').date()
+
     conn = get_connection()
     try:
         cursor = conn.cursor()
         cursor.execute("""
             SELECT COUNT(*)
             FROM CanhBao
-            WHERE CAST(ThoiGian AS DATE) = CAST(GETDATE() AS DATE)
-        """)
+            WHERE CAST(ThoiGian AS DATE) = ?
+        """, (target_date,))
         row = cursor.fetchone()
         return int(row[0]) if row else 0
     finally:
         conn.close()
+
+
+def get_today_alert_count():
+    """Wrapper backward-compatible: số cảnh báo hôm nay."""
+    return get_alert_count_by_date(_date.today())
 
 
 # ============================================================

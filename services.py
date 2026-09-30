@@ -330,25 +330,45 @@ def process_attendance(ma_nv, ma_tb=1, image_bytes=None):
 # ChamCong — Dashboard Summary
 # ============================================================
 
-def fetch_attendance_dashboard():
+def fetch_attendance_dashboard(target_date=None):
     """
     Trả về summary KPI + records đầy đủ cho Dashboard.
 
+    Tham số:
+        target_date : None (hôm nay), string 'YYYY-MM-DD', hoặc date object.
+
     Summary (tính từ 1 snapshot — KHÔNG thể mâu thuẫn):
         TongNhanVien  : tổng NV hệ thống
-        DaChamCong    : số NV đã có GioVao hôm nay
+        DaChamCong    : số NV đã có GioVao ngày được chọn
         DangLamViec   : GioVao != NULL, GioRa == NULL
         DiTre         : GioVao > GioBatDau
         VeSom         : GioRa < GioKetThuc (đã ra về)
         ChuaChamCong  : TongNhanVien - DaChamCong  (≥ 0)
         DaRaVe        : GioRa != NULL
-        CanhBaoHomNay : số cảnh báo AI hôm nay
+        CanhBaoHomNay : số cảnh báo AI ngày được chọn
+        SelectedDate  : ngày được chọn (YYYY-MM-DD)
 
     Records: danh sách toàn bộ NV kèm trạng thái
     """
+    # Parse / default target_date
+    if target_date is None:
+        target_d = date.today()
+    elif isinstance(target_date, date) and not isinstance(target_date, datetime):
+        target_d = target_date
+    elif isinstance(target_date, datetime):
+        target_d = target_date.date()
+    else:
+        # string
+        try:
+            target_d = datetime.strptime(str(target_date).strip(), '%Y-%m-%d').date()
+        except ValueError:
+            target_d = date.today()
+
+    selected_str = target_d.strftime('%Y-%m-%d')
+
     try:
-        rows          = database.get_today_attendance()
-        canh_bao_cnt  = database.get_today_alert_count()
+        rows         = database.get_attendance_by_date(target_d)
+        canh_bao_cnt = database.get_alert_count_by_date(target_d)
     except Exception as e:
         print(f"[services] Loi lay dashboard: {e}")
         return {
@@ -363,6 +383,7 @@ def fetch_attendance_dashboard():
                 "CanhBaoHomNay": 0,
             },
             "Records": [],
+            "SelectedDate": selected_str,
         }
 
     tong      = len(rows)
@@ -383,6 +404,7 @@ def fetch_attendance_dashboard():
         gio_ket_thuc = row[5]
         gio_vao      = row[6]   # datetime hoặc None
         gio_ra       = row[7]   # datetime hoặc None
+        ma_cc        = row[8] if len(row) > 8 else None  # MaCC hoặc None
 
         gbd_t = _to_time(gio_bat_dau)
         gkt_t = _to_time(gio_ket_thuc)
@@ -409,8 +431,9 @@ def fetch_attendance_dashboard():
 
         # Format để trả JSON
         records.append({
-            "MaNV":   ma_nv,
-            "HoTen":  ho_ten,
+            "MaCC":  ma_cc,
+            "MaNV":  ma_nv,
+            "HoTen": ho_ten,
 
             "MaCa":       ma_ca,
             "TenCa":      ten_ca or "--",
@@ -445,6 +468,7 @@ def fetch_attendance_dashboard():
             "CanhBaoHomNay": canh_bao_cnt,
         },
         "Records": records,
+        "SelectedDate": selected_str,
     }
 
 

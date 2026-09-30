@@ -406,7 +406,17 @@ def get_chamcong_weekly():
 @app.route('/api/dashboard/attendance')
 @admin_required
 def dashboard_attendance():
-    return jsonify(services.fetch_attendance_dashboard())
+    from datetime import datetime as _dt
+    date_str = request.args.get('date')
+    if date_str:
+        try:
+            _dt.strptime(date_str.strip(), '%Y-%m-%d')
+        except ValueError:
+            return jsonify({
+                'status': 'error',
+                'message': 'Ngày không hợp lệ. Định dạng yêu cầu: YYYY-MM-DD'
+            }), 400
+    return jsonify(services.fetch_attendance_dashboard(date_str))
 
 
 @app.route('/api/attendance/today')
