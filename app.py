@@ -7,9 +7,15 @@ app.py — Flask Controller (Tầng Presentation)
 - Login / Logout + phân quyền theo VaiTro
 """
 
-import os
-import threading
+import base64
+import binascii
 import functools
+import os
+import re
+import secrets
+import threading
+import time
+
 import cv2
 from flask import (
     Flask, render_template, request, jsonify,
@@ -17,11 +23,22 @@ from flask import (
 )
 import services
 import ai_engine
+import database as _db
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret-change-me")
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
+
+_ENROLLMENT_POSES = ("frontal", "left", "right", "up", "down")
+_POSE_LABELS = {
+    "frontal": "Nhìn thẳng",
+    "left": "Quay trái",
+    "right": "Quay phải",
+    "up": "Ngẩng lên",
+    "down": "Cúi xuống",
+}
+_ENROLLMENT_SESSION_TTL = 600
 
 
 # ============================================================
@@ -253,21 +270,6 @@ def receive_sensor_data():
     return jsonify({"status": "error", "message": "Missing fields"}), 400
 
 
-@app.route('/api/environment', methods=['POST'])
-def receive_env_data():
-    data = request.get_json()
-
-    if not data:
-        return jsonify({"status": "error", "message": "No JSON body"}), 400
-
-    success = services.save_environment_data(data)
-
-    if success:
-        return jsonify({"status": "success"}), 200
-
-    return jsonify({"status": "error", "message": "Missing fields"}), 400
-
-
 @app.route('/api/chamcong', methods=['POST'])
 def receive_cham_cong():
     """
@@ -325,7 +327,6 @@ def receive_cham_cong():
 # Routes — Ảnh bằng chứng chấm công (admin only)
 # ============================================================
 
-import database as _db
 
 @app.route('/api/attendance/<int:ma_cc>/image/in')
 @admin_required
@@ -373,18 +374,6 @@ def get_health():
 @admin_required
 def chart_health():
     return jsonify(services.fetch_health_chart_data())
-
-
-@app.route('/api/get_environment')
-@login_required
-def get_environment():
-    return jsonify(services.fetch_latest_environment())
-
-
-@app.route('/api/chart/environment')
-@login_required
-def chart_environment():
-    return jsonify(services.fetch_environment_chart_data())
 
 
 @app.route('/api/get_chamcong')
@@ -569,8 +558,75 @@ def update_employee(ma_nv):
 # Routes — Face Enrollment (admin)
 # ============================================================
 
-import time as _time
-import database as _db
+_enrollment_sessions = {}
+_enrollment_sessions_lock = threading.Lock()
+
+
+def _classify_head_pose(yaw, pitch):
+    if abs(yaw) <= 12 and abs(pitch) <= 12:
+        return "frontal"
+    if 15 <= yaw <= 40 and abs(pitch) <= 18:
+        return "left"
+    if -40 <= yaw <= -15 and abs(pitch) <= 18:
+        return "right"
+    if 12 <= pitch <= 35 and abs(yaw) <= 15:
+        return "up"
+    if -35 <= pitch <= -12 and abs(yaw) <= 15:
+        return "down"
+    return "between"
+
+
+def _pose_result(pose, expected_pose):
+    current_pose = pose.get("current_pose", "unknown")
+    yaw, pitch = pose.get("yaw"), pose.get("pitch")
+    if yaw is not None and pitch is not None:
+        current_pose = _classify_head_pose(yaw, pitch)
+
+    pose_ok = current_pose == expected_pose
+    if current_pose == "no_face":
+        instruction = "Đưa khuôn mặt vào giữa khung hình."
+    elif current_pose == "multiple_faces":
+        instruction = "Chỉ để một người trong khung hình."
+    elif current_pose == "unknown":
+        instruction = "Không ước lượng được hướng đầu; nhìn rõ camera."
+    elif pose_ok:
+        instruction = "Đúng hướng, giữ yên."
+    elif expected_pose == "frontal":
+        instruction = "Nhìn thẳng camera và giữ đầu cân bằng."
+    elif current_pose == "frontal":
+        instruction = f"{_POSE_LABELS[expected_pose]} thêm."
+    else:
+        instruction = f"Đang hướng {_POSE_LABELS.get(current_pose, 'chưa đúng')}; {_POSE_LABELS[expected_pose].lower()} thêm."
+
+    return {
+        "current_pose": current_pose,
+        "expected_pose": expected_pose,
+        "pose_ok": pose_ok,
+        "instruction": instruction,
+        "yaw": yaw,
+        "pitch": pitch,
+    }
+
+
+def _read_camera_frame():
+    cam = get_camera()
+    with _camera_lock:
+        return cam.read() if cam is not None and cam.isOpened() else (False, None)
+
+
+def _decode_face_image(data):
+    if not isinstance(data, str):
+        raise ValueError("Thiếu ảnh base64.")
+    data = re.sub(r"^data:image/[^;]+;base64,", "", data)
+    try:
+        raw = base64.b64decode(data, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Ảnh base64 không hợp lệ.") from exc
+    import numpy as np
+    frame = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("Không giải mã được ảnh.")
+    return frame
 
 @app.route('/api/employees/<int:ma_nv>/face/register', methods=['POST'])
 @admin_required
@@ -585,85 +641,153 @@ def register_face(ma_nv):
 
     Neu da co embedding: tra loi 409, KHONG ghi de am tham.
     """
-    # 1. Kiem tra nhan vien ton tai
-    emp = services.fetch_employee(ma_nv)
-    if emp is None:
-        return jsonify({
-            "status":  "error",
-            "message": "Khong tim thay nhan vien",
-        }), 404
+    data = request.get_json(silent=True) or {}
+    action = data.get("action")
+    if action not in ("start", "pose", "capture", "complete", "cancel"):
+        return jsonify({"status": "error", "message": "Enrollment yêu cầu quy trình pose-guided 5 góc."}), 400
 
-    # 2. Kiem tra da co embedding chua
-    existing = _db.count_face_embeddings(ma_nv)
-    if existing > 0:
-        return jsonify({
-            "status":  "error",
-            "message": f"Nhan vien da dang ky khuon mat ({existing} embedding). "
-                       f"Dung endpoint re-register de dang ky lai.",
-        }), 409
+    if action == "start":
+        emp = services.fetch_employee(ma_nv)
+        if emp is None:
+            return jsonify({
+                "status":  "error",
+                "message": "Khong tim thay nhan vien",
+            }), 404
 
-    # 3. Thu frame tu camera singleton
-    TARGET_FRAMES = 5
-    FRAME_INTERVAL = 0.3   # giay giua cac frame
-    MAX_ATTEMPTS  = 25     # so lan thu toi da
+        existing = _db.count_face_embeddings(ma_nv)
+        if existing > 0:
+            return jsonify({
+                "status":  "error",
+                "message": f"Nhan vien da dang ky khuon mat ({existing} embedding). "
+                           f"Dung endpoint re-register de dang ky lai.",
+            }), 409
 
-    frames = []
-    attempts = 0
+    if action == "start":
+        try:
+            import face_engine as _fe
+            _fe.face_engine.initialize()
+        except Exception as exc:
+            return jsonify({"status": "error", "message": str(exc)}), 503
+        session_id = secrets.token_urlsafe(24)
+        with _enrollment_sessions_lock:
+            _enrollment_sessions[session_id] = {"MaNV": ma_nv, "embeddings": [], "created": time.time()}
+        return jsonify({"status": "success", "session_id": session_id,
+                        "poses": list(_ENROLLMENT_POSES), "captured": 0}), 200
 
+    if action in ("pose", "capture", "complete", "cancel"):
+        session_id = data.get("session_id", "")
+        with _enrollment_sessions_lock:
+            state = _enrollment_sessions.get(session_id)
+            if state and time.time() - state["created"] > _ENROLLMENT_SESSION_TTL:
+                _enrollment_sessions.pop(session_id, None)
+                state = None
+            if state is None or state["MaNV"] != ma_nv:
+                return jsonify({"status": "error", "message": "Session đăng ký không hợp lệ hoặc đã hết hạn."}), 400
+            if action == "cancel":
+                _enrollment_sessions.pop(session_id, None)
+                return jsonify({"status": "success"}), 200
+            expected_pose = _ENROLLMENT_POSES[len(state["embeddings"])] if len(state["embeddings"]) < len(_ENROLLMENT_POSES) else None
+            if action == "pose":
+                if expected_pose is None:
+                    return jsonify({"status": "error", "message": "Đã chụp đủ 5 góc."}), 400
+                ok, frame = _read_camera_frame()
+                if not ok or frame is None:
+                    return jsonify({"status": "error", **_pose_result({"current_pose": "no_frame"}, expected_pose),
+                                    "instruction": "Không đọc được hình từ camera."}), 503
+                try:
+                    import face_engine as _fe
+                    pose = _fe.face_engine.inspect_pose(frame)
+                except Exception as exc:
+                    return jsonify({"status": "error", "message": str(exc),
+                                    **_pose_result({"current_pose": "unknown"}, expected_pose)}), 503
+                return jsonify({"status": "success", **_pose_result(pose, expected_pose)}), 200
+            if action == "capture":
+                index = len(state["embeddings"])
+                if index >= len(_ENROLLMENT_POSES):
+                    return jsonify({"status": "error", "message": "Đã chụp đủ 5 góc."}), 400
+                try:
+                    if data.get("image"):
+                        frame = _decode_face_image(data["image"])
+                    else:
+                        ok, frame = _read_camera_frame()
+                        if not ok or frame is None:
+                            return jsonify({"status": "error", "message": "Camera không khả dụng."}), 503
+                    import face_engine as _fe
+                    faces = _fe.face_engine.detect_embeddings(frame)
+                    if not faces:
+                        pose_result = _pose_result({"current_pose": "no_face"}, expected_pose)
+                        return jsonify({"status": "error", "message": pose_result["instruction"], **pose_result}), 409
+                    if len(faces) != 1:
+                        pose_result = _pose_result({"current_pose": "multiple_faces"}, expected_pose)
+                        return jsonify({"status": "error", "message": pose_result["instruction"], **pose_result}), 409
+                    detected_pose = faces[0].get("head_pose")
+                    if not detected_pose:
+                        pose_result = _pose_result({"current_pose": "unknown"}, expected_pose)
+                        return jsonify({"status": "error", "message": pose_result["instruction"], **pose_result}), 409
+                    pose_result = _pose_result(detected_pose, expected_pose)
+                    if not pose_result["pose_ok"]:
+                        return jsonify({"status": "error", "message": pose_result["instruction"], **pose_result}), 409
+                    vector_bytes = faces[0]["vector_bytes"]
+                except Exception as exc:
+                    return jsonify({"status": "error", "message": str(exc)}), 400
+                state["embeddings"].append(vector_bytes)
+                return jsonify({"status": "success", "captured": len(state["embeddings"]),
+                                **pose_result,
+                                "next_pose": _ENROLLMENT_POSES[len(state["embeddings"])]
+                                if len(state["embeddings"]) < len(_ENROLLMENT_POSES) else None}), 200
+            if len(state["embeddings"]) != len(_ENROLLMENT_POSES):
+                return jsonify({"status": "error", "message": "Cần chụp đủ 5 góc trước khi lưu."}), 400
+            embeddings = list(state["embeddings"])
+        result = services.save_face_embeddings(ma_nv, embeddings)
+        if result.get("success"):
+            with _enrollment_sessions_lock:
+                _enrollment_sessions.pop(session_id, None)
+        code = 200 if result.get("success") else (409 if result.get("conflict") else 500)
+        return jsonify({"status": "success" if result.get("success") else "error", **result}), code
+
+@app.route('/api/face/identify', methods=['POST'])
+@admin_required
+def face_identify():
+    data = request.get_json(silent=True) or {}
+    try:
+        frame = _decode_face_image(data.get("image"))
+        result = services.identify_face_frame(frame, data.get("threshold"))
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 503
+    return jsonify(result), 200
+
+
+@app.route('/api/face/verify', methods=['POST'])
+@admin_required
+def face_verify():
+    data = request.get_json(silent=True) or {}
+    if data.get("MaNV") is None:
+        return jsonify({"status": "error", "message": "Thiếu MaNV."}), 400
+    try:
+        frame = _decode_face_image(data.get("image"))
+        result = services.verify_face_frame(frame, data["MaNV"], data.get("threshold"))
+    except ValueError as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 400
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 503
+    return jsonify(result), 200
+
+
+@app.route('/api/face/identify/camera', methods=['POST'])
+@admin_required
+def face_identify_camera():
     cam = get_camera()
-    if cam is None or not cam.isOpened():
-        return jsonify({
-            "status":  "error",
-            "message": "Camera khong kha dung",
-        }), 503
-
-    while len(frames) < TARGET_FRAMES and attempts < MAX_ATTEMPTS:
-        attempts += 1
-        with _camera_lock:
-            ok, frame = cam.read()
-
-        if not ok or frame is None:
-            _time.sleep(0.1)
-            continue
-
-        frames.append(frame)
-
-        if len(frames) < TARGET_FRAMES:
-            _time.sleep(FRAME_INTERVAL)
-
-    if not frames:
-        return jsonify({
-            "status":  "error",
-            "message": "Khong doc duoc frame tu camera",
-        }), 503
-
-    # 4. Dang ky qua services
-    result = services.register_face(ma_nv=ma_nv, frames=frames, target_count=TARGET_FRAMES)
-
-    if not result.get("success"):
-        msg = result.get("message", "Dang ky that bai")
-        errors = result.get("errors", [])
-
-        # Chon HTTP code phu hop
-        if "khuon mat" in msg.lower() or "mot khuon mat" in msg.lower():
-            http_code = 400
-        else:
-            http_code = 500
-
-        return jsonify({
-            "status":  "error",
-            "message": msg,
-            "errors":  errors,
-        }), http_code
-
-    return jsonify({
-        "status":           "success",
-        "message":          "Dang ky khuon mat thanh cong",
-        "MaNV":             ma_nv,
-        "embeddings_saved": result["embeddings_saved"],
-        "dimensions":       result["dimensions"],
-        "errors":           result.get("errors", []),
-    }), 200
+    with _camera_lock:
+        ok, frame = cam.read() if cam is not None and cam.isOpened() else (False, None)
+    if not ok or frame is None:
+        return jsonify({"status": "error", "message": "Camera không khả dụng."}), 503
+    try:
+        result = services.identify_face_frame(frame, (request.get_json(silent=True) or {}).get("threshold"))
+    except Exception as exc:
+        return jsonify({"status": "error", "message": str(exc)}), 503
+    return jsonify(result), 200
 
 
 # ============================================================

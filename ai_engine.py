@@ -794,7 +794,6 @@ class _DummyDetector:
 try:
     detector = DrowsinessDetector()
 except Exception as _ai_init_err:
-    import traceback as _tb
     print(f"[ai_engine] WARN: MediaPipe init failed — using DummyDetector.\n"
           f"            Error: {_ai_init_err}")
     detector = _DummyDetector()

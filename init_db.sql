@@ -12,7 +12,7 @@
 --   VaiTro → NhanVien
 --   NhanVien → TaiKhoan, LichSuSucKhoe, LichSuTrangThai, CanhBao,
 --              ChamCong, PhanCaNhanVien
---   ThietBi → ThongSoMoiTruong, CanhBao, ChamCong
+--   ThietBi → CanhBao, ChamCong
 --   CaLamViec → PhanCaNhanVien, ChamCong
 --   DanhMucBieuHien → LichSuTrangThai
 --   LoaiCanhBao → CanhBao
@@ -176,30 +176,7 @@ ELSE
 GO
 
 -- ==========================================================
--- 6. ThongSoMoiTruong
--- ==========================================================
-IF NOT EXISTS (
-    SELECT 1 FROM INFORMATION_SCHEMA.TABLES
-    WHERE TABLE_NAME = 'ThongSoMoiTruong'
-)
-BEGIN
-    CREATE TABLE ThongSoMoiTruong (
-        MaMT     INT      IDENTITY(1,1) PRIMARY KEY,
-        NhietDo  FLOAT    NULL,
-        DoAm     FLOAT    NULL,
-        ThoiGian DATETIME DEFAULT GETDATE(),
-        MaTB     INT      NULL,
-        CONSTRAINT FK_MoiTruong_ThietBi
-            FOREIGN KEY (MaTB) REFERENCES ThietBi(MaTB)
-    );
-    PRINT N'[OK] Tao bang ThongSoMoiTruong';
-END
-ELSE
-    PRINT N'[SKIP] ThongSoMoiTruong da ton tai';
-GO
-
--- ==========================================================
--- 7. DanhMucBieuHien
+-- 6. DanhMucBieuHien
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -237,7 +214,7 @@ END
 GO
 
 -- ==========================================================
--- 8. LichSuTrangThai
+-- 7. LichSuTrangThai
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -261,7 +238,7 @@ ELSE
 GO
 
 -- ==========================================================
--- 9. LoaiCanhBao
+-- 8. LoaiCanhBao
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -284,7 +261,7 @@ ELSE
 GO
 
 -- ==========================================================
--- 10. CanhBao
+-- 9. CanhBao
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -315,7 +292,7 @@ ELSE
 GO
 
 -- ==========================================================
--- 11. CaLamViec
+-- 10. CaLamViec
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -337,7 +314,7 @@ ELSE
 GO
 
 -- ==========================================================
--- 12. PhanCaNhanVien
+-- 11. PhanCaNhanVien
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES
@@ -363,7 +340,7 @@ ELSE
 GO
 
 -- ==========================================================
--- 13. ChamCong
+-- 12. ChamCong
 -- ==========================================================
 IF NOT EXISTS (
     SELECT 1 FROM INFORMATION_SCHEMA.TABLES

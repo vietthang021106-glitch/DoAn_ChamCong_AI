@@ -102,11 +102,6 @@ PARTS.append(r"""<!DOCTYPE html>
   .modal-chart-wrap  { height:220px; }
   .modal-table-wrap  { overflow-x:auto; border-radius:var(--radius-md); border:1px solid var(--border); }
   .modal-section-label { font-size:11px; font-weight:600; color:var(--text-muted); text-transform:uppercase; letter-spacing:.06em; padding-bottom:8px; border-bottom:1px solid var(--border-light); }
-  .modal-env-stats { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
-  .modal-health-stat { background:var(--bg); border:1px solid var(--border); border-radius:var(--radius-md); padding:16px; text-align:center; }
-  .modal-health-stat .val { font-size:28px; font-weight:700; color:var(--primary); }
-  .modal-health-stat .unit { font-size:12px; color:var(--text-muted); }
-  .modal-health-stat .lbl  { font-size:11px; color:var(--text-secondary); margin-top:4px; text-transform:uppercase; letter-spacing:.04em; }
 
   /* quick access cards */
   .dash-sum-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:14px 16px; display:flex; align-items:center; gap:12px; cursor:pointer; transition:box-shadow var(--transition),border-color var(--transition); }
@@ -118,7 +113,7 @@ PARTS.append(r"""<!DOCTYPE html>
 
   @media(max-width:720px){ .modal-charts-grid{ grid-template-columns:1fr; } .feature-modal{ width:98vw; max-height:92vh; } .feature-modal-body{ padding:16px; } }
   @media(max-width:900px){ .content-grid-7030{ grid-template-columns:1fr !important; } }
-  @media(max-width:600px){ .main{ padding:20px 12px; } .modal-env-stats{ grid-template-columns:1fr 1fr; } }
+  @media(max-width:600px){ .main{ padding:20px 12px; } }
   </style>
 </head>
 <body>
@@ -218,10 +213,6 @@ PARTS.append(r"""<!-- TOGGLE -->
       <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z"/></svg>
       Sức khỏe
     </button>
-    <button class="drawer-item" id="drawer-item-environment" onclick="openFeatureModal('environment')">
-      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/></svg>
-      Môi trường
-    </button>
   </nav>
   <div class="drawer-footer">Smart Attendance v2.0</div>
 </aside>
@@ -311,17 +302,6 @@ PARTS.append(r"""<!-- MAIN -->
     <div class="right-col">
       <div class="panel">
         <div class="panel-header">
-          <span class="panel-title">Môi trường</span>
-          <button onclick="openFeatureModal('environment')" style="font-size:11px;color:var(--primary);border:none;background:none;font-family:inherit;font-weight:500;cursor:pointer;">Chi tiết →</button>
-        </div>
-        <div style="display:flex;gap:20px;padding:14px 16px;flex-wrap:wrap;">
-          <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Nhiệt độ</div><div style="font-weight:700;font-size:18px;"><span id="nhiet-do">--</span>°C</div></div>
-          <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Độ ẩm</div><div style="font-weight:700;font-size:18px;"><span id="do-am">--</span>%</div></div>
-          <div style="margin-left:auto;text-align:right;"><div style="font-size:10px;color:var(--text-muted);">Cập nhật</div><div style="font-size:11px;color:var(--text-muted);"><span id="thoi-gian-mt">--</span></div></div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header">
           <span class="panel-title">Cảnh báo gần đây</span>
           <button onclick="openFeatureModal('alerts')" style="font-size:11px;color:var(--primary);border:none;background:none;font-family:inherit;font-weight:500;cursor:pointer;">Tất cả →</button>
         </div>
@@ -402,11 +382,10 @@ const MODAL_ICONS={
   camera:'<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
   alerts:'<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   health:'<path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z"/>',
-  environment:'<path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/>'
 };
 const MODAL_TITLES={
   employees:'Quản lý nhân viên',attendance:'Chấm công',statistics:'Thống kê',
-  camera:'Camera AI',alerts:'Cảnh báo AI',health:'Sức khỏe nhân viên',environment:'Môi trường'
+  camera:'Camera AI',alerts:'Cảnh báo AI',health:'Sức khỏe nhân viên'
 };
 
 function openFeatureModal(feature){
@@ -494,10 +473,7 @@ function buildModalContent(f){
         <div class="panel-body"><div class="modal-chart-wrap"><canvas id="chart-weekly"></canvas></div></div>
       </div>
     </div>
-    <div class="panel" style="margin:0;">
-      <div class="panel-header"><span class="panel-title">Nhiệt độ môi trường</span></div>
-      <div class="panel-body"><div style="height:200px;"><canvas id="chart-temperature"></canvas></div></div>
-    </div>`;
+    `;
 
   if(f==='camera') return `
     <div class="modal-cam-wrap">
@@ -535,18 +511,6 @@ function buildModalContent(f){
       </table>
     </div>`;
 
-  if(f==='environment') return `
-    <div class="modal-section-label">Thông số môi trường hiện tại</div>
-    <div class="modal-env-stats">
-      <div class="modal-health-stat"><div class="val"><span id="nhiet-do-modal">--</span></div><div class="unit">°C</div><div class="lbl">Nhiệt độ</div></div>
-      <div class="modal-health-stat"><div class="val"><span id="do-am-modal">--</span></div><div class="unit">%</div><div class="lbl">Độ ẩm</div></div>
-      <div class="modal-health-stat"><div class="val" style="font-size:16px;" id="thoi-gian-mt-modal">--</div><div class="unit"></div><div class="lbl">Cập nhật lúc</div></div>
-    </div>
-    <div class="panel" style="margin:0;">
-      <div class="panel-header"><span class="panel-title">Biểu đồ nhiệt độ</span></div>
-      <div class="panel-body"><div style="height:220px;"><canvas id="chart-temperature"></canvas></div></div>
-    </div>`;
-
   return '<p>Đang phát triển.</p>';
 }
 
@@ -570,8 +534,6 @@ function initModalContent(f){
     if(dc){chartsInModal.donut=new Chart(dc,{type:'doughnut',data:{labels:['Đúng giờ','Đang làm','Đi trễ','Về sớm','Chưa chấm'],datasets:[{data:[0,0,0,0,1],backgroundColor:['#16A34A','#2563EB','#D97706','#DC2626','#9CA3AF'],borderColor:'#fff',borderWidth:3,hoverOffset:6}]},options:{...CB,cutout:'70%',plugins:{...CB.plugins,tooltip:{...CB.plugins.tooltip,callbacks:{label:ctx=>` ${ctx.label}: ${ctx.parsed} người`}}}}});donutChart=chartsInModal.donut;}
     const wc=document.getElementById('chart-weekly');
     if(wc){chartsInModal.weekly=new Chart(wc,{type:'bar',data:{labels:[],datasets:[{label:'Người vào',data:[],backgroundColor:'#BFDBFE',borderColor:'#2563EB',borderWidth:1,borderRadius:4,borderSkipped:false},{label:'Người ra',data:[],backgroundColor:'#BBF7D0',borderColor:'#16A34A',borderWidth:1,borderRadius:4,borderSkipped:false}]},options:{...CB,plugins:{...CB.plugins,legend:{display:true,position:'top',labels:{color:'#667085',font:{size:11},boxWidth:10,padding:10}}},scales:{x:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:10}}},y:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:10},stepSize:1},beginAtZero:true}}}});weeklyChart=chartsInModal.weekly;fetchWeekly();}
-    const tc=document.getElementById('chart-temperature');
-    if(tc){chartsInModal.temp=new Chart(tc,{type:'line',data:{labels:[],datasets:[{label:'Nhiệt độ (°C)',data:[],borderColor:'#2563EB',backgroundColor:'rgba(37,99,235,0.05)',borderWidth:1.5,pointRadius:3,pointBackgroundColor:'#2563EB',pointBorderColor:'#fff',pointBorderWidth:1.5,fill:true,tension:0.4}]},options:{...CB,scales:{x:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:9},maxTicksLimit:8}},y:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:9}},min:20,max:40}}}});tempChart=chartsInModal.temp;fetchTempChart();}
     fetchDashboard(selectedDate);
   }
   if(f==='camera'){
@@ -582,15 +544,6 @@ function initModalContent(f){
   }
   if(f==='alerts') fetchAlerts();
   if(f==='health') fetchHealth();
-  if(f==='environment'){
-    const nh=document.getElementById('nhiet-do'),da=document.getElementById('do-am'),tg=document.getElementById('thoi-gian-mt');
-    const nm=document.getElementById('nhiet-do-modal'),dm=document.getElementById('do-am-modal'),tm=document.getElementById('thoi-gian-mt-modal');
-    if(nh&&nm) nm.textContent=nh.textContent;
-    if(da&&dm) dm.textContent=da.textContent;
-    if(tg&&tm) tm.textContent=tg.textContent;
-    const tc=document.getElementById('chart-temperature');
-    if(tc){chartsInModal.temp=new Chart(tc,{type:'line',data:{labels:[],datasets:[{label:'Nhiệt độ (°C)',data:[],borderColor:'#2563EB',backgroundColor:'rgba(37,99,235,0.05)',borderWidth:1.5,pointRadius:3,pointBackgroundColor:'#2563EB',pointBorderColor:'#fff',pointBorderWidth:1.5,fill:true,tension:0.4}]},options:{...CB,scales:{x:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:9},maxTicksLimit:8}},y:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:9}},min:20,max:40}}}});tempChart=chartsInModal.temp;fetchTempChart();}
-  }
 }
 
 /* HELPERS */
@@ -623,7 +576,7 @@ function filterAndRender(){
 }
 
 /* CHART INSTANCES (lazy-init in modal) */
-let donutChart=null,weeklyChart=null,tempChart=null;
+let donutChart=null,weeklyChart=null;
 
 /* FETCH: DASHBOARD */
 function fetchDashboard(dateOverride){
@@ -663,25 +616,6 @@ function fetchWeekly(){
     weeklyChart.data.datasets[1].data=data.map(r=>r.SoNguoiRa);
     weeklyChart.update();
   }).catch(e=>console.error('[weekly]',e));
-}
-
-/* FETCH: ENV */
-function fetchEnv(){
-  fetch('/api/get_environment').then(r=>r.json()).then(data=>{
-    document.getElementById('nhiet-do').textContent=data.NhietDo;
-    document.getElementById('do-am').textContent=data.DoAm;
-    document.getElementById('thoi-gian-mt').textContent=data.ThoiGian;
-    const m1=document.getElementById('nhiet-do-modal'),m2=document.getElementById('do-am-modal'),m3=document.getElementById('thoi-gian-mt-modal');
-    if(m1) m1.textContent=data.NhietDo;if(m2) m2.textContent=data.DoAm;if(m3) m3.textContent=data.ThoiGian;
-  }).catch(e=>console.error('[env]',e));
-}
-function fetchTempChart(){
-  fetch('/api/chart/environment').then(r=>r.json()).then(data=>{
-    if(!tempChart) return;
-    tempChart.data.labels=data.map(r=>r.ThoiGian);
-    tempChart.data.datasets[0].data=data.map(r=>r.NhietDo);
-    tempChart.update();
-  }).catch(e=>console.error('[temp]',e));
 }
 
 /* FETCH: HEALTH */
@@ -725,9 +659,8 @@ function getTodayStr(){const n=new Date();return`${n.getFullYear()}-${String(n.g
 /* POLLING */
 function initPolling(){
   const today=getTodayStr(); selectedDate=today;
-  fetchDashboard(today);fetchEnv();fetchAlerts();fetchHealth();fetchAiStatus();
+  fetchDashboard(today);fetchAlerts();fetchHealth();fetchAiStatus();
   setInterval(()=>{if(selectedDate===getTodayStr()) fetchDashboard(selectedDate);},3000);
-  setInterval(fetchEnv,5000);
   setInterval(fetchAlerts,5000);
   setInterval(fetchHealth,10000);
   setInterval(fetchAiStatus,1500);

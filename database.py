@@ -544,55 +544,6 @@ def get_health_chart_data(limit=20):
 
 
 # ============================================================
-# ThongSoMoiTruong
-# ============================================================
-
-def insert_environment_data(nhiet_do, do_am, ma_tb=1):
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO ThongSoMoiTruong (NhietDo, DoAm, ThoiGian, MaTB)
-            VALUES (?, ?, GETDATE(), ?)
-        """, (nhiet_do, do_am, ma_tb))
-        conn.commit()
-    finally:
-        conn.close()
-
-
-def get_recent_environment_data():
-    """Trả về (NhietDo, DoAm, ThoiGian) bản ghi mới nhất."""
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute("""
-            SELECT TOP 1 NhietDo, DoAm, ThoiGian
-            FROM ThongSoMoiTruong
-            ORDER BY ThoiGian DESC
-        """)
-        return cursor.fetchone()
-    finally:
-        conn.close()
-
-
-def get_environment_chart_data(limit=20):
-    """Trả về: (NhietDo, DoAm, ThoiGian) — thứ tự ASC để vẽ chart."""
-    limit = _safe_limit(limit, default=20)
-    conn = get_connection()
-    try:
-        cursor = conn.cursor()
-        cursor.execute(f"""
-            SELECT TOP {limit}
-                NhietDo, DoAm, ThoiGian
-            FROM ThongSoMoiTruong
-            ORDER BY ThoiGian DESC
-        """)
-        rows = cursor.fetchall()
-        return list(reversed(rows))
-    finally:
-        conn.close()
-
-
 # ============================================================
 # LichSuTrangThai (AI)
 #
@@ -1051,6 +1002,38 @@ def insert_face_embedding(ma_nv, vector_bytes, so_chieu=512):
         conn.close()
 
 
+def insert_face_embeddings(ma_nv, embeddings, so_chieu=512):
+    """Atomically append a group of embeddings; never deletes existing rows."""
+    vectors = [bytes(vector) for vector in embeddings]
+    if not vectors:
+        raise ValueError("At least one embedding is required.")
+    expected_bytes = int(so_chieu) * 4
+    if any(len(vector) != expected_bytes for vector in vectors):
+        raise ValueError(f"Each embedding must contain exactly {expected_bytes} bytes.")
+
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        inserted_ids = []
+        for vector in vectors:
+            cursor.execute("""
+                INSERT INTO FaceEmbedding (MaNV, VectorData, SoChieu)
+                OUTPUT INSERTED.MaEmbedding
+                VALUES (?, ?, ?)
+            """, (ma_nv, vector, so_chieu))
+            row = cursor.fetchone()
+            if not row:
+                raise RuntimeError("FaceEmbedding insert returned no identifier.")
+            inserted_ids.append(int(row[0]))
+        conn.commit()
+        return inserted_ids
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 def get_face_embeddings(ma_nv):
     """
     Lấy tất cả embedding của một nhân viên.
@@ -1148,6 +1131,21 @@ def get_all_face_embeddings():
             ORDER BY fe.MaNV, fe.MaEmbedding
         """)
         return cursor.fetchall()
+    finally:
+        conn.close()
+
+
+def get_face_enrolled_employee_ids():
+    """Return employee IDs with at least one saved face embedding."""
+    conn = get_connection()
+    try:
+        cursor = conn.cursor()
+        cursor.execute("""
+            SELECT DISTINCT MaNV
+            FROM FaceEmbedding
+            ORDER BY MaNV
+        """)
+        return [int(row[0]) for row in cursor.fetchall()]
     finally:
         conn.close()
 

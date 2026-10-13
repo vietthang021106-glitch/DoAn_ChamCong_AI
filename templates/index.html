@@ -16,20 +16,13 @@
   .cam-feed-wrap { flex:1; min-width:300px; max-width:680px; border-radius:var(--radius-md); overflow:hidden; border:1px solid var(--border); background:#1a1a2e; }
   .cam-feed-wrap img { width:100%; display:block; }
   .cam-side { min-width:240px; display:flex; flex-direction:column; gap:16px; flex:0 0 280px; }
-  /* Env stats */
-  .env-stats-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
-  .env-stat-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); padding:20px; text-align:center; }
-  .env-stat-val { font-size:32px; font-weight:700; color:var(--primary); }
-  .env-stat-unit { font-size:13px; color:var(--text-muted); }
-  .env-stat-label { font-size:11px; color:var(--text-secondary); margin-top:6px; text-transform:uppercase; letter-spacing:.04em; }
   /* Charts grid */
   .charts-2col { display:grid; grid-template-columns:1fr 1fr; gap:20px; }
   .chart-box { height:240px; }
   @media(max-width:900px){
     .cam-layout{flex-direction:column;} .cam-side{flex:unset;}
-    .env-stats-grid{grid-template-columns:1fr 1fr;} .charts-2col{grid-template-columns:1fr;}
+    .charts-2col{grid-template-columns:1fr;}
   }
-  @media(max-width:600px){ .env-stats-grid{grid-template-columns:1fr;} }
   </style>
 </head>
 <body>
@@ -64,10 +57,6 @@
       <span class="nav-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/></svg></span>
       Chấm công
     </button>
-    <button class="nav-item" data-section="statistics">
-      <span class="nav-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg></span>
-      Thống kê
-    </button>
     <div class="nav-section-label">Giám sát</div>
     <button class="nav-item" data-section="camera">
       <span class="nav-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></span>
@@ -81,10 +70,6 @@
     <button class="nav-item" data-section="health">
       <span class="nav-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z"/></svg></span>
       Sức khỏe
-    </button>
-    <button class="nav-item" data-section="environment">
-      <span class="nav-icon"><svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M14 14.76V3.5a2.5 2.5 0 00-5 0v11.26a4.5 4.5 0 105 0z"/></svg></span>
-      Môi trường
     </button>
   </nav>
   <div class="sidebar-footer">
@@ -180,20 +165,29 @@
     <div class="right-col">
       <div class="panel">
         <div class="panel-header">
-          <span class="panel-title">Môi trường</span>
-        </div>
-        <div style="display:flex;gap:20px;padding:14px 16px;flex-wrap:wrap;">
-          <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Nhiệt độ</div><div style="font-weight:700;font-size:18px;"><span id="nhiet-do">--</span>°C</div></div>
-          <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px;">Độ ẩm</div><div style="font-weight:700;font-size:18px;"><span id="do-am">--</span>%</div></div>
-          <div style="margin-left:auto;text-align:right;"><div style="font-size:10px;color:var(--text-muted);">Cập nhật</div><div style="font-size:11px;color:var(--text-muted);"><span id="thoi-gian-mt">--</span></div></div>
-        </div>
-      </div>
-      <div class="panel">
-        <div class="panel-header">
           <span class="panel-title">Cảnh báo gần đây</span>
         </div>
         <div id="cam-alerts-body"><div class="alert-list-item" style="padding:12px 16px;color:var(--text-muted);font-size:12.5px;">Đang tải...</div></div>
       </div>
+    </div>
+  </div>
+  <div class="charts-2col">
+    <div class="panel" style="margin:0;">
+      <div class="panel-header"><span class="panel-title">Cơ cấu chấm công hôm nay</span></div>
+      <div class="panel-body">
+        <div class="chart-box"><canvas id="chart-donut"></canvas></div>
+        <div class="donut-legend" style="margin-top:10px;">
+          <div class="legend-row"><span class="legend-left"><span class="legend-dot" style="background:#16A34A;"></span>Đúng giờ</span><span class="legend-count" id="chart-leg-dung-gio">--</span></div>
+          <div class="legend-row"><span class="legend-left"><span class="legend-dot" style="background:#2563EB;"></span>Đang làm</span><span class="legend-count" id="chart-leg-dang-lam">--</span></div>
+          <div class="legend-row"><span class="legend-left"><span class="legend-dot" style="background:#D97706;"></span>Đi trễ</span><span class="legend-count" id="chart-leg-di-tre">--</span></div>
+          <div class="legend-row"><span class="legend-left"><span class="legend-dot" style="background:#DC2626;"></span>Về sớm</span><span class="legend-count" id="chart-leg-ve-som">--</span></div>
+          <div class="legend-row"><span class="legend-left"><span class="legend-dot" style="background:#9CA3AF;"></span>Chưa chấm</span><span class="legend-count" id="chart-leg-chua-cham">--</span></div>
+        </div>
+      </div>
+    </div>
+    <div class="panel" style="margin:0;">
+      <div class="panel-header"><span class="panel-title">7 ngày gần nhất</span></div>
+      <div class="panel-body"><div class="chart-box"><canvas id="chart-weekly"></canvas></div></div>
     </div>
   </div>
 </div>
@@ -248,6 +242,46 @@
         </thead>
         <tbody id="emp-tbody">
           <tr><td colspan="4" class="td-empty">Đang tải dữ liệu...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel" style="margin-top:20px;">
+    <div class="panel-header">
+      <div>
+        <div class="panel-title">Tra cứu chấm công</div>
+        <div class="panel-subtitle" style="margin-top:4px;">Chọn nhân viên và ngày để xem giờ vào, giờ ra và ảnh bằng chứng.</div>
+      </div>
+    </div>
+    <div class="attendance-toolbar">
+      <label class="form-group" style="margin:0;min-width:220px;flex:1;max-width:360px;">
+        <span class="form-label">Nhân viên</span>
+        <select id="emp-attendance-employee" class="form-control" onchange="empFetchAttendance()">
+          <option value="">-- Chọn nhân viên --</option>
+        </select>
+      </label>
+      <label class="form-group" style="margin:0;">
+        <span class="form-label">Ngày</span>
+        <input type="date" id="emp-attendance-date" class="form-control" onchange="empFetchAttendance()">
+      </label>
+      <button type="button" class="btn btn-ghost" style="align-self:flex-end;" onclick="empSetAttendanceToday()">Hôm nay</button>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table" id="emp-attendance-table">
+        <thead>
+          <tr>
+            <th>Ngày</th>
+            <th>Ca làm việc</th>
+            <th>Giờ vào</th>
+            <th>Trạng thái vào</th>
+            <th>Giờ ra</th>
+            <th>Trạng thái ra</th>
+            <th>Ảnh bằng chứng</th>
+          </tr>
+        </thead>
+        <tbody id="emp-attendance-tbody">
+          <tr><td colspan="7" class="td-empty">Chọn nhân viên để xem chấm công.</td></tr>
         </tbody>
       </table>
     </div>
@@ -308,39 +342,6 @@
   </div>
 </div>
 
-<!-- ====== SECTION: STATISTICS ====== -->
-<div class="content-section" id="sec-statistics">
-  <div class="section-header">
-    <div>
-      <div class="section-title">Thống kê</div>
-      <div class="section-subtitle">Biểu đồ tổng hợp chấm công và môi trường</div>
-    </div>
-  </div>
-  <div class="charts-2col">
-    <div class="panel" style="margin:0;">
-      <div class="panel-header"><span class="panel-title">Cơ cấu chấm công hôm nay</span></div>
-      <div class="panel-body">
-        <div class="chart-box"><canvas id="chart-donut"></canvas></div>
-        <div class="donut-legend" style="margin-top:10px;">
-          <div class="legend-row"><span class="legend-left"><span class="legend-dot" style="background:#16A34A;"></span>Đúng giờ</span><span class="legend-count" id="stat-leg-dung-gio">--</span></div>
-          <div class="legend-row"><span class="legend-left"><span class="legend-dot" style="background:#2563EB;"></span>Đang làm</span><span class="legend-count" id="stat-leg-dang-lam">--</span></div>
-          <div class="legend-row"><span class="legend-left"><span class="legend-dot" style="background:#D97706;"></span>Đi trễ</span><span class="legend-count" id="stat-leg-di-tre">--</span></div>
-          <div class="legend-row"><span class="legend-left"><span class="legend-dot" style="background:#DC2626;"></span>Về sớm</span><span class="legend-count" id="stat-leg-ve-som">--</span></div>
-          <div class="legend-row"><span class="legend-left"><span class="legend-dot" style="background:#9CA3AF;"></span>Chưa chấm</span><span class="legend-count" id="stat-leg-chua-cham">--</span></div>
-        </div>
-      </div>
-    </div>
-    <div class="panel" style="margin:0;">
-      <div class="panel-header"><span class="panel-title">7 ngày gần nhất</span></div>
-      <div class="panel-body"><div class="chart-box"><canvas id="chart-weekly"></canvas></div></div>
-    </div>
-  </div>
-  <div class="panel" style="margin:0;">
-    <div class="panel-header"><span class="panel-title">Nhiệt độ môi trường</span></div>
-    <div class="panel-body"><div style="height:220px;"><canvas id="chart-temperature-stats"></canvas></div></div>
-  </div>
-</div>
-
 <!-- ====== SECTION: CAMERA ====== -->
 <div class="content-section" id="sec-camera">
   <div class="section-header">
@@ -357,6 +358,11 @@
         <div style="padding:16px;display:flex;flex-direction:column;gap:12px;">
           <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">Trạng thái</div><span id="cam-ai-badge" class="ai-badge none">--</span></div>
           <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">EAR Score</div><span id="cam-ear-display" class="ai-badge none" style="font-size:10.5px;">EAR --</span></div>
+          <hr style="border:0;border-top:1px solid var(--border);width:100%;">
+          <div style="font-weight:600;">Nhận diện khuôn mặt</div>
+          <button class="btn btn-primary" id="face-recognition-toggle" onclick="toggleFaceRecognition()">Bắt đầu nhận diện</button>
+          <div id="face-recognition-result" class="text-sm text-muted" aria-live="polite">Chưa chạy</div>
+          <div class="text-xs text-muted">Chỉ kiểm thử nhận diện; không tự động chấm công.</div>
         </div>
       </div>
       <div class="panel" style="margin:0;">
@@ -406,25 +412,6 @@
         <tbody id="health-tbody"><tr><td colspan="4" class="td-empty">Đang tải...</td></tr></tbody>
       </table>
     </div>
-  </div>
-</div>
-
-<!-- ====== SECTION: ENVIRONMENT ====== -->
-<div class="content-section" id="sec-environment">
-  <div class="section-header">
-    <div>
-      <div class="section-title">Môi trường</div>
-      <div class="section-subtitle">Thông số nhiệt độ và độ ẩm từ cảm biến ESP32</div>
-    </div>
-  </div>
-  <div class="env-stats-grid">
-    <div class="env-stat-card"><div class="env-stat-val"><span id="env-nhiet-do">--</span></div><div class="env-stat-unit">°C</div><div class="env-stat-label">Nhiệt độ</div></div>
-    <div class="env-stat-card"><div class="env-stat-val"><span id="env-do-am">--</span></div><div class="env-stat-unit">%</div><div class="env-stat-label">Độ ẩm</div></div>
-    <div class="env-stat-card"><div class="env-stat-val" style="font-size:18px;" id="env-thoi-gian">--</div><div class="env-stat-unit"></div><div class="env-stat-label">Cập nhật lúc</div></div>
-  </div>
-  <div class="panel" style="margin:0;">
-    <div class="panel-header"><span class="panel-title">Biểu đồ nhiệt độ</span></div>
-    <div class="panel-body"><div style="height:240px;"><canvas id="chart-temperature-env"></canvas></div></div>
   </div>
 </div>
 
@@ -525,14 +512,19 @@
       </button>
     </div>
     <div class="modal-body">
-      <div style="background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-md);padding:24px;text-align:center;">
-        <svg style="width:36px;height:36px;color:var(--text-muted);margin:0 auto 12px;" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-        <div style="font-weight:600;color:var(--text-secondary);margin-bottom:6px;">Tính năng sắp ra mắt</div>
-        <div style="font-size:12.5px;color:var(--text-muted);line-height:1.6;">Chức năng đăng ký khuôn mặt sẽ được triển khai ở bước tiếp theo.<br>Nhân viên sẽ đứng trước camera để hệ thống ghi nhận khuôn mặt.</div>
+      <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(200px,1fr);gap:16px;align-items:start;">
+        <img id="face-enrollment-preview" src="{{ url_for('video_feed') }}" alt="Camera đăng ký khuôn mặt" style="width:100%;aspect-ratio:4/3;object-fit:cover;background:#111;border-radius:4px;">
+        <div>
+          <div id="face-enrollment-pose" style="font-size:18px;font-weight:650;margin-bottom:8px;">Chuẩn bị đăng ký</div>
+          <div id="face-enrollment-current" class="text-sm text-muted" style="margin-bottom:6px;">Đang kiểm tra hướng đầu...</div>
+          <div id="face-enrollment-progress" class="text-sm text-muted" style="margin-bottom:12px;">5 hướng: thẳng, trái, phải, lên, xuống</div>
+          <div id="face-enrollment-message" class="text-sm" style="min-height:40px;margin-bottom:12px;" aria-live="polite">Hướng đúng ổn định 0.8 giây sẽ tự chụp.</div>
+          <button class="btn btn-primary" id="face-enrollment-capture" onclick="captureFaceAngle()" disabled>Chụp góc này</button>
+        </div>
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeFaceModal()">Đóng</button>
+      <button class="btn btn-ghost" onclick="closeFaceModal()">Hủy</button>
     </div>
   </div>
 </div>
@@ -711,10 +703,9 @@ function clearAttendanceFilters() {
 /* =====================================================================
    CHART INSTANCES
    ===================================================================== */
-let donutChart=null, weeklyChart=null, tempChartStats=null, tempChartEnv=null;
+let donutChart=null, weeklyChart=null;
 const CB={responsive:true,maintainAspectRatio:false,animation:{duration:300},
   plugins:{legend:{display:false},tooltip:{backgroundColor:'#fff',borderColor:'#E5E7EB',borderWidth:1,titleColor:'#111827',bodyColor:'#667085',padding:10,cornerRadius:6}}};
-let chartsInitialized = { statistics: false, environment: false };
 
 /* =====================================================================
    SECTION ENTER — lazy init
@@ -722,10 +713,8 @@ let chartsInitialized = { statistics: false, environment: false };
 function onSectionEnter(sec) {
   if (sec === 'employees') initEmployeesSection();
   if (sec === 'attendance') initAttendanceSection();
-  if (sec === 'statistics' && !chartsInitialized.statistics) initStatisticsSection();
   if (sec === 'alerts') fetchAlerts();
   if (sec === 'health') fetchHealth();
-  if (sec === 'environment') initEnvironmentSection();
   if (sec === 'camera') syncCameraSection();
 }
 
@@ -739,28 +728,12 @@ function initAttendanceSection() {
   }
 }
 
-function initStatisticsSection() {
-  chartsInitialized.statistics = true;
+function initDashboardCharts() {
   const dc = document.getElementById('chart-donut');
-  if(dc){ donutChart = new Chart(dc,{type:'doughnut',data:{labels:['Đúng giờ','Đang làm','Đi trễ','Về sớm','Chưa chấm'],datasets:[{data:[0,0,0,0,1],backgroundColor:['#16A34A','#2563EB','#D97706','#DC2626','#9CA3AF'],borderColor:'#fff',borderWidth:3,hoverOffset:6}]},options:{...CB,cutout:'70%',plugins:{...CB.plugins,tooltip:{...CB.plugins.tooltip,callbacks:{label:ctx=>` ${ctx.label}: ${ctx.parsed} người`}}}}});}
+  if(dc && !donutChart){ donutChart = new Chart(dc,{type:'doughnut',data:{labels:['Đúng giờ','Đang làm','Đi trễ','Về sớm','Chưa chấm'],datasets:[{data:[0,0,0,0,1],backgroundColor:['#16A34A','#2563EB','#D97706','#DC2626','#9CA3AF'],borderColor:'#fff',borderWidth:3,hoverOffset:6}]},options:{...CB,cutout:'70%',plugins:{...CB.plugins,tooltip:{...CB.plugins.tooltip,callbacks:{label:ctx=>` ${ctx.label}: ${ctx.parsed} người`}}}}});}
   const wc = document.getElementById('chart-weekly');
-  if(wc){ weeklyChart = new Chart(wc,{type:'bar',data:{labels:[],datasets:[{label:'Người vào',data:[],backgroundColor:'#BFDBFE',borderColor:'#2563EB',borderWidth:1,borderRadius:4,borderSkipped:false},{label:'Người ra',data:[],backgroundColor:'#BBF7D0',borderColor:'#16A34A',borderWidth:1,borderRadius:4,borderSkipped:false}]},options:{...CB,plugins:{...CB.plugins,legend:{display:true,position:'top',labels:{color:'#667085',font:{size:11},boxWidth:10,padding:10}}},scales:{x:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:10}}},y:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:10},stepSize:1},beginAtZero:true}}}});fetchWeekly();}
-  const tc = document.getElementById('chart-temperature-stats');
-  if(tc){ tempChartStats = new Chart(tc, makeTempChartConfig()); fetchTempChart('stats'); }
-  fetchDashboard(selectedDate);
-}
-
-function initEnvironmentSection() {
-  // Sync current values
-  const nh=document.getElementById('nhiet-do'),da=document.getElementById('do-am'),tg=document.getElementById('thoi-gian-mt');
-  const nm=document.getElementById('env-nhiet-do'),dm=document.getElementById('env-do-am'),tm=document.getElementById('env-thoi-gian');
-  if(nh&&nm) nm.textContent=nh.textContent; if(da&&dm) dm.textContent=da.textContent; if(tg&&tm) tm.textContent=tg.textContent;
-  // Init chart if not done
-  if (!chartsInitialized.environment) {
-    chartsInitialized.environment = true;
-    const tc = document.getElementById('chart-temperature-env');
-    if(tc){ tempChartEnv = new Chart(tc, makeTempChartConfig()); fetchTempChart('env'); }
-  }
+  if(wc && !weeklyChart){ weeklyChart = new Chart(wc,{type:'bar',data:{labels:[],datasets:[{label:'Người vào',data:[],backgroundColor:'#BFDBFE',borderColor:'#2563EB',borderWidth:1,borderRadius:4,borderSkipped:false},{label:'Người ra',data:[],backgroundColor:'#BBF7D0',borderColor:'#16A34A',borderWidth:1,borderRadius:4,borderSkipped:false}]},options:{...CB,plugins:{...CB.plugins,legend:{display:true,position:'top',labels:{color:'#667085',font:{size:11},boxWidth:10,padding:10}}},scales:{x:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:10}}},y:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:10},stepSize:1},beginAtZero:true}}}});}
+  fetchWeekly();
 }
 
 function syncCameraSection() {
@@ -772,9 +745,6 @@ function syncCameraSection() {
   if(ca && cs) cs.innerHTML = ca.innerHTML;
 }
 
-function makeTempChartConfig() {
-  return {type:'line',data:{labels:[],datasets:[{label:'Nhiệt độ (°C)',data:[],borderColor:'#2563EB',backgroundColor:'rgba(37,99,235,0.05)',borderWidth:1.5,pointRadius:3,pointBackgroundColor:'#2563EB',pointBorderColor:'#fff',pointBorderWidth:1.5,fill:true,tension:0.4}]},options:{...CB,scales:{x:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:9},maxTicksLimit:8}},y:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:9}},min:20,max:40}}}};
-}
 
 /* =====================================================================
    FETCH: DASHBOARD
@@ -798,8 +768,8 @@ function fetchDashboard(dateOverride){
     const dangLam=s.DangLamViec||0,diTre=s.DiTre||0,veSom=s.VeSom||0,chuaCham=s.ChuaChamCong||0;
     // Dashboard stat list
     ['leg-dung-gio','leg-di-tre','leg-dang-lam','leg-ve-som','leg-chua-cham'].forEach((id,i)=>{const e=document.getElementById(id);if(e) e.textContent=[dungGio,diTre,dangLam,veSom,chuaCham][i];});
-    // Statistics legend
-    ['stat-leg-dung-gio','stat-leg-dang-lam','stat-leg-di-tre','stat-leg-ve-som','stat-leg-chua-cham'].forEach((id,i)=>{const e=document.getElementById(id);if(e) e.textContent=[dungGio,dangLam,diTre,veSom,chuaCham][i];});
+    // Attendance chart legend
+    ['chart-leg-dung-gio','chart-leg-dang-lam','chart-leg-di-tre','chart-leg-ve-som','chart-leg-chua-cham'].forEach((id,i)=>{const e=document.getElementById(id);if(e) e.textContent=[dungGio,dangLam,diTre,veSom,chuaCham][i];});
     if(donutChart){donutChart.data.datasets[0].data=[dungGio,dangLam,diTre,veSom,chuaCham];donutChart.update();}
   }).catch(e=>console.error('[dashboard]',e));
 }
@@ -814,28 +784,6 @@ function fetchWeekly(){
     weeklyChart.data.datasets[1].data=data.map(r=>r.SoNguoiRa);
     weeklyChart.update();
   }).catch(e=>console.error('[weekly]',e));
-}
-
-/* FETCH: ENV */
-function fetchEnv(){
-  fetch('/api/get_environment').then(r=>r.json()).then(data=>{
-    document.getElementById('nhiet-do').textContent=data.NhietDo;
-    document.getElementById('do-am').textContent=data.DoAm;
-    document.getElementById('thoi-gian-mt').textContent=data.ThoiGian;
-    // Sync to environment section
-    const nm=document.getElementById('env-nhiet-do'),dm=document.getElementById('env-do-am'),tm=document.getElementById('env-thoi-gian');
-    if(nm) nm.textContent=data.NhietDo; if(dm) dm.textContent=data.DoAm; if(tm) tm.textContent=data.ThoiGian;
-  }).catch(e=>console.error('[env]',e));
-}
-
-function fetchTempChart(target){
-  fetch('/api/chart/environment').then(r=>r.json()).then(data=>{
-    const chart = target==='env' ? tempChartEnv : tempChartStats;
-    if(!chart) return;
-    chart.data.labels=data.map(r=>r.ThoiGian);
-    chart.data.datasets[0].data=data.map(r=>r.NhietDo);
-    chart.update();
-  }).catch(e=>console.error('[temp]',e));
 }
 
 /* FETCH: HEALTH */
@@ -882,9 +830,9 @@ function fetchAiStatus(){
    ===================================================================== */
 function initPolling(){
   const today=getTodayStr(); selectedDate=today;
-  fetchDashboard(today); fetchEnv(); fetchAlerts(); fetchHealth(); fetchAiStatus();
+  initDashboardCharts();
+  fetchDashboard(today); fetchAlerts(); fetchHealth(); fetchAiStatus();
   setInterval(()=>{if(selectedDate===getTodayStr()) fetchDashboard(selectedDate);},3000);
-  setInterval(fetchEnv,5000);
   setInterval(fetchAlerts,5000);
   setInterval(fetchHealth,10000);
   setInterval(fetchAiStatus,1500);
@@ -939,10 +887,81 @@ async function empLoadEmployees() {
     _employees = await resp.json();
     empRenderTable(_employees);
     empRenderStats(_employees);
+    empPopulateAttendanceEmployees();
   } catch(e) {
     console.error('empLoadEmployees error', e);
     document.getElementById('emp-tbody').innerHTML = '<tr><td colspan="4" class="td-empty">Không thể tải dữ liệu</td></tr>';
   }
+}
+
+function empPopulateAttendanceEmployees() {
+  const select = document.getElementById('emp-attendance-employee');
+  const selected = select.value;
+  select.innerHTML = '<option value="">-- Chọn nhân viên --</option>' + _employees.map(emp =>
+    `<option value="${emp.MaNV}">${escHtml(emp.HoTen)} (NV${String(emp.MaNV).padStart(3, '0')})</option>`
+  ).join('');
+  if (_employees.some(emp => String(emp.MaNV) === selected)) select.value = selected;
+  if (!document.getElementById('emp-attendance-date').value) {
+    document.getElementById('emp-attendance-date').value = getTodayStr();
+  }
+}
+
+async function empFetchAttendance() {
+  const maNV = document.getElementById('emp-attendance-employee').value;
+  const date = document.getElementById('emp-attendance-date').value;
+  const tbody = document.getElementById('emp-attendance-tbody');
+  if (!maNV) {
+    tbody.innerHTML = '<tr><td colspan="7" class="td-empty">Chọn nhân viên để xem chấm công.</td></tr>';
+    return;
+  }
+  if (!date) {
+    tbody.innerHTML = '<tr><td colspan="7" class="td-empty">Vui lòng chọn ngày.</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = '<tr><td colspan="7" class="td-empty">Đang tải dữ liệu...</td></tr>';
+  try {
+    const resp = await fetch(`/api/dashboard/attendance?date=${encodeURIComponent(date)}`);
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    const data = await resp.json();
+    const record = (data.Records || []).find(row => String(row.MaNV) === maNV);
+    if (!record) {
+      tbody.innerHTML = '<tr><td colspan="7" class="td-empty">Không tìm thấy dữ liệu chấm công.</td></tr>';
+      return;
+    }
+    let evidence = '<span class="text-xs text-muted">Không có</span>';
+    if (record.MaCC) {
+      const imageUrls = [
+        { label: 'Ảnh vào', url: `/api/attendance/${record.MaCC}/image/in` },
+        ...(record.GioRa ? [{ label: 'Ảnh ra', url: `/api/attendance/${record.MaCC}/image/out` }] : [])
+      ];
+      const availableImages = await Promise.all(imageUrls.map(async image => {
+        try {
+          const imageResp = await fetch(image.url, { method: 'HEAD' });
+          return imageResp.ok ? `<a href="${image.url}" target="_blank" rel="noopener">${image.label}</a>` : '';
+        } catch(e) { return ''; }
+      }));
+      const links = availableImages.filter(Boolean);
+      if (links.length) evidence = links.join(' · ');
+    }
+    tbody.innerHTML = `<tr>
+      <td>${escHtml(date)}</td>
+      <td>${escHtml(record.TenCa || '--')}</td>
+      <td>${fmtTime(record.GioVao)}</td>
+      <td>${badgeVao(record.TrangThaiVao)}</td>
+      <td>${fmtTime(record.GioRa)}</td>
+      <td>${badgeRa(record.TrangThaiRa)}</td>
+      <td>${evidence}</td>
+    </tr>`;
+  } catch(e) {
+    console.error('empFetchAttendance error', e);
+    tbody.innerHTML = '<tr><td colspan="7" class="td-empty">Không thể tải dữ liệu chấm công.</td></tr>';
+  }
+}
+
+function empSetAttendanceToday() {
+  document.getElementById('emp-attendance-date').value = getTodayStr();
+  empFetchAttendance();
 }
 
 function empRenderStats(emps) {
@@ -1059,11 +1078,153 @@ async function submitEdit() {
 }
 
 /* --- Modal FACE --- */
-function openFaceModal(maNV, hoTen) {
+let _faceEnrollment = null;
+const _facePoseLabels = ['Nhìn thẳng', 'Quay trái', 'Quay phải', 'Ngẩng lên', 'Cúi xuống'];
+const _facePoseKeys = ['frontal', 'left', 'right', 'up', 'down'];
+let _facePosePollTimer = null;
+let _facePoseStableSince = null;
+let _facePosePollingBusy = false;
+let _faceCaptureBusy = false;
+
+function stopFacePosePolling() {
+  if (_facePosePollTimer) clearInterval(_facePosePollTimer);
+  _facePosePollTimer = null;
+  _facePoseStableSince = null;
+}
+
+async function pollFacePose() {
+  if (!_faceEnrollment || _facePosePollingBusy || _faceCaptureBusy) return;
+  _facePosePollingBusy = true;
+  try {
+    const {maNV, sessionId, captured} = _faceEnrollment;
+    const response = await fetch(`/api/employees/${maNV}/face/register`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'pose', session_id:sessionId})
+    });
+    const data = await response.json();
+    if (response.status === 400 && /session|hết hạn|không hợp lệ/i.test(data.message || '')) {
+      stopFacePosePolling();
+      _faceEnrollment = null;
+      throw new Error('Session đã hết hạn. Đóng modal rồi mở lại để bắt đầu phiên mới.');
+    }
+    const expectedIndex = Math.min(captured, 4);
+    const expected = _facePoseKeys[expectedIndex];
+    const poseTitle = `Góc ${expectedIndex + 1}/5 — ${_facePoseLabels[expectedIndex]}`;
+    document.getElementById('face-enrollment-pose').textContent = poseTitle;
+    const currentLabel = ({frontal:'Nhìn thẳng',left:'Quay trái',right:'Quay phải',up:'Ngẩng lên',down:'Cúi xuống',no_face:'Không thấy mặt',multiple_faces:'Nhiều khuôn mặt',unknown:'Chưa xác định',between:'Đang chuyển hướng'})[data.current_pose] || 'Chưa có dữ liệu';
+    const angles = Number.isFinite(data.yaw) && Number.isFinite(data.pitch)
+      ? ` · yaw ${data.yaw.toFixed(0)}°, pitch ${data.pitch.toFixed(0)}°` : '';
+    document.getElementById('face-enrollment-current').textContent = `Phát hiện: ${currentLabel}${angles}`;
+    document.getElementById('face-enrollment-progress').textContent = `Đã chụp ${captured}/5 góc`;
+    const button = document.getElementById('face-enrollment-capture');
+    button.disabled = !response.ok || !data.pose_ok || expected !== data.expected_pose;
+    if (!response.ok) throw new Error(data.message || data.instruction || 'Không đọc được pose từ camera.');
+    document.getElementById('face-enrollment-message').textContent = data.instruction || 'Đang kiểm tra hướng đầu.';
+    if (!data.pose_ok) {
+      _facePoseStableSince = null;
+      return;
+    }
+    if (_facePoseStableSince === null) _facePoseStableSince = Date.now();
+    const heldMs = Date.now() - _facePoseStableSince;
+    if (heldMs >= 800) {
+      await captureFaceAngle(true);
+    } else {
+      document.getElementById('face-enrollment-message').textContent = `Đúng hướng, giữ yên ${((800-heldMs)/1000).toFixed(1)} giây...`;
+    }
+  } catch(e) {
+    _facePoseStableSince = null;
+    document.getElementById('face-enrollment-capture').disabled = true;
+    document.getElementById('face-enrollment-message').textContent = e.message;
+  } finally {
+    _facePosePollingBusy = false;
+  }
+}
+
+async function openFaceModal(maNV, hoTen) {
+  stopFacePosePolling();
   document.getElementById('modal-face-sub').textContent = `Nhân viên: ${hoTen} (MaNV: ${maNV})`;
   openModal('modal-face');
+  document.getElementById('face-enrollment-capture').disabled = true;
+  document.getElementById('face-enrollment-pose').textContent = 'Đang khởi tạo AI...';
+  try {
+    const resp = await fetch(`/api/employees/${maNV}/face/register`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'start'})});
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.message || 'Không thể khởi tạo đăng ký');
+    _faceEnrollment = {maNV, sessionId:data.session_id, captured:0};
+    document.getElementById('face-enrollment-pose').textContent = `Góc 1/5 — ${_facePoseLabels[0]}`;
+    document.getElementById('face-enrollment-progress').textContent = 'Đã chụp 0/5 góc';
+    document.getElementById('face-enrollment-current').textContent = 'Đang kiểm tra hướng đầu...';
+    document.getElementById('face-enrollment-message').textContent = 'Nhìn thẳng camera. Hướng đúng ổn định 0.8 giây sẽ tự chụp.';
+    document.getElementById('face-enrollment-capture').disabled = true;
+    _facePosePollTimer = setInterval(pollFacePose, 250);
+    pollFacePose();
+  } catch(e) {
+    document.getElementById('face-enrollment-pose').textContent = 'Không thể bắt đầu';
+    document.getElementById('face-enrollment-message').textContent = e.message;
+  }
 }
-function closeFaceModal() { closeModal('modal-face'); }
+async function captureFaceAngle(autoCapture=false) {
+  if (!_faceEnrollment) return;
+  _faceCaptureBusy = true;
+  _facePoseStableSince = null;
+  const btn = document.getElementById('face-enrollment-capture'); btn.disabled = true;
+  document.getElementById('face-enrollment-message').textContent = autoCapture ? 'Pose ổn định, đang chụp...' : 'Đang xác minh hướng trên frame chụp...';
+  try {
+    const resp = await fetch(`/api/employees/${_faceEnrollment.maNV}/face/register`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'capture',session_id:_faceEnrollment.sessionId})});
+    const data = await resp.json();
+    if (!resp.ok) throw new Error(data.message || 'Không chụp được góc này');
+    _faceEnrollment.captured = data.captured;
+    document.getElementById('face-enrollment-progress').textContent = `Đã chụp ${data.captured}/5 góc`;
+    if (data.captured < 5) {
+      document.getElementById('face-enrollment-pose').textContent = `Góc ${data.captured+1}/5 — ${_facePoseLabels[data.captured]}`;
+      document.getElementById('face-enrollment-message').textContent = `Đã nhận góc ${data.captured}. ${_facePoseLabels[data.captured]} để tiếp tục.`;
+      return;
+    }
+    stopFacePosePolling();
+    const done = await fetch(`/api/employees/${_faceEnrollment.maNV}/face/register`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'complete',session_id:_faceEnrollment.sessionId})});
+    const result = await done.json();
+    if (!done.ok) throw new Error(result.message || 'Không lưu được embedding');
+    _faceEnrollment = null;
+    document.getElementById('face-enrollment-pose').textContent = 'Đăng ký hoàn tất';
+    document.getElementById('face-enrollment-message').textContent = 'Đã lưu đủ 5 embedding vào FaceEmbedding.';
+    showToast('Đăng ký khuôn mặt thành công', 'success');
+    await empLoadEmployees();
+    setTimeout(() => closeModal('modal-face'), 700);
+  } catch(e) {
+    document.getElementById('face-enrollment-message').textContent = e.message;
+  } finally {
+    _faceCaptureBusy = false;
+  }
+}
+async function closeFaceModal() {
+  stopFacePosePolling();
+  if (_faceEnrollment) fetch(`/api/employees/${_faceEnrollment.maNV}/face/register`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'cancel',session_id:_faceEnrollment.sessionId})}).catch(()=>{});
+  _faceEnrollment = null;
+  closeModal('modal-face');
+}
+
+let _faceRecognitionTimer = null;
+async function pollFaceRecognition() {
+  try {
+    const response = await fetch('/api/face/identify/camera', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const data = await response.json();
+    const el = document.getElementById('face-recognition-result');
+    if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+    el.textContent = data.status === 'MATCH' ? `${data.HoTen} (MaNV ${data.MaNV}) · ${(data.similarity*100).toFixed(1)}%` : `${data.status || 'UNKNOWN'} · ${data.similarity == null ? '--' : (data.similarity*100).toFixed(1)+'%'}`;
+    el.className = data.match ? 'text-sm' : 'text-sm text-muted';
+  } catch(e) { document.getElementById('face-recognition-result').textContent = e.message; }
+}
+function toggleFaceRecognition() {
+  const button = document.getElementById('face-recognition-toggle');
+  if (_faceRecognitionTimer) {
+    clearInterval(_faceRecognitionTimer); _faceRecognitionTimer = null;
+    button.textContent = 'Bắt đầu nhận diện';
+    return;
+  }
+  button.textContent = 'Dừng nhận diện';
+  pollFaceRecognition();
+  _faceRecognitionTimer = setInterval(pollFaceRecognition, 1200);
+}
 
 function empShowErr(id, msg) { const el=document.getElementById(id); if(el){el.textContent=msg;el.classList.add('show');} }
 function empHideErr(id) { const el=document.getElementById(id); if(el) el.classList.remove('show'); }

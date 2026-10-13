@@ -14,7 +14,9 @@ Quy tắc chấm công (KHÔNG có thời gian ân hạn):
 """
 
 from datetime import date, datetime, time
+import os
 import database
+from face_matching import aggregate_gallery, identify_embedding, verify_embedding
 from werkzeug.security import generate_password_hash, check_password_hash
 
 try:
@@ -603,61 +605,6 @@ def fetch_health_chart_data():
 
 
 # ============================================================
-# Environment
-# ============================================================
-
-def save_environment_data(data):
-    nhiet_do = data.get("NhietDo")
-    do_am    = data.get("DoAm")
-    ma_tb    = data.get("MaTB", 1)
-
-    if nhiet_do is None or do_am is None:
-        return False
-
-    try:
-        database.insert_environment_data(nhiet_do, do_am, ma_tb)
-        return True
-    except Exception as e:
-        print(f"[services] Loi luu moi truong: {e}")
-        return False
-
-
-def fetch_latest_environment():
-    try:
-        row = database.get_recent_environment_data()
-        if row:
-            return {
-                "NhietDo": row[0],
-                "DoAm":    row[1],
-                "ThoiGian": (
-                    row[2].strftime("%Y-%m-%d %H:%M:%S")
-                    if row[2] else "--"
-                ),
-            }
-    except Exception as e:
-        print(f"[services] Loi lay moi truong: {e}")
-    return {"NhietDo": "--", "DoAm": "--", "ThoiGian": "--"}
-
-
-def fetch_environment_chart_data():
-    try:
-        records = database.get_environment_chart_data(limit=20)
-        return [
-            {
-                "NhietDo": row[0],
-                "DoAm":    row[1],
-                "ThoiGian": (
-                    row[2].strftime("%H:%M:%S")
-                    if row[2] else "--"
-                ),
-            }
-            for row in records
-        ]
-    except Exception as e:
-        print(f"[services] Loi lay chart moi truong: {e}")
-        return []
-
-
 # ============================================================
 # AI State Log
 # ============================================================
@@ -750,16 +697,15 @@ def fetch_alert_history(limit=10):
 # Quản lý Nhân viên
 # ============================================================
 
-def _row_to_employee_dict(row):
+def _row_to_employee_dict(row, has_face_embedding=None):
     """
     Chuyển row DB (MaNV, HoTen, AnhKhuonMat, MaVaiTro, TenVaiTro)
     thành dict trả client.
 
     AnhKhuonMat KHÔNG trả về client.
-    DaDangKyKhuonMat = True khi AnhKhuonMat != NULL và trim != ''.
+    DaDangKyKhuonMat phản ánh FaceEmbedding, không phải ảnh hồ sơ legacy.
     """
-    anh = row[2]
-    da_dang_ky = bool(anh and str(anh).strip())
+    da_dang_ky = bool(has_face_embedding)
     return {
         "MaNV":              row[0],
         "HoTen":             row[1],
@@ -786,7 +732,8 @@ def fetch_employees():
     """
     try:
         rows = database.get_all_employees()
-        return [_row_to_employee_dict(r) for r in rows]
+        face_ids = set(database.get_face_enrolled_employee_ids())
+        return [_row_to_employee_dict(r, r[0] in face_ids) for r in rows]
     except Exception as e:
         print(f"[services] Loi lay danh sach nhan vien: {e}")
         return []
@@ -802,7 +749,7 @@ def fetch_employee(ma_nv):
         row = database.get_employee_by_id(ma_nv)
         if row is None:
             return None
-        return _row_to_employee_dict(row)
+        return _row_to_employee_dict(row, database.count_face_embeddings(ma_nv) > 0)
     except Exception as e:
         print(f"[services] Loi lay nhan vien {ma_nv}: {e}")
         return None
@@ -1223,36 +1170,44 @@ def register_face(ma_nv, frames, target_count=5):
             "message": str(e),
         }
 
-    saved_ids = []
+    embeddings = []
     errors = []
 
     for i, frame in enumerate(frames):
         try:
             vector_bytes, emb_np = _fe.face_engine.extract_embedding(frame)
-            ma_emb = database.insert_face_embedding(
-                ma_nv=ma_nv,
-                vector_bytes=vector_bytes,
-                so_chieu=int(emb_np.size),
-            )
-            if ma_emb:
-                saved_ids.append(ma_emb)
-                print(
-                    f"[services/register_face] Frame {i+1}: MaEmbedding={ma_emb}, "
-                    f"norm={float(__import__('numpy').linalg.norm(emb_np)):.4f}"
-                )
-            else:
-                errors.append(f"Frame {i+1}: INSERT khong tra ve MaEmbedding")
+            embeddings.append(vector_bytes)
         except RuntimeError as e:
             errors.append(f"Frame {i+1}: {e}")
         except Exception as e:
             errors.append(f"Frame {i+1}: loi khong xac dinh: {e}")
 
-    if not saved_ids:
+    if len(embeddings) != target_count:
         return {
             "success": False,
-            "message": "Khong luu duoc embedding nao. Kiem tra camera va khuon mat.",
+            "message": f"Can du {target_count} frame hop le; chi thu duoc {len(embeddings)}.",
             "errors": errors,
         }
+
+    return save_face_embeddings(ma_nv, embeddings)
+
+
+def save_face_embeddings(ma_nv, embeddings):
+    """Append a complete enrollment batch without replacing prior vectors."""
+    if not embeddings:
+        return {"success": False, "message": "Khong co embedding de luu.", "errors": []}
+    if database.count_face_embeddings(ma_nv) > 0:
+        return {
+            "success": False,
+            "conflict": True,
+            "message": "Nhan vien da co face embedding; tu choi ghi them de tranh ghi de du lieu.",
+            "errors": [],
+        }
+
+    try:
+        saved_ids = database.insert_face_embeddings(ma_nv, embeddings, so_chieu=512)
+    except Exception as exc:
+        return {"success": False, "message": f"Khong luu duoc enrollment batch: {exc}", "errors": []}
 
     return {
         "success": True,
@@ -1260,8 +1215,82 @@ def register_face(ma_nv, frames, target_count=5):
         "embeddings_saved": len(saved_ids),
         "embedding_ids": saved_ids,
         "dimensions": 512,
-        "errors": errors,  # frame bi truot (neu co)
+        "errors": [],
     }
+
+
+def _recognition_threshold(override=None):
+    value = override if override is not None else os.getenv("FACE_RECOGNITION_THRESHOLD", "0.45")
+    try:
+        threshold = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Threshold must be a number between -1 and 1.") from exc
+    if not -1.0 <= threshold <= 1.0:
+        raise ValueError("Threshold must be a number between -1 and 1.")
+    return threshold
+
+
+def _load_face_gallery():
+    rows = database.get_all_face_embeddings()
+    gallery, invalid_rows = aggregate_gallery(rows)
+    if invalid_rows:
+        print(f"[face_recognition] Ignored {len(invalid_rows)} invalid embedding row(s).")
+    return gallery, invalid_rows
+
+
+def identify_face_embedding(probe_embedding, threshold=None):
+    threshold = _recognition_threshold(threshold)
+    gallery, invalid_rows = _load_face_gallery()
+    result = identify_embedding(probe_embedding, gallery, threshold)
+    result["invalidEmbeddings"] = len(invalid_rows)
+    return result
+
+
+def verify_face_embedding(probe_embedding, ma_nv, threshold=None):
+    threshold = _recognition_threshold(threshold)
+    gallery, invalid_rows = _load_face_gallery()
+    result = verify_embedding(probe_embedding, ma_nv, gallery, threshold)
+    result["invalidEmbeddings"] = len(invalid_rows)
+    return result
+
+
+def _face_bbox_area(face):
+    bbox = face.get("bbox")
+    if bbox is None or len(bbox) != 4:
+        return 0.0
+    width = max(0.0, float(bbox[2]) - float(bbox[0]))
+    height = max(0.0, float(bbox[3]) - float(bbox[1]))
+    return width * height
+
+
+def _extract_largest_face(frame):
+    import face_engine as _fe
+
+    _fe.face_engine.initialize()
+    faces = _fe.face_engine.detect_embeddings(frame)
+    if not faces:
+        return None, {"status": "NO_FACE", "match": False, "MaNV": None,
+                      "HoTen": "UNKNOWN", "similarity": None}
+    largest_face = max(faces, key=_face_bbox_area)
+    return largest_face["embedding"], None
+
+
+def identify_face_frame(frame, threshold=None):
+    resolved_threshold = _recognition_threshold(threshold)
+    probe, error_result = _extract_largest_face(frame)
+    if error_result:
+        error_result["threshold"] = resolved_threshold
+        return error_result
+    return identify_face_embedding(probe, resolved_threshold)
+
+
+def verify_face_frame(frame, ma_nv, threshold=None):
+    resolved_threshold = _recognition_threshold(threshold)
+    probe, error_result = _extract_largest_face(frame)
+    if error_result:
+        error_result["threshold"] = resolved_threshold
+        return error_result
+    return verify_face_embedding(probe, ma_nv, resolved_threshold)
 
 def fetch_attendance_history_filtered(tu_ngay=None, den_ngay=None, keyword=None, page=1, limit=20):
     """
