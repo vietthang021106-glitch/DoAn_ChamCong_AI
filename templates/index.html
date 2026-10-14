@@ -426,8 +426,8 @@
   <div class="modal">
     <div class="modal-header">
       <div>
-        <div class="modal-title" id="modal-add-title">Thêm nhân viên</div>
-        <div class="modal-subtitle">Điền thông tin bên dưới. Khuôn mặt đăng ký ở bước tiếp theo.</div>
+        <div class="modal-title" id="modal-add-title">Bước 1/3 — Thông tin nhân viên</div>
+        <div class="modal-subtitle">Nhập họ tên và vai trò. Nhân viên chỉ được tạo sau khi thông tin hợp lệ.</div>
       </div>
       <button class="modal-close" onclick="closeAddModal()" aria-label="Đóng">
         <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -446,6 +446,7 @@
         </select>
         <div class="form-error" id="add-vaitro-err">Vui lòng chọn vai trò</div>
       </div>
+      <div class="form-error" id="add-general-err" role="alert"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeAddModal()">Hủy</button>
@@ -512,7 +513,7 @@
       </button>
     </div>
     <div class="modal-body">
-      <div style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(200px,1fr);gap:16px;align-items:start;">
+      <div id="face-enrollment-body" style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(200px,1fr);gap:16px;align-items:start;">
         <img id="face-enrollment-preview" src="{{ url_for('video_feed') }}" alt="Camera đăng ký khuôn mặt" style="width:100%;aspect-ratio:4/3;object-fit:cover;background:#111;border-radius:4px;">
         <div>
           <div id="face-enrollment-pose" style="font-size:18px;font-weight:650;margin-bottom:8px;">Chuẩn bị đăng ký</div>
@@ -522,9 +523,16 @@
           <button class="btn btn-primary" id="face-enrollment-capture" onclick="captureFaceAngle()" disabled>Chụp góc này</button>
         </div>
       </div>
+      <div id="face-enrollment-complete" hidden>
+        <div style="font-size:18px;font-weight:650;margin-bottom:14px;">✓ Hoàn tất thêm nhân viên</div>
+        <div class="form-control-static" style="margin-bottom:8px;">✓ <span id="face-complete-name"></span></div>
+        <div class="form-control-static" style="margin-bottom:8px;">✓ <span id="face-complete-code"></span></div>
+        <div class="form-control-static" style="margin-bottom:8px;">✓ Vai trò: <span id="face-complete-role"></span></div>
+        <div class="form-control-static">✓ Khuôn mặt: Đã đăng ký</div>
+      </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeFaceModal()">Hủy</button>
+      <button class="btn btn-ghost" id="face-modal-close-btn" onclick="closeFaceModal()">Hủy</button>
     </div>
   </div>
 </div>
@@ -1018,6 +1026,8 @@ function openAddModal() {
   document.getElementById('add-hoten').value = '';
   document.getElementById('add-vaitro').value = '';
   empHideErr('add-hoten-err'); empHideErr('add-vaitro-err');
+  empHideErr('add-general-err');
+  document.getElementById('modal-add-title').textContent = 'Bước 1/3 — Thông tin nhân viên';
   empPopulateRoleSelect('add-vaitro', _roles, '');
   openModal('modal-add');
   setTimeout(() => document.getElementById('add-hoten').focus(), 60);
@@ -1031,14 +1041,29 @@ async function submitAdd() {
   if (!hoTen) { empShowErr('add-hoten-err', 'Vui lòng nhập họ tên'); valid = false; } else { empHideErr('add-hoten-err'); }
   if (!maVaiTro) { empShowErr('add-vaitro-err', 'Vui lòng chọn vai trò'); valid = false; } else { empHideErr('add-vaitro-err'); }
   if (!valid) return;
+  empHideErr('add-general-err');
   const btn = document.getElementById('btn-submit-add');
   btn.disabled = true; btn.textContent = 'Đang xử lý...';
   try {
     const resp = await fetch('/api/employees', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({HoTen:hoTen,MaVaiTro:parseInt(maVaiTro)}) });
     const data = await resp.json();
-    if (resp.status === 201) { closeAddModal(); showToast(`Thêm nhân viên thành công (MaNV: ${data.MaNV})`, 'success'); await empLoadEmployees(); }
-    else { showToast(data.message || 'Lỗi khi thêm nhân viên', 'error'); }
-  } catch(e) { showToast('Lỗi kết nối server', 'error'); }
+    if (resp.status === 201) {
+      const roleName = _roles.find(role => String(role.MaVaiTro) === String(maVaiTro))?.TenVaiTro || 'Chưa xác định';
+      closeAddModal();
+      await empLoadEmployees();
+      openFaceModal(data.MaNV, hoTen, {
+        roleName,
+        employeeCode: `NV${String(data.MaNV).padStart(3, '0')}`,
+        employeeName: hoTen,
+        isNewEmployee: true
+      });
+    } else {
+      const message = data.message || 'Lỗi khi thêm nhân viên';
+      if (/vai trò|MaVaiTro/i.test(message)) empShowErr('add-vaitro-err', message);
+      else if (/họ tên|HoTen/i.test(message)) empShowErr('add-hoten-err', message);
+      else empShowErr('add-general-err', message);
+    }
+  } catch(e) { empShowErr('add-general-err', 'Mất kết nối với máy chủ. Kiểm tra danh sách nhân viên trước khi thử lại.'); }
   finally { btn.disabled = false; btn.textContent = 'Lưu'; }
 }
 
@@ -1140,9 +1165,14 @@ async function pollFacePose() {
   }
 }
 
-async function openFaceModal(maNV, hoTen) {
+async function openFaceModal(maNV, hoTen, flow = null) {
   stopFacePosePolling();
-  document.getElementById('modal-face-sub').textContent = `Nhân viên: ${hoTen} (MaNV: ${maNV})`;
+  const employeeCode = `NV${String(maNV).padStart(3, '0')}`;
+  document.getElementById('modal-face-title').textContent = flow?.isNewEmployee ? 'Bước 2/3 — Đăng ký khuôn mặt' : 'Đăng ký khuôn mặt';
+  document.getElementById('modal-face-sub').textContent = `Nhân viên: ${hoTen} (${employeeCode})`;
+  document.getElementById('face-enrollment-body').hidden = false;
+  document.getElementById('face-enrollment-complete').hidden = true;
+  document.getElementById('face-modal-close-btn').textContent = 'Hủy';
   openModal('modal-face');
   document.getElementById('face-enrollment-capture').disabled = true;
   document.getElementById('face-enrollment-pose').textContent = 'Đang khởi tạo AI...';
@@ -1150,7 +1180,7 @@ async function openFaceModal(maNV, hoTen) {
     const resp = await fetch(`/api/employees/${maNV}/face/register`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'start'})});
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.message || 'Không thể khởi tạo đăng ký');
-    _faceEnrollment = {maNV, sessionId:data.session_id, captured:0};
+    _faceEnrollment = {maNV, sessionId:data.session_id, captured:0, flow};
     document.getElementById('face-enrollment-pose').textContent = `Góc 1/5 — ${_facePoseLabels[0]}`;
     document.getElementById('face-enrollment-progress').textContent = 'Đã chụp 0/5 góc';
     document.getElementById('face-enrollment-current').textContent = 'Đang kiểm tra hướng đầu...';
@@ -1184,12 +1214,23 @@ async function captureFaceAngle(autoCapture=false) {
     const done = await fetch(`/api/employees/${_faceEnrollment.maNV}/face/register`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'complete',session_id:_faceEnrollment.sessionId})});
     const result = await done.json();
     if (!done.ok) throw new Error(result.message || 'Không lưu được embedding');
+    const flow = _faceEnrollment.flow;
     _faceEnrollment = null;
-    document.getElementById('face-enrollment-pose').textContent = 'Đăng ký hoàn tất';
-    document.getElementById('face-enrollment-message').textContent = 'Đã lưu đủ 5 embedding vào FaceEmbedding.';
-    showToast('Đăng ký khuôn mặt thành công', 'success');
     await empLoadEmployees();
-    setTimeout(() => closeModal('modal-face'), 700);
+    if (flow?.isNewEmployee) {
+      document.getElementById('modal-face-title').textContent = 'Bước 3/3 — Hoàn tất';
+      document.getElementById('face-enrollment-body').hidden = true;
+      document.getElementById('face-enrollment-complete').hidden = false;
+      document.getElementById('face-complete-name').textContent = flow.employeeName;
+      document.getElementById('face-complete-code').textContent = `Mã nhân viên: ${flow.employeeCode}`;
+      document.getElementById('face-complete-role').textContent = flow.roleName;
+      document.getElementById('face-modal-close-btn').textContent = 'Hoàn tất';
+    } else {
+      document.getElementById('face-enrollment-pose').textContent = 'Đăng ký hoàn tất';
+      document.getElementById('face-enrollment-message').textContent = 'Đã lưu đủ 5 embedding vào FaceEmbedding.';
+      showToast('Đăng ký khuôn mặt thành công', 'success');
+      setTimeout(() => closeModal('modal-face'), 700);
+    }
   } catch(e) {
     document.getElementById('face-enrollment-message').textContent = e.message;
   } finally {

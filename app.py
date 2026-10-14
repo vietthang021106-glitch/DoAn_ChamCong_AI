@@ -251,6 +251,27 @@ def video_feed():
     )
 
 
+@app.route('/internal/camera/frame')
+def internal_camera_frame():
+    """Expose one frame to the loopback AI service through the camera owner."""
+    if request.remote_addr not in {'127.0.0.1', '::1'}:
+        return jsonify({"success": False, "message": "Local requests only."}), 403
+
+    ok, frame = _read_camera_frame()
+    if not ok or frame is None:
+        return jsonify({"success": False, "message": "Camera không khả dụng."}), 503
+
+    encoded, image = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
+    if not encoded:
+        return jsonify({"success": False, "message": "Không mã hóa được frame."}), 503
+
+    return Response(
+        image.tobytes(),
+        mimetype='image/jpeg',
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 # ============================================================
 # Routes — ESP32 Sensor (PUBLIC — không yêu cầu login)
 # ============================================================
