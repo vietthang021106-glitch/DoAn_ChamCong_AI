@@ -6,11 +6,11 @@ require_once __DIR__ . '/AttendanceModel.php';
 
 final class DashboardModel
 {
+    /** Đọc các KPI, chấm công, hoạt động tuần và cảnh báo cho ngày đã chọn. */
     public function findOverview(string $date): array
     {
         $pdo = Database::getConnection();
         $totalEmployees = (int)$pdo->query('SELECT COUNT(*) FROM NhanVien')->fetchColumn();
-        $embeddingCount = (int)$pdo->query('SELECT COUNT(*) FROM FaceEmbedding')->fetchColumn();
         $registeredEmployees = (int)$pdo->query(
             'SELECT COUNT(DISTINCT MaNV) FROM FaceEmbedding'
         )->fetchColumn();
@@ -18,12 +18,9 @@ final class DashboardModel
         $attendanceRows = (new AttendanceModel())->findDaily($date);
         $summary = [
             'total_employees' => $totalEmployees,
-            'face_embeddings' => $embeddingCount,
             'face_registered' => $registeredEmployees,
-            'face_missing' => max(0, $totalEmployees - $registeredEmployees),
             'assigned_today' => 0,
             'checked_in' => 0,
-            'on_time' => 0,
             'working' => 0,
             'late' => 0,
             'early' => 0,
@@ -63,9 +60,6 @@ final class DashboardModel
                     $statusOut = 'Đúng giờ';
                 }
 
-                if ($statusIn === 'Đúng giờ' && $statusOut !== 'Về sớm') {
-                    $summary['on_time']++;
-                }
             }
 
             $row['GioVaoDisplay'] = $clockIn ?? '--';
@@ -79,21 +73,9 @@ final class DashboardModel
         }
         unset($row);
 
-        $startOfDay = $date . ' 00:00:00';
         $endOfDay = (new DateTimeImmutable($date, new DateTimeZone('Asia/Ho_Chi_Minh')))
             ->modify('+1 day')
             ->format('Y-m-d') . ' 00:00:00';
-
-        $healthCountStatement = $pdo->prepare(<<<'SQL'
-            SELECT COUNT(*)
-            FROM LichSuSucKhoe
-            WHERE ThoiGian >= :start_of_day AND ThoiGian < :end_of_day
-            SQL);
-        $healthCountStatement->execute([
-            'start_of_day' => $startOfDay,
-            'end_of_day' => $endOfDay,
-        ]);
-        $healthTodayCount = (int)$healthCountStatement->fetchColumn();
 
         $weekStart = (new DateTimeImmutable($date, new DateTimeZone('Asia/Ho_Chi_Minh')))
             ->modify('-6 days')
@@ -132,26 +114,10 @@ final class DashboardModel
             ];
         }
 
-        $healthLatest = $pdo->query(<<<'SQL'
-            SELECT NV.HoTen, SK.NhipTim, SK.SpO2, SK.ThoiGian
-            FROM LichSuSucKhoe SK
-            LEFT JOIN NhanVien NV ON NV.MaNV = SK.MaNV
-            ORDER BY SK.ThoiGian DESC, SK.MaSK DESC
-            LIMIT 1
-            SQL)->fetch() ?: null;
-
-        $environmentLatest = $pdo->query(<<<'SQL'
-            SELECT NhietDo, DoAm, ThoiGian
-            FROM ThongSoMoiTruong
-            ORDER BY ThoiGian DESC, MaMT DESC
-            LIMIT 1
-            SQL)->fetch() ?: null;
-
         $alerts = $pdo->query(<<<'SQL'
             SELECT
                 NV.HoTen,
                 COALESCE(BH.TenBieuHien, LCB.TenLoaiCB) AS LoaiCanhBao,
-                CB.NoiDung,
                 CB.ThoiGian
             FROM CanhBao CB
             LEFT JOIN NhanVien NV ON NV.MaNV = CB.MaNV
@@ -167,11 +133,6 @@ final class DashboardModel
             'summary' => $summary,
             'attendance' => $attendanceRows,
             'weekly' => $weekly,
-            'environment' => $environmentLatest,
-            'health' => [
-                'latest' => $healthLatest,
-                'today_count' => $healthTodayCount,
-            ],
             'alerts' => $alerts,
         ];
     }

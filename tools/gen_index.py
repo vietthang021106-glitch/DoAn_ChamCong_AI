@@ -11,8 +11,8 @@ PARTS.append(r"""<!DOCTYPE html>
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Tổng quan chấm công — Smart Attendance">
-  <title>Tổng quan — Smart Attendance</title>
+  <meta name="description" content="Tổng quan chấm công">
+  <title>Tổng quan</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -126,7 +126,6 @@ PARTS.append(r"""<!-- TOPBAR -->
   <div style="display:flex;align-items:center;gap:12px;">
     <div style="display:flex;align-items:center;gap:8px;">
       <svg fill="none" stroke="var(--primary)" stroke-width="2" viewBox="0 0 24 24" style="width:20px;height:20px;"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      <span style="font-weight:700;font-size:14px;color:var(--text-primary);">Smart Attendance</span>
     </div>
     <div id="topbar-date" class="topbar-date" style="font-size:12px;color:var(--text-muted);"></div>
   </div>
@@ -173,7 +172,6 @@ PARTS.append(r"""<!-- TOGGLE -->
   <div class="drawer-header">
     <div class="drawer-brand">
       <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
-      Smart Attendance
     </div>
     <button class="drawer-close" id="drawer-close-btn" aria-label="Đóng menu">
       <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
@@ -214,7 +212,6 @@ PARTS.append(r"""<!-- TOGGLE -->
       Sức khỏe
     </button>
   </nav>
-  <div class="drawer-footer">Smart Attendance v2.0</div>
 </aside>
 """)
 

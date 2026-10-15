@@ -1,5 +1,5 @@
 /**
- * ui.js — Shared UI utilities for Smart Attendance
+ * ui.js — Shared UI utilities
  * Dropdown · Toast · Modal helpers
  */
 

@@ -105,7 +105,15 @@ class FaceRecognitionEngine:
     # ------------------------------------------------------------------
 
     def detect_embeddings(self, frame):
-        """Return normalized embeddings and face metadata for every detected face."""
+        """
+        Detect faces and extract one normalized 512D embedding per detected face.
+
+        Args:
+            frame: OpenCV BGR image.
+
+        Returns:
+            list[dict]: Embedding bytes/array, bounding box, detector score, and pose.
+        """
         if not self._initialized or self._app is None:
             raise RuntimeError("Engine chua duoc khoi tao. Goi initialize() truoc.")
         if frame is None:
@@ -150,7 +158,15 @@ class FaceRecognitionEngine:
         return results
 
     def inspect_pose(self, frame):
-        """Return face count and estimated pose without persisting an embedding."""
+        """
+        Inspect face count and head pose without writing an embedding to storage.
+
+        Args:
+            frame: OpenCV BGR image.
+
+        Returns:
+            dict: Face count, coarse pose label, and yaw/pitch when available.
+        """
         faces = self.detect_embeddings(frame)
         if not faces:
             return {"face_count": 0, "current_pose": "no_face", "yaw": None, "pitch": None}
@@ -163,15 +179,14 @@ class FaceRecognitionEngine:
 
     def extract_embedding(self, frame):
         """
-        Phan tich frame va trich xuat normed face embedding 512 chieu.
+        Phân tích frame và trích xuất embedding khuôn mặt đã chuẩn hóa 512 chiều.
 
         Tham so:
-            frame : numpy ndarray, BGR, kich thuoc bat ky (tu OpenCV).
+            frame: numpy ndarray BGR do OpenCV cung cấp.
 
         Tra ve:
-            (vector_bytes, embedding_np)
-              vector_bytes  : bytes float32, do dai 2048 byte (512 * 4)
-              embedding_np  : np.ndarray shape (512,), dtype float32
+            tuple: (vector_bytes, embedding_np), lần lượt là 2048 byte float32
+                little-endian và mảng numpy shape (512,), dtype float32.
 
         Raises:
             RuntimeError("Chua khoi tao engine")

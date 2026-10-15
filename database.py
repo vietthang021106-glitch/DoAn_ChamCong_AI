@@ -19,6 +19,7 @@ from datetime import date as _date
 # ============================================================
 
 def get_connection():
+    """Open a short-lived pyodbc connection to the legacy SQL Server database."""
     conn_str = (
         "Driver={ODBC Driver 17 for SQL Server};"
         "Server=localhost;"

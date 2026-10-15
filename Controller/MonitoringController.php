@@ -2,19 +2,23 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../Model/HealthModel.php';
+require_once __DIR__ . '/../Model/AlertModel.php';
 require_once __DIR__ . '/AuthController.php';
 
-final class HealthController
+final class MonitoringController
 {
     private const PAGE_SIZES = [5, 10, 20, 50];
 
     private HealthModel $health;
+    private AlertModel $alerts;
 
     public function __construct()
     {
         $this->health = new HealthModel();
+        $this->alerts = new AlertModel();
     }
 
+    /** Đọc dữ liệu sức khỏe/cảnh báo cùng bộ lọc và trang hiện tại cho màn hình Monitoring. */
     public function index(): void
     {
         AuthController::requireAdmin();
@@ -24,10 +28,10 @@ final class HealthController
             'to_date' => $this->queryText('to_date'),
             'employee_id' => null,
             'keyword' => $this->queryText('keyword'),
+            'category' => $this->queryText('category'),
         ];
         $errors = [];
         $this->validateDates($filters, $errors);
-
         if (strlen($filters['keyword']) > 400) {
             $filters['keyword'] = '';
             $errors['keyword'] = 'Từ khóa tối đa 100 ký tự.';
@@ -47,36 +51,65 @@ final class HealthController
         $pageSize = is_int($pageSizeInput) && in_array($pageSizeInput, self::PAGE_SIZES, true)
             ? $pageSizeInput
             : 20;
-        $pageInput = filter_var($this->queryText('page') ?: '1', FILTER_VALIDATE_INT);
-        $page = is_int($pageInput) && $pageInput > 0 && $pageInput <= 1000000 ? $pageInput : 1;
+        $healthPage = $this->pageNumber('health_page');
+        $alertPage = $this->pageNumber('alert_page');
+        $activeTab = $this->queryText('tab');
+        if (!in_array($activeTab, ['health', 'alerts'], true)) {
+            $activeTab = 'health';
+        }
 
-        $employees = $records = $chartData = [];
-        $totalRows = 0;
+        $employees = $categories = $healthRows = $alertRows = $chartData = [];
+        $totalHealthRows = $totalAlertRows = 0;
         $error = null;
+
         try {
             $employees = $this->health->findEmployees();
+            $categories = $this->alerts->findCategories();
             if ($filters['employee_id'] !== null && !$this->employeeExists($employees, $filters['employee_id'])) {
                 $filters['employee_id'] = null;
                 $errors['employee_id'] = 'Không tìm thấy nhân viên.';
             }
-            $result = $this->health->findHistory($filters, $page, $pageSize);
-            $totalRows = $result['total'];
-            $totalPages = max(1, (int)ceil($totalRows / $pageSize));
-            $page = min($page, $totalPages);
-            if ($page !== (int)($pageInput ?: 1)) {
-                $result = $this->health->findHistory($filters, $page, $pageSize);
+            if ($filters['category'] !== '' && !$this->categoryExists($categories, $filters['category'])) {
+                $filters['category'] = '';
+                $errors['category'] = 'Loại cảnh báo không hợp lệ.';
             }
-            $records = $result['records'];
-            $chartData = $this->health->findChartData(20);
+
+            $healthResult = $this->health->findHistory($filters, $healthPage, $pageSize);
+            $alertResult = $this->alerts->findAlerts($filters, $alertPage, $pageSize);
+            $totalHealthRows = $healthResult['total'];
+            $totalAlertRows = $alertResult['total'];
+            $totalHealthPages = max(1, (int)ceil($totalHealthRows / $pageSize));
+            $totalAlertPages = max(1, (int)ceil($totalAlertRows / $pageSize));
+            $healthPage = min($healthPage, $totalHealthPages);
+            $alertPage = min($alertPage, $totalAlertPages);
+
+            if ($healthPage !== $this->pageNumber('health_page')) {
+                $healthResult = $this->health->findHistory($filters, $healthPage, $pageSize);
+            }
+            if ($alertPage !== $this->pageNumber('alert_page')) {
+                $alertResult = $this->alerts->findAlerts($filters, $alertPage, $pageSize);
+            }
+
+            $healthRows = $healthResult['records'];
+            $alertRows = $alertResult['records'];
+            $chartData = $this->health->findChartData($filters, 20);
         } catch (Throwable $exception) {
-            error_log('Health page read failed: ' . $exception->getMessage());
+            error_log('Monitoring page read failed: ' . $exception->getMessage());
             http_response_code(500);
-            $error = 'Không thể tải dữ liệu sức khỏe. Vui lòng kiểm tra kết nối cơ sở dữ liệu.';
+            $error = 'Không thể tải dữ liệu sức khỏe và cảnh báo. Vui lòng kiểm tra kết nối cơ sở dữ liệu.';
         }
 
-        $totalPages = max(1, (int)ceil($totalRows / $pageSize));
-        $pageTitle = 'Sức khỏe nhân viên | Smart Attendance';
-        require __DIR__ . '/../View/health.php';
+        $totalHealthPages = max(1, (int)ceil($totalHealthRows / $pageSize));
+        $totalAlertPages = max(1, (int)ceil($totalAlertRows / $pageSize));
+        $pageTitle = 'Sức khỏe & Cảnh báo';
+        require __DIR__ . '/../View/monitoring.php';
+    }
+
+    private function pageNumber(string $key): int
+    {
+        $page = filter_var($this->queryText($key) ?: '1', FILTER_VALIDATE_INT);
+
+        return is_int($page) && $page > 0 && $page <= 1000000 ? $page : 1;
     }
 
     private function validateDates(array &$filters, array &$errors): void
@@ -114,6 +147,17 @@ final class HealthController
     {
         foreach ($employees as $employee) {
             if ((int)$employee['MaNV'] === $employeeId) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private function categoryExists(array $categories, string $category): bool
+    {
+        foreach ($categories as $item) {
+            if ((string)$item['LoaiCanhBao'] === $category) {
                 return true;
             }
         }

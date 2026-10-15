@@ -19,6 +19,7 @@ final class AttendanceController
         $this->camera = new CameraFrameClient();
     }
 
+    /** Lọc và phân trang dữ liệu chấm công theo ngày, nhân viên hoặc từ khóa. */
     public function index(): void
     {
         AuthController::requireAdmin();
@@ -111,10 +112,11 @@ final class AttendanceController
         }
 
         $isDaily = $fromDate === $toDate;
-        $pageTitle = 'Tra cứu chấm công | Smart Attendance';
+        $pageTitle = 'Chấm công';
         require __DIR__ . '/../View/attendance.php';
     }
 
+    /** Trả ảnh vào/ra của một bản ghi; chỉ Admin được truy cập và binary không lưu lại thành file. */
     public function sendEvidence(string $type): void
     {
         AuthController::requireAdmin();
@@ -154,6 +156,7 @@ final class AttendanceController
         echo $image;
     }
 
+    /** Xử lý API chấm công: đọc MaNV/MaTB, lấy ảnh từ camera nội bộ và giao nghiệp vụ cho service. */
     public function recordApi(): void
     {
         $data = json_decode((string)file_get_contents('php://input'), true);

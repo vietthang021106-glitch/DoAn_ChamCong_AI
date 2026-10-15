@@ -26,7 +26,6 @@ TABLE_ORDER = [
     "NhanVien",
     "TaiKhoan",
     "LichSuSucKhoe",
-    "ThongSoMoiTruong",
     "LichSuTrangThai",
     "PhanCaNhanVien",
     "ChamCong",
@@ -82,7 +81,7 @@ def load_source_metadata(cursor):
     if source_tables != expected_source_tables:
         raise RuntimeError(
             "Unexpected SQL Server table set; refusing migration. "
-            f"Expected 14 business tables and sysdiagrams, found {sorted(source_tables)}"
+            f"Expected 13 business tables and sysdiagrams; found {sorted(source_tables)}"
         )
 
     table_info = []

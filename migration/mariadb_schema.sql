@@ -26,6 +26,7 @@ CREATE TABLE `CaLamViec` (
     `TenCa` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NOT NULL,
     `GioBatDau` TIME NOT NULL,
     `GioKetThuc` TIME NOT NULL,
+    `TrangThai` TINYINT(1) NOT NULL DEFAULT 1,
     PRIMARY KEY (`MaCa`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
@@ -72,17 +73,6 @@ CREATE TABLE `LichSuSucKhoe` (
     PRIMARY KEY (`MaSK`),
     CONSTRAINT `FK__LichSuSucK__MaNV__5535A963`
         FOREIGN KEY (`MaNV`) REFERENCES `NhanVien` (`MaNV`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
-
-CREATE TABLE `ThongSoMoiTruong` (
-    `MaMT` INT NOT NULL AUTO_INCREMENT,
-    `NhietDo` DOUBLE NULL,
-    `DoAm` DOUBLE NULL,
-    `ThoiGian` DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3),
-    `MaTB` INT NULL,
-    PRIMARY KEY (`MaMT`),
-    CONSTRAINT `FK__ThongSoMoi__MaTB__59FA5E80`
-        FOREIGN KEY (`MaTB`) REFERENCES `ThietBi` (`MaTB`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
 CREATE TABLE `LichSuTrangThai` (
@@ -134,6 +124,7 @@ CREATE TABLE `FaceEmbedding` (
     `MaEmbedding` INT NOT NULL AUTO_INCREMENT,
     `MaNV` INT NOT NULL,
     `VectorData` LONGBLOB NOT NULL,
+    `AnhKhuonMat` LONGBLOB NULL,
     `SoChieu` INT NOT NULL DEFAULT 512,
     `ThoiGianTao` DATETIME(3) NULL DEFAULT CURRENT_TIMESTAMP(3),
     PRIMARY KEY (`MaEmbedding`),

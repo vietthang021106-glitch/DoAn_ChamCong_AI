@@ -34,6 +34,7 @@ final class AlertModel
         return $statement->fetchAll();
     }
 
+    /** Lấy cảnh báo cùng thông tin liên quan theo bộ lọc và trang yêu cầu. */
     public function findAlerts(array $filters, int $page, int $pageSize): array
     {
         $where = [];
@@ -50,6 +51,17 @@ final class AlertModel
         if ($filters['employee_id'] !== null) {
             $where[] = 'CB.MaNV = :employee_id';
             $params['employee_id'] = $filters['employee_id'];
+        }
+        if ($filters['keyword'] !== '') {
+            $where[] = "(
+                CAST(CB.MaNV AS CHAR) LIKE :employee_code
+                OR CONCAT('NV', LPAD(CB.MaNV, 3, '0')) LIKE :formatted_employee_code
+                OR NV.HoTen LIKE :employee_name
+            )";
+            $pattern = '%' . $filters['keyword'] . '%';
+            $params['employee_code'] = $pattern;
+            $params['formatted_employee_code'] = $pattern;
+            $params['employee_name'] = $pattern;
         }
         if ($filters['category'] !== '') {
             $where[] = self::ALERT_TYPE . ' = :category';

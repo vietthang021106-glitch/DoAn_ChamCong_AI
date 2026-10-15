@@ -9,6 +9,7 @@ EMBEDDING_DIMENSIONS = 512
 
 
 def normalize_embedding(value, dimensions=EMBEDDING_DIMENSIONS):
+    """Validate an embedding's shape and return its L2-normalized float32 vector."""
     vector = np.asarray(value, dtype=np.float32).reshape(-1)
     if vector.size != dimensions:
         raise ValueError(f"Expected {dimensions} dimensions, received {vector.size}.")
@@ -21,6 +22,7 @@ def normalize_embedding(value, dimensions=EMBEDDING_DIMENSIONS):
 
 
 def decode_stored_embedding(vector_data, dimensions):
+    """Decode a stored little-endian float32 vector after checking its dimension/size."""
     if int(dimensions or 0) != EMBEDDING_DIMENSIONS:
         raise ValueError(f"Unsupported stored embedding dimension: {dimensions}.")
     raw = bytes(vector_data)
@@ -31,6 +33,7 @@ def decode_stored_embedding(vector_data, dimensions):
 
 
 def cosine_similarity(first, second):
+    """Compute cosine similarity after normalizing both input vectors."""
     left = normalize_embedding(first)
     right = normalize_embedding(second)
     return float(np.clip(np.dot(left, right), -1.0, 1.0))
@@ -68,6 +71,11 @@ def _validate_threshold(threshold):
 
 
 def identify_embedding(probe, gallery, threshold):
+    """
+    Match a probe against every employee centroid and return the best threshold result.
+
+    A below-threshold best candidate is reported as UNKNOWN with no MaNV identity.
+    """
     threshold = _validate_threshold(threshold)
     if not gallery:
         return {
@@ -100,6 +108,7 @@ def identify_embedding(probe, gallery, threshold):
 
 
 def verify_embedding(probe, ma_nv, gallery, threshold):
+    """Perform 1:1 verification against one MaNV and the given threshold."""
     threshold = _validate_threshold(threshold)
     try:
         target_id = int(ma_nv)

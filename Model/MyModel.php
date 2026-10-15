@@ -5,6 +5,7 @@ require_once __DIR__ . '/Database.php';
 
 final class MyModel
 {
+    /** Đọc hồ sơ chỉ theo MaNV đã lấy từ session ở tầng Controller. */
     public function findProfile(int $employeeId): ?array
     {
         $statement = Database::getConnection()->prepare(<<<'SQL'
@@ -20,6 +21,7 @@ final class MyModel
         return $profile === false ? null : $profile;
     }
 
+    /** Lấy ca và chấm công của chính nhân viên trong session cho ngày hiện tại. */
     public function findToday(int $employeeId, string $date): array
     {
         $statement = Database::getConnection()->prepare(<<<'SQL'
@@ -79,6 +81,7 @@ final class MyModel
         return (int)$statement->fetchColumn();
     }
 
+    /** Truy vấn lịch sử chấm công của một MaNV, lọc ngày và phân trang. */
     public function findAttendanceHistory(
         int $employeeId,
         string $fromDate,
@@ -124,6 +127,7 @@ final class MyModel
         return $statement->fetchAll();
     }
 
+    /** Lấy lịch sử sức khỏe thuộc riêng một nhân viên. */
     public function findHealth(int $employeeId): array
     {
         $statement = Database::getConnection()->prepare(<<<'SQL'
@@ -138,6 +142,7 @@ final class MyModel
         return $statement->fetchAll();
     }
 
+    /** Lấy cảnh báo thuộc riêng một nhân viên cùng loại/trạng thái liên quan. */
     public function findAlerts(int $employeeId): array
     {
         $statement = Database::getConnection()->prepare(<<<'SQL'
@@ -158,6 +163,7 @@ final class MyModel
         return $statement->fetchAll();
     }
 
+    /** Trả ảnh bằng chứng chỉ khi MaCC thuộc đúng MaNV đã xác thực. */
     public function findOwnedEvidence(int $attendanceId, int $employeeId, string $type): ?string
     {
         $column = match ($type) {

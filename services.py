@@ -550,6 +550,7 @@ def fetch_attendance_history():
 # ============================================================
 
 def save_sensor_data(data):
+    """Validate MaNV/NhipTim/SpO2 rồi lưu bản ghi cảm biến qua data-access layer."""
     ma_nv    = data.get("MaNV")
     nhip_tim = data.get("NhipTim")
     spo2     = data.get("SpO2")
@@ -613,6 +614,11 @@ def save_state_log(ma_nv, trang_thai, gia_tri=None):
     """
     Lưu trạng thái AI.
     gia_tri nhận để tương thích với ai_engine.
+
+    Args:
+        ma_nv: Nhân viên đang được theo dõi; None thì không ghi.
+        trang_thai: Nhãn trạng thái hiện tại.
+        gia_tri: Giá trị tùy chọn giữ tương thích với caller cũ.
     """
     if ma_nv is None:
         return False
@@ -633,6 +639,12 @@ def save_alert(ma_nv, loai_canh_bao, mo_ta, gia_tri=None):
     Khi AI phát hiện buồn ngủ / gục đầu:
     1. Tạo LichSuTrangThai → lấy MaTT.
     2. Tạo CanhBao liên kết MaTT.
+
+    Args:
+        ma_nv: Mã nhân viên được xác định.
+        loai_canh_bao: Nhóm cảnh báo.
+        mo_ta: Nội dung cảnh báo.
+        gia_tri: Giá trị bổ sung tương thích với API nghiệp vụ.
     """
     if ma_nv is None:
         return False
@@ -1276,6 +1288,7 @@ def _extract_largest_face(frame):
 
 
 def identify_face_frame(frame, threshold=None):
+    """Identify from a BGR frame using the largest face and the cached SQL gallery."""
     resolved_threshold = _recognition_threshold(threshold)
     probe, error_result = _extract_largest_face(frame)
     if error_result:
@@ -1285,6 +1298,7 @@ def identify_face_frame(frame, threshold=None):
 
 
 def verify_face_frame(frame, ma_nv, threshold=None):
+    """Verify a BGR frame against one MaNV, selecting the largest detected face."""
     resolved_threshold = _recognition_threshold(threshold)
     probe, error_result = _extract_largest_face(frame)
     if error_result:

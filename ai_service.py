@@ -1,6 +1,7 @@
 """Loopback AI API; PHP remains the only owner of MariaDB access."""
 
 import base64
+import binascii
 import hashlib
 import json
 import os
@@ -25,6 +26,15 @@ FLASK_CAMERA_FRAME_URL = os.getenv(
 )
 EMBEDDING_DIMENSIONS = 512
 EMBEDDING_BYTES = EMBEDDING_DIMENSIONS * np.dtype("<f4").itemsize
+ENROLLMENT_POSES = ("frontal", "left", "right", "up", "down")
+POSE_LABELS = {
+    "frontal": "Nhìn thẳng",
+    "left": "Quay trái",
+    "right": "Quay phải",
+    "up": "Ngẩng lên",
+    "down": "Cúi xuống",
+}
+MAX_ENROLLMENT_IMAGE_BYTES = 5 * 1024 * 1024
 
 
 def _face_bbox_area(face):
@@ -63,6 +73,7 @@ class AIRuntime:
         self._gallery_error = None
 
     def initialize(self):
+        """Initialize buffalo_l and load the PHP-owned face gallery into RAM."""
         try:
             self.engine.initialize()
         except Exception as exc:
@@ -73,6 +84,7 @@ class AIRuntime:
             self._gallery_error = "Could not load gallery from PHP."
 
     def refresh_gallery(self):
+        """Fetch, validate, and replace the in-memory face gallery."""
         with urllib.request.urlopen(PHP_GALLERY_URL, timeout=10) as response:
             payload = response.read()
         document = json.loads(payload.decode("utf-8"))
@@ -140,6 +152,7 @@ class AIRuntime:
         return raw, frame
 
     def recognize_frame(self, frame):
+        """Recognize the largest face in a decoded BGR frame without writing attendance."""
         if not self.engine._initialized:
             raise RuntimeError("Face recognition model is unavailable.")
         with self._lock:
@@ -167,9 +180,160 @@ class AIRuntime:
             "message": "Nhận diện thành công" if result["match"] else "Không nhận diện được nhân viên",
         }
 
+    def inspect_enrollment_frame(self, frame, expected_pose):
+        """Validate face count and head pose for one guided-enrollment step."""
+        if not self.engine._initialized:
+            raise RuntimeError("Face recognition model is unavailable.")
+        faces = self.engine.detect_embeddings(frame)
+        if len(faces) > 1:
+            return {
+                "success": True,
+                "pose_ok": False,
+                "current_pose": "multiple_faces",
+                "expected_pose": expected_pose,
+                "instruction": "Chỉ để một người trong khung hình.",
+                "yaw": None,
+                "pitch": None,
+            }
+        return _pose_result(faces[0] if faces else None, expected_pose)
+
+    def capture_enrollment_sample(self, frame, jpeg, expected_pose):
+        """Return a validated pose's embedding and its exact JPEG frame as one sample."""
+        if not self.engine._initialized:
+            raise RuntimeError("Face recognition model is unavailable.")
+        faces = self.engine.detect_embeddings(frame)
+        if len(faces) > 1:
+            result = {
+                "success": False,
+                "pose_ok": False,
+                "current_pose": "multiple_faces",
+                "expected_pose": expected_pose,
+                "instruction": "Chỉ để một người trong khung hình.",
+                "yaw": None,
+                "pitch": None,
+            }
+            return result
+
+        pose = _pose_result(faces[0] if faces else None, expected_pose)
+        if not pose["pose_ok"]:
+            return {**pose, "success": False}
+
+        vector = faces[0].get("vector_bytes")
+        if not isinstance(vector, bytes) or len(vector) != EMBEDDING_BYTES:
+            raise RuntimeError("Face model returned an invalid 512D embedding.")
+
+        return {
+            **pose,
+            "success": True,
+            "so_chieu": EMBEDDING_DIMENSIONS,
+            "vector": base64.b64encode(vector).decode("ascii"),
+            "image_jpeg": base64.b64encode(jpeg).decode("ascii"),
+            "image_sha256": hashlib.sha256(jpeg).hexdigest(),
+        }
+
 
 runtime = AIRuntime()
 app = Flask(__name__)
+app.config["MAX_CONTENT_LENGTH"] = 7 * 1024 * 1024
+
+
+def _classify_head_pose(yaw, pitch):
+    if abs(yaw) <= 12 and abs(pitch) <= 12:
+        return "frontal"
+    if 15 <= yaw <= 40 and abs(pitch) <= 18:
+        return "left"
+    if -40 <= yaw <= -15 and abs(pitch) <= 18:
+        return "right"
+    if 12 <= pitch <= 35 and abs(yaw) <= 15:
+        return "up"
+    if -35 <= pitch <= -12 and abs(yaw) <= 15:
+        return "down"
+    return "between"
+
+
+def _decode_enrollment_image(encoded_image):
+    if not isinstance(encoded_image, str) or not encoded_image:
+        raise ValueError("Thiếu ảnh enrollment.")
+    try:
+        raw = base64.b64decode(encoded_image, validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise ValueError("Ảnh enrollment không hợp lệ.") from exc
+    if not raw or len(raw) > MAX_ENROLLMENT_IMAGE_BYTES:
+        raise ValueError("Ảnh enrollment vượt giới hạn 5 MB.")
+    if not raw.startswith(b"\xff\xd8") and not raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        raise ValueError("Chỉ chấp nhận ảnh JPEG hoặc PNG.")
+
+    frame = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
+    if frame is None:
+        raise ValueError("Không giải mã được ảnh enrollment.")
+    if frame.shape[0] * frame.shape[1] > 16_000_000:
+        raise ValueError("Kích thước ảnh enrollment quá lớn.")
+    if raw.startswith(b"\xff\xd8"):
+        jpeg = raw
+    else:
+        encoded, buffer = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 92])
+        if not encoded:
+            raise ValueError("Không thể chuẩn hóa ảnh thành JPEG.")
+        jpeg = buffer.tobytes()
+    return frame, jpeg
+
+
+def _pose_result(face, expected_pose):
+    if face is None:
+        return {
+            "success": True,
+            "pose_ok": False,
+            "current_pose": "no_face",
+            "expected_pose": expected_pose,
+            "instruction": "Đưa khuôn mặt vào giữa khung hình.",
+            "yaw": None,
+            "pitch": None,
+        }
+
+    pose = face.get("head_pose")
+    if not pose:
+        return {
+            "success": True,
+            "pose_ok": False,
+            "current_pose": "unknown",
+            "expected_pose": expected_pose,
+            "instruction": "Không ước lượng được hướng đầu; nhìn rõ camera.",
+            "yaw": None,
+            "pitch": None,
+        }
+
+    yaw, pitch = float(pose["yaw"]), float(pose["pitch"])
+    current_pose = _classify_head_pose(yaw, pitch)
+    pose_ok = current_pose == expected_pose
+    if pose_ok:
+        instruction = "Đúng hướng, giữ yên."
+    elif expected_pose == "frontal":
+        instruction = "Nhìn thẳng camera và giữ đầu cân bằng."
+    elif current_pose == "frontal":
+        instruction = f"{POSE_LABELS[expected_pose]} thêm."
+    else:
+        instruction = f"Đang hướng {POSE_LABELS.get(current_pose, 'chưa đúng')}; {POSE_LABELS[expected_pose].lower()} thêm."
+
+    return {
+        "success": True,
+        "pose_ok": pose_ok,
+        "current_pose": current_pose,
+        "expected_pose": expected_pose,
+        "instruction": instruction,
+        "yaw": yaw,
+        "pitch": pitch,
+    }
+
+
+def _read_enrollment_request():
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        raise ValueError("Body JSON không hợp lệ.")
+    expected_pose = payload.get("expected_pose")
+    if expected_pose not in ENROLLMENT_POSES:
+        raise ValueError("Pose enrollment không hợp lệ.")
+    frame, jpeg = _decode_enrollment_image(payload.get("image"))
+    return frame, jpeg, expected_pose
 
 
 @app.before_request
@@ -217,6 +381,29 @@ def recognize():
             "score": None,
             "message": "AI service hoặc camera chưa sẵn sàng.",
         }), 503
+
+
+@app.post("/api/ai/enrollment/inspect")
+def inspect_enrollment():
+    try:
+        frame, _, expected_pose = _read_enrollment_request()
+        return jsonify(runtime.inspect_enrollment_frame(frame, expected_pose))
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    except Exception:
+        return jsonify({"success": False, "message": "AI service hoặc model chưa sẵn sàng."}), 503
+
+
+@app.post("/api/ai/enrollment/capture")
+def capture_enrollment():
+    try:
+        frame, jpeg, expected_pose = _read_enrollment_request()
+        result = runtime.capture_enrollment_sample(frame, jpeg, expected_pose)
+        return jsonify(result), 200 if result["success"] else 409
+    except ValueError as exc:
+        return jsonify({"success": False, "message": str(exc)}), 400
+    except Exception:
+        return jsonify({"success": False, "message": "AI service hoặc model chưa sẵn sàng."}), 503
 
 
 def main():

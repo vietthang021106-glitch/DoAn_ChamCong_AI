@@ -80,12 +80,17 @@ DoAn_ChamCong_AI/
 │   ├── css/app.css
 │   └── js/ui.js
 │
-├── test_api.py
-├── test_enrollment.py
-├── test_flow.py
-├── test_image_flow.py
-├── seed_accounts.py
-└── update_db.py
+├── tests/
+│   ├── test_api.py
+│   ├── test_enrollment.py
+│   ├── test_face_ai1.py
+│   ├── test_flow.py
+│   └── test_image_flow.py
+└── tools/
+    ├── evaluate_face_recognition.py
+    ├── gen_index.py
+    ├── seed_accounts.py
+    └── update_db.py
 ```
 
 Vai trò:
@@ -98,7 +103,7 @@ Vai trò:
 - `index.html`: Dashboard Admin dạng SPA sections.
 - `employees.html`: giao diện quản lý nhân viên cũ/riêng.
 - `me.html`: trang dành cho nhân viên.
-- `test_api.py`: hiện chủ yếu test auth/RBAC, không còn coi là ESP32 simulator chính.
+- `tests/test_api.py`: hiện chủ yếu test auth/RBAC, không còn coi là ESP32 simulator chính.
 
 Không dùng `flask_out.txt` như source of truth.
 
@@ -624,7 +629,7 @@ Không coi MAX30102 là cảm biến đo huyết áp trực tiếp.
 
 Nếu sau này dùng AI ước lượng huyết áp thì phải gọi là "ước lượng", không phải đo y tế chính xác.
 
-`test_api.py` hiện tại kiểm tra login/RBAC API, không nên mặc định xem nó là simulator ESP32.
+`tests/test_api.py` hiện tại kiểm tra login/RBAC API, không nên mặc định xem nó là simulator ESP32.
 
 ---
 

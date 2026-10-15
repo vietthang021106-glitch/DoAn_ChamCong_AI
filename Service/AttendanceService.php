@@ -12,6 +12,10 @@ final class AttendanceService
         $this->attendance = new AttendanceModel();
     }
 
+    /**
+     * Áp dụng nghiệp vụ check-in/check-out cho nhân viên, ca và thiết bị đã xác định.
+     * Transaction ngoài (nếu có) được giữ quyền sở hữu; nếu không, service tự quản lý.
+     */
     public function process(int $employeeId, int $deviceId, ?string $image): array
     {
         $pdo = Database::getConnection();

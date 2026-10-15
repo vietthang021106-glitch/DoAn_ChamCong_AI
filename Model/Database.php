@@ -5,6 +5,7 @@ final class Database
 {
     private static ?PDO $connection = null;
 
+    /** Tạo hoặc trả về kết nối PDO dùng chung tới MariaDB của ứng dụng PHP. */
     public static function getConnection(): PDO
     {
         if (self::$connection !== null) {

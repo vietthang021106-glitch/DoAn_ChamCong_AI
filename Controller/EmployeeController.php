@@ -2,41 +2,36 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../Model/EmployeeModel.php';
+require_once __DIR__ . '/../Model/FaceEmbeddingModel.php';
+require_once __DIR__ . '/../Model/AccountModel.php';
 require_once __DIR__ . '/../Controller/AuthController.php';
 require_once __DIR__ . '/../Security/CsrfToken.php';
 
 final class EmployeeController
 {
     private EmployeeModel $employees;
+    private FaceEmbeddingModel $faceEmbeddings;
+    private AccountModel $accounts;
 
     public function __construct()
     {
         $this->employees = new EmployeeModel();
+        $this->faceEmbeddings = new FaceEmbeddingModel();
+        $this->accounts = new AccountModel();
     }
 
+    /** Đọc danh sách nhân viên và tổng hợp trạng thái tài khoản/khuôn mặt cho trang quản trị. */
     public function index(): void
     {
         AuthController::requireAdmin();
 
         $employees = [];
         $error = null;
-        $stats = [
-            'total' => 0,
-            'registered' => 0,
-            'not_registered' => 0,
-        ];
         $successMessage = $_SESSION['employee_success'] ?? null;
         unset($_SESSION['employee_success']);
 
         try {
             $employees = $this->employees->findAll();
-            $stats['total'] = count($employees);
-            foreach ($employees as $employee) {
-                if ((int)$employee['FaceRegistered'] === 1) {
-                    $stats['registered']++;
-                }
-            }
-            $stats['not_registered'] = $stats['total'] - $stats['registered'];
         } catch (Throwable $exception) {
             error_log('Employee page read failed: ' . $exception->getMessage());
             http_response_code(500);
@@ -57,6 +52,10 @@ final class EmployeeController
         }
     }
 
+    /**
+     * Tạo nhân viên cùng tài khoản đăng nhập sau khi kiểm tra quyền, CSRF và dữ liệu.
+     * EmployeeModel thực hiện hai thao tác ghi trong cùng transaction.
+     */
     public function store(): void
     {
         AuthController::requireAdmin();
@@ -66,20 +65,35 @@ final class EmployeeController
             exit('Yêu cầu không hợp lệ. Vui lòng tải lại trang và thử lại.');
         }
 
-        $values = $this->submittedValues();
+        $values = $this->submittedValues(false);
 
         try {
-            $errors = $this->validateValues($values);
+            $errors = $this->validateValues($values, null, false);
             if ($errors !== []) {
                 http_response_code(422);
                 $this->renderForm('create', null, $this->employees->findRoles(), $values, $errors);
                 return;
             }
 
-            $employeeId = $this->employees->create($values['HoTen'], $values['MaVaiTro']);
+            $passwordHash = password_hash($values['Password'], PASSWORD_DEFAULT);
+            if (!is_string($passwordHash)) {
+                throw new RuntimeException('Password hashing failed.');
+            }
+            $employeeId = $this->employees->createWithAccount(
+                $values['HoTen'],
+                $values['MaVaiTro'],
+                $values['TenDangNhap'],
+                $passwordHash
+            );
             $_SESSION['employee_success'] = 'Đã thêm nhân viên NV' . str_pad((string)$employeeId, 3, '0', STR_PAD_LEFT) . '.';
             $this->redirectToList();
         } catch (Throwable $exception) {
+            if ($this->isUsernameConflict($exception)) {
+                http_response_code(422);
+                $errors = ['TenDangNhap' => 'Tên đăng nhập đã được sử dụng.'];
+                $this->renderForm('create', null, $this->employees->findRoles(), $values, $errors);
+                return;
+            }
             $this->handleFailure('Employee create failed', $exception);
         }
     }
@@ -101,6 +115,10 @@ final class EmployeeController
         }
     }
 
+    /**
+     * Cập nhật thông tin nhân viên và tài khoản; mật khẩu chỉ đổi khi có mật khẩu mới.
+     * Model bảo đảm thay đổi nhân viên/tài khoản được commit hoặc rollback cùng nhau.
+     */
     public function update(int $employeeId): void
     {
         AuthController::requireAdmin();
@@ -110,7 +128,7 @@ final class EmployeeController
             exit('Yêu cầu không hợp lệ. Vui lòng tải lại trang và thử lại.');
         }
 
-        $values = $this->submittedValues();
+        $values = $this->submittedValues(true);
 
         try {
             $employee = $this->employees->findById($employeeId);
@@ -119,17 +137,37 @@ final class EmployeeController
                 return;
             }
 
-            $errors = $this->validateValues($values);
+            $hasAccount = (int)$employee['HasAccount'] === 1;
+            $errors = $this->validateValues($values, $employeeId, $hasAccount);
             if ($errors !== []) {
                 http_response_code(422);
                 $this->renderForm('edit', $employee, $this->employees->findRoles(), $values, $errors);
                 return;
             }
 
-            $this->employees->update($employeeId, $values['HoTen'], $values['MaVaiTro']);
+            $passwordHash = $values['Password'] === ''
+                ? null
+                : password_hash($values['Password'], PASSWORD_DEFAULT);
+            if ($values['Password'] !== '' && !is_string($passwordHash)) {
+                throw new RuntimeException('Password hashing failed.');
+            }
+            $this->employees->updateWithAccount(
+                $employeeId,
+                $values['HoTen'],
+                $values['MaVaiTro'],
+                $values['TenDangNhap'],
+                $passwordHash
+            );
             $_SESSION['employee_success'] = 'Đã cập nhật nhân viên NV' . str_pad((string)$employeeId, 3, '0', STR_PAD_LEFT) . '.';
             $this->redirectToList();
         } catch (Throwable $exception) {
+            if ($this->isUsernameConflict($exception)) {
+                http_response_code(422);
+                $employee = $this->employees->findById($employeeId);
+                $errors = ['TenDangNhap' => 'Tên đăng nhập đã được sử dụng.'];
+                $this->renderForm('edit', $employee, $this->employees->findRoles(), $values, $errors);
+                return;
+            }
             $this->handleFailure('Employee update failed', $exception);
         }
     }
@@ -151,19 +189,27 @@ final class EmployeeController
         return (int)$employeeId;
     }
 
-    private function submittedValues(): array
+    private function submittedValues(bool $isEdit): array
     {
         return [
-            'HoTen' => trim((string)($_POST['HoTen'] ?? '')),
+            'HoTen' => trim($this->postString('HoTen')),
+            'TenDangNhap' => trim($this->postString('TenDangNhap')),
+            'Password' => $this->postString($isEdit ? 'NewPassword' : 'MatKhau'),
+            'ConfirmPassword' => $this->postString('ConfirmPassword'),
             'MaVaiTro' => filter_var(
-                $_POST['MaVaiTro'] ?? null,
+                $this->postString('MaVaiTro'),
                 FILTER_VALIDATE_INT,
                 ['options' => ['min_range' => 1]]
             ),
         ];
     }
 
-    private function validateValues(array $values): array
+    private function postString(string $key): string
+    {
+        return is_string($_POST[$key] ?? null) ? $_POST[$key] : '';
+    }
+
+    private function validateValues(array $values, ?int $employeeId, bool $hasAccount): array
     {
         $errors = [];
         $name = $values['HoTen'];
@@ -182,7 +228,46 @@ final class EmployeeController
             $errors['MaVaiTro'] = 'Vui lòng chọn vai trò hợp lệ.';
         }
 
+        $username = $values['TenDangNhap'];
+        $usernameLength = preg_match_all('/./us', $username, $matches);
+        $password = $values['Password'];
+        $confirmation = $values['ConfirmPassword'];
+        $accountTouched = $username !== '' || $password !== '' || $confirmation !== '';
+        $accountRequired = $employeeId === null || $hasAccount || $accountTouched;
+
+        if ($accountRequired && $username === '') {
+            $errors['TenDangNhap'] = 'Vui lòng nhập tên đăng nhập.';
+        } elseif ($username !== '' && ($usernameLength === false || $usernameLength > 50)) {
+            $errors['TenDangNhap'] = 'Tên đăng nhập không được vượt quá 50 ký tự.';
+        } elseif ($username !== '' && !preg_match('/^[A-Za-z0-9._]+$/', $username)) {
+            $errors['TenDangNhap'] = 'Chỉ dùng chữ cái không dấu, số, dấu chấm và gạch dưới.';
+        } elseif ($username !== '' && $this->accounts->usernameExists($username, $employeeId)) {
+            $errors['TenDangNhap'] = 'Tên đăng nhập đã được sử dụng.';
+        }
+
+        if ($accountRequired && !$hasAccount && $password === '') {
+            $errors['Password'] = 'Vui lòng tạo mật khẩu cho tài khoản.';
+        } elseif ($password !== '' && $this->characterLength($password) < 6) {
+            $errors['Password'] = 'Mật khẩu phải có ít nhất 6 ký tự.';
+        }
+        if ($password !== $confirmation) {
+            $errors['ConfirmPassword'] = 'Xác nhận mật khẩu không khớp.';
+        }
+
         return $errors;
+    }
+
+    private function isUsernameConflict(Throwable $exception): bool
+    {
+        return $exception instanceof PDOException
+            && (int)($exception->errorInfo[1] ?? 0) === 1062;
+    }
+
+    private function characterLength(string $value): int
+    {
+        $length = preg_match_all('/./us', $value, $matches);
+
+        return $length === false ? 0 : $length;
     }
 
     private function renderForm(
@@ -193,6 +278,9 @@ final class EmployeeController
         array $errors = []
     ): void {
         $csrfToken = CsrfToken::token();
+        $faceSamples = $mode === 'edit' && $employee !== null
+            ? $this->faceEmbeddings->findByEmployee((int)$employee['MaNV'])
+            : [];
         require __DIR__ . '/../View/employee_form.php';
     }
 

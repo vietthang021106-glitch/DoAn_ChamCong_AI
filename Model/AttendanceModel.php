@@ -14,6 +14,7 @@ final class AttendanceModel
             SQL)->fetchAll();
     }
 
+    /** Lấy trạng thái từng nhân viên trong ngày, gồm ca và cờ có ảnh bằng chứng. */
     public function findDaily(
         string $date,
         ?int $employeeId = null,
@@ -72,6 +73,7 @@ final class AttendanceModel
         return (int)$statement->fetchColumn();
     }
 
+    /** Tìm lịch sử trong khoảng ngày và phân trang trực tiếp tại MariaDB. */
     public function findHistory(
         string $fromDate,
         string $toDate,
@@ -137,6 +139,7 @@ final class AttendanceModel
         return (int)$statement->fetchColumn();
     }
 
+    /** Lấy blob ảnh vào/ra; loại không hợp lệ hoặc ảnh NULL trả null. */
     public function findEvidence(int $attendanceId, string $type): ?string
     {
         $column = match ($type) {
@@ -202,6 +205,7 @@ final class AttendanceModel
         return $record === false ? null : $record;
     }
 
+    /** Tạo bản ghi check-in và trả MaCC mới; ảnh JPEG được lưu dạng LOB nếu có. */
     public function insertCheckin(int $employeeId, int $deviceId, int $shiftId, ?string $image): int
     {
         $statement = Database::getConnection()->prepare(<<<'SQL'
@@ -217,6 +221,7 @@ final class AttendanceModel
         return (int)Database::getConnection()->lastInsertId();
     }
 
+    /** Ghi giờ checkout và ảnh ra cho đúng MaCC. */
     public function updateCheckout(int $attendanceId, ?string $image): void
     {
         $statement = Database::getConnection()->prepare(<<<'SQL'

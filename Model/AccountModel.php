@@ -40,6 +40,7 @@ except Exception:
     sys.exit(2)
 PYTHON;
 
+    /** Xác thực credential hiện có và trả thông tin session-safe, không trả mật khẩu. */
     public function authenticate(string $username, string $password): ?array
     {
         $statement = Database::getConnection()->prepare(<<<'SQL'
@@ -72,6 +73,67 @@ PYTHON;
             'ma_vai_tro' => (int)$account['RoleId'],
             'role' => (string)$account['RoleName'],
         ];
+    }
+
+    public function usernameExists(string $username, ?int $exceptEmployeeId = null): bool
+    {
+        $sql = 'SELECT 1 FROM TaiKhoan WHERE TenDangNhap = :username';
+        $params = ['username' => $username];
+        if ($exceptEmployeeId !== null) {
+            $sql .= ' AND MaNV <> :employee_id';
+            $params['employee_id'] = $exceptEmployeeId;
+        }
+        $sql .= ' LIMIT 1';
+        $statement = Database::getConnection()->prepare($sql);
+        $statement->execute($params);
+
+        return $statement->fetchColumn() !== false;
+    }
+
+    /** Lấy username và mã tài khoản liên kết với nhân viên, không đọc password. */
+    public function findByEmployeeId(int $employeeId): ?array
+    {
+        $statement = Database::getConnection()->prepare(<<<'SQL'
+            SELECT MaTK, MaNV, TenDangNhap
+            FROM TaiKhoan
+            WHERE MaNV = :employee_id
+            ORDER BY MaTK
+            LIMIT 1
+            SQL);
+        $statement->execute(['employee_id' => $employeeId]);
+        $account = $statement->fetch();
+
+        return $account === false ? null : $account;
+    }
+
+    /** Chèn tài khoản đã hash cho nhân viên trong transaction do caller quản lý. */
+    public function createForEmployee(int $employeeId, string $username, string $passwordHash): void
+    {
+        $statement = Database::getConnection()->prepare(<<<'SQL'
+            INSERT INTO TaiKhoan (MaNV, TenDangNhap, MatKhau)
+            VALUES (:employee_id, :username, :password)
+            SQL);
+        $statement->execute([
+            'employee_id' => $employeeId,
+            'username' => $username,
+            'password' => $passwordHash,
+        ]);
+    }
+
+    /** Cập nhật username và chỉ thay password khi hash mới được truyền vào. */
+    public function updateForEmployee(
+        int $employeeId,
+        string $username,
+        ?string $passwordHash
+    ): void {
+        $sql = 'UPDATE TaiKhoan SET TenDangNhap = :username';
+        $params = ['username' => $username, 'employee_id' => $employeeId];
+        if ($passwordHash !== null) {
+            $sql .= ', MatKhau = :password';
+            $params['password'] = $passwordHash;
+        }
+        $sql .= ' WHERE MaNV = :employee_id ORDER BY MaTK LIMIT 1';
+        Database::getConnection()->prepare($sql)->execute($params);
     }
 
     private function passwordMatches(string $password, string $storedPassword): bool

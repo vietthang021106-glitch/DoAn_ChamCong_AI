@@ -13,6 +13,7 @@ final class DashboardController
         $this->dashboard = new DashboardModel();
     }
 
+    /** Kiểm tra quyền Admin, đọc dữ liệu tổng quan và render dashboard. */
     public function index(): void
     {
         AuthController::requireAdmin();
@@ -31,12 +32,9 @@ final class DashboardController
                 'date' => $today,
                 'summary' => [
                     'total_employees' => 0,
-                    'face_embeddings' => 0,
                     'face_registered' => 0,
-                    'face_missing' => 0,
                     'assigned_today' => 0,
                     'checked_in' => 0,
-                    'on_time' => 0,
                     'working' => 0,
                     'late' => 0,
                     'early' => 0,
@@ -44,13 +42,11 @@ final class DashboardController
                 ],
                 'attendance' => [],
                 'weekly' => [],
-                'environment' => null,
-                'health' => ['latest' => null, 'today_count' => 0],
                 'alerts' => [],
             ];
         }
 
-        $pageTitle = 'Tổng quan | Smart Attendance';
+        $pageTitle = 'Tổng quan';
         require __DIR__ . '/../View/dashboard.php';
     }
 }

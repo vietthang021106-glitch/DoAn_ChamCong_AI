@@ -16,6 +16,7 @@ final class MyController
         $this->my = new MyModel();
     }
 
+    /** Tải profile và dữ liệu self-service theo MaNV trong session hiện tại. */
     public function index(): void
     {
         AuthController::requireAuthenticated();
@@ -35,6 +36,10 @@ final class MyController
 
         $fromDate = $this->queryText('from_date');
         $toDate = $this->queryText('to_date');
+        $activeTab = $this->queryText('tab');
+        if (!in_array($activeTab, ['today', 'history', 'monitoring'], true)) {
+            $activeTab = 'today';
+        }
         $pageInput = $this->queryText('page') ?: '1';
         $page = filter_var($pageInput, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 1000000]]);
         $page = is_int($page) ? $page : 1;
@@ -104,10 +109,11 @@ final class MyController
         $today['statuses'] = $todayStatuses;
         $today['summary'] = $this->aggregateStatus($todayStatuses, $today['shift'] !== null, $today['attendance']);
         $totalPages = max(1, (int)ceil($totalRows / self::PAGE_SIZE));
-        $pageTitle = 'Trang của tôi | Smart Attendance';
+        $pageTitle = 'Trang của tôi';
         require __DIR__ . '/../View/my.php';
     }
 
+    /** Trả ảnh chấm công chỉ sau khi xác nhận bản ghi thuộc MaNV trong session. */
     public function sendEvidence(string $type): void
     {
         AuthController::requireAuthenticated();
@@ -202,7 +208,7 @@ final class MyController
             'display_name' => (string)($_SESSION['display_name'] ?? ''),
             'role' => (string)($_SESSION['role'] ?? ''),
         ];
-        $pageTitle = 'Không đủ quyền | Smart Attendance';
+        $pageTitle = 'Không đủ quyền';
         require __DIR__ . '/../View/forbidden.php';
         exit;
     }

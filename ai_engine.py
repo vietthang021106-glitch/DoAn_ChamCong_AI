@@ -227,6 +227,9 @@ class DrowsinessDetector:
             alert_info:
                 Thông tin cảnh báo nếu vừa
                 phát hiện cảnh báo mới.
+
+        Hàm chỉ phân tích/vẽ frame; việc ghi trạng thái và cảnh báo phụ thuộc nhân viên
+        đang active cùng các khoảng cooldown đã cấu hình.
         """
 
         img_h, img_w = frame.shape[:2]
@@ -521,6 +524,8 @@ class DrowsinessDetector:
 
         1. Đã xác định được nhân viên.
         2. Đã hết cooldown của loại cảnh báo đó.
+
+        Việc ghi DB chạy trong background thread để không chặn luồng xử lý camera.
         """
 
         # ------------------------------------------------------

@@ -48,7 +48,7 @@ function integerOrNull($value): ?int
 
 $allowedTables = [
     'VaiTro', 'ThietBi', 'CaLamViec', 'DanhMucBieuHien', 'LoaiCanhBao',
-    'NhanVien', 'TaiKhoan', 'LichSuSucKhoe', 'ThongSoMoiTruong',
+    'NhanVien', 'TaiKhoan', 'LichSuSucKhoe',
     'LichSuTrangThai', 'PhanCaNhanVien', 'ChamCong', 'FaceEmbedding', 'CanhBao',
 ];
 $pdo = null;
@@ -78,7 +78,7 @@ try {
     $tables = $header['tables'];
     $receivedNames = array_column($tables, 'name');
     if ($receivedNames !== $allowedTables) {
-        throw new RuntimeException('Source table list or dependency order is not the approved 14-table list.');
+        throw new RuntimeException('Source table list or dependency order is not the approved 13-table list.');
     }
 
     $databaseTables = $pdo->query(
@@ -90,7 +90,7 @@ try {
     sort($databaseTables, SORT_STRING);
     sort($expectedNames, SORT_STRING);
     if ($databaseTables !== $expectedNames) {
-        throw new RuntimeException('MariaDB destination must contain exactly the 14 business tables and no sysdiagrams.');
+        throw new RuntimeException('MariaDB destination must contain exactly the 13 business tables and no sysdiagrams.');
     }
 
     foreach ($tables as $tableInfo) {

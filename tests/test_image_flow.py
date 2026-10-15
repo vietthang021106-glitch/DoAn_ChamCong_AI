@@ -7,6 +7,9 @@ Test: database.insert_checkin / update_checkout với AnhVao / AnhRa.
 
 import sys
 from datetime import date
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 # ── Bước 0: import database & services ──────────────────────────────────────
 try:

@@ -20,6 +20,10 @@ final class AuthController
         $this->renderLogin();
     }
 
+    /**
+     * Xác thực thông tin đăng nhập, tạo session mới và điều hướng theo vai trò.
+     * CSRF được kiểm tra trước khi truy vấn tài khoản; mật khẩu không lưu trong session.
+     */
     public function login(): void
     {
         if (!CsrfToken::isValid()) {
@@ -73,6 +77,7 @@ final class AuthController
         exit;
     }
 
+    /** Hủy session/cookie sau khi xác minh CSRF và đưa người dùng về trang đăng nhập. */
     public function logout(): void
     {
         if (!CsrfToken::isValid()) {
@@ -99,6 +104,7 @@ final class AuthController
         exit;
     }
 
+    /** Chặn request chưa đăng nhập hoặc không có MaVaiTro admin bằng kiểm tra phía server. */
     public static function requireAdmin(): void
     {
         if (!isset($_SESSION['user_id'])) {
@@ -112,12 +118,13 @@ final class AuthController
                 'display_name' => (string)($_SESSION['display_name'] ?? ''),
                 'role' => (string)($_SESSION['role'] ?? ''),
             ];
-            $pageTitle = 'Không đủ quyền | Smart Attendance';
+            $pageTitle = 'Không đủ quyền';
             require __DIR__ . '/../View/forbidden.php';
             exit;
         }
     }
 
+    /** Yêu cầu session đã xác thực; nếu chưa có thì chuyển về form đăng nhập. */
     public static function requireAuthenticated(): void
     {
         if (!isset($_SESSION['user_id'])) {
@@ -133,7 +140,7 @@ final class AuthController
             'display_name' => (string)($_SESSION['display_name'] ?? ''),
             'role' => (string)($_SESSION['role'] ?? ''),
         ] : null;
-        $pageTitle = 'Đăng nhập | Smart Attendance';
+        $pageTitle = 'Đăng nhập';
         require __DIR__ . '/../View/login.php';
     }
 }

@@ -11,18 +11,9 @@ $paginationQuery = [
 $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($paginationQuery + ['page' => $targetPage]);
 ?>
 <main class="page-container">
-    <section class="page-heading" aria-labelledby="page-title">
-        <div>
-            <p class="eyebrow">Chấm công</p>
-            <h1 id="page-title">Tra cứu chấm công</h1>
-            <p class="page-description">Xem trạng thái theo ngày hoặc lịch sử trong khoảng thời gian.</p>
-        </div>
-    </section>
-
-    <section class="form-panel filter-panel" aria-label="Bộ lọc chấm công">
-        <form class="employee-form" method="get" action="/">
+    <section class="workspace" aria-label="Tra cứu chấm công">
+        <form class="workspace-filters attendance-workspace-filters" method="get" action="/">
             <input type="hidden" name="action" value="attendance">
-            <input type="hidden" name="limit" value="<?= (int)$limit ?>">
             <div class="filter-grid attendance-filter-grid">
                 <div class="form-field">
                     <label for="attendance-from">Từ ngày</label>
@@ -52,26 +43,23 @@ $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($pagina
                     <input id="attendance-keyword" type="search" name="keyword" value="<?= htmlspecialchars($keyword, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?>" maxlength="100" placeholder="Tìm MaNV hoặc HoTen">
                     <?php if (isset($errors['keyword'])): ?><p class="field-error"><?= htmlspecialchars($errors['keyword'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p><?php endif; ?>
                 </div>
+                <div class="form-field">
+                    <label for="attendance-limit">Số dòng</label>
+                    <select id="attendance-limit" name="limit"><?php foreach ([10, 20, 50, 100] as $size): ?><option value="<?= $size ?>" <?= $limit === $size ? 'selected' : '' ?>><?= $size ?></option><?php endforeach; ?></select>
+                </div>
             </div>
             <?php if (isset($errors['date_range'])): ?><p class="field-error" role="alert"><?= htmlspecialchars($errors['date_range'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p><?php endif; ?>
-            <div class="form-actions filter-actions">
-                <button class="button button--primary" type="submit">Lọc dữ liệu</button>
-                <a class="button button--secondary" href="/?action=attendance">Hôm nay</a>
+            <div class="workspace-filter-actions">
+                <button class="button button--primary button--small" type="submit">Lọc</button>
+                <a class="text-action" href="/?action=attendance">Hôm nay</a>
             </div>
         </form>
-    </section>
 
     <?php if ($error !== null): ?>
         <div class="notice notice--error" role="alert"><?= htmlspecialchars($error, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
     <?php endif; ?>
 
-    <section class="employee-section" aria-labelledby="attendance-list-title">
-        <div class="section-heading">
-            <div>
-                <h2 id="attendance-list-title"><?= $isDaily ? 'Chấm công ngày ' . htmlspecialchars($fromDate, ENT_QUOTES, 'UTF-8') : 'Lịch sử chấm công' ?></h2>
-                <p class="section-description"><?= (int)$totalRows ?> kết quả · Trang <?= (int)$page ?>/<?= (int)$totalPages ?></p>
-            </div>
-        </div>
+    <div class="workspace-table">
         <?php if ($errors === [] && $error === null && $attendanceRows === []): ?>
             <div class="empty-state">Không có dữ liệu chấm công phù hợp.</div>
         <?php elseif ($attendanceRows !== []): ?>
@@ -79,26 +67,54 @@ $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($pagina
                 <table class="employee-table data-table attendance-table">
                     <caption class="visually-hidden">Trạng thái chấm công và ảnh bằng chứng</caption>
                     <thead><tr>
-                        <?php if (!$isDaily): ?><th>Ngày</th><?php endif; ?>
-                        <th>Mã nhân viên</th><th>Họ tên</th><th>Ca</th><th>Giờ vào</th><th>Giờ ra</th><th>Trạng thái vào</th><th>Trạng thái ra</th><th>Ảnh</th>
+                        <th>Ngày</th><th>Mã NV</th><th>Họ tên</th><th>Ca</th>
+                        <th>Giờ vào</th><th>Ảnh vào</th><th>Giờ ra</th><th>Ảnh ra</th>
+                        <th>Trạng thái vào</th><th>Trạng thái ra</th>
                     </tr></thead>
                     <tbody>
                     <?php foreach ($attendanceRows as $row): ?>
-                        <?php $id = (int)$row['MaNV']; ?>
+                        <?php
+                        $id = (int)$row['MaNV'];
+                        $employeeCode = 'NV' . str_pad((string)$id, 3, '0', STR_PAD_LEFT);
+                        $employeeName = (string)($row['HoTen'] ?? '');
+                        $evidencePerson = $employeeName;
+                        $evidenceCode = $employeeCode;
+                        $evidenceAttendanceId = isset($row['MaCC']) ? (int)$row['MaCC'] : null;
+                        $h = static fn(mixed $value): string => htmlspecialchars((string)($value ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
+                        ?>
                         <tr>
-                            <?php if (!$isDaily): ?><td><?= htmlspecialchars((string)$row['Ngay'], ENT_QUOTES, 'UTF-8') ?></td><?php endif; ?>
-                            <td><span class="employee-code">NV<?= str_pad((string)$id, 3, '0', STR_PAD_LEFT) ?></span></td>
-                            <td><?= htmlspecialchars((string)($row['HoTen'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
+                            <td><?= htmlspecialchars((string)($row['Ngay'] ?? $fromDate), ENT_QUOTES, 'UTF-8') ?></td>
+                            <td><span class="employee-code"><?= $h($employeeCode) ?></span></td>
+                            <td><?= $h($employeeName) ?></td>
                             <td><?= htmlspecialchars((string)($row['TenCa'] ?? '--') ?: '--', ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
                             <td><?= $row['GioVao'] ? htmlspecialchars((new DateTimeImmutable((string)$row['GioVao']))->format('H:i:s'), ENT_QUOTES, 'UTF-8') : '--' ?></td>
+                            <td class="evidence-cell">
+                                <?php
+                                $evidenceAction = '/?action=attendance_image_in';
+                                $evidenceKind = 'Ảnh vào';
+                                $evidenceTime = !empty($row['GioVao']) ? (new DateTimeImmutable((string)$row['GioVao']))->format('d/m/Y H:i:s') : '';
+                                if ((int)$row['HasImageIn'] === 1) {
+                                    require __DIR__ . '/partials/evidence_thumbnail.php';
+                                } else {
+                                    echo '<span class="evidence-empty">--</span>';
+                                }
+                                ?>
+                            </td>
                             <td><?= $row['GioRa'] ? htmlspecialchars((new DateTimeImmutable((string)$row['GioRa']))->format('H:i:s'), ENT_QUOTES, 'UTF-8') : '--' ?></td>
+                            <td class="evidence-cell">
+                                <?php
+                                $evidenceAction = '/?action=attendance_image_out';
+                                $evidenceKind = 'Ảnh ra';
+                                $evidenceTime = !empty($row['GioRa']) ? (new DateTimeImmutable((string)$row['GioRa']))->format('d/m/Y H:i:s') : '';
+                                if ((int)$row['HasImageOut'] === 1) {
+                                    require __DIR__ . '/partials/evidence_thumbnail.php';
+                                } else {
+                                    echo '<span class="evidence-empty">--</span>';
+                                }
+                                ?>
+                            </td>
                             <td><?= htmlspecialchars((string)$row['TrangThaiVao'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
                             <td><?= htmlspecialchars((string)$row['TrangThaiRa'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></td>
-                            <td class="evidence-cell">
-                                <?php if ((int)$row['HasImageIn'] === 1 && !empty($row['MaCC'])): ?><a href="/?action=attendance_image_in&amp;id=<?= (int)$row['MaCC'] ?>" target="_blank" rel="noopener">Xem ảnh vào</a><?php endif; ?>
-                                <?php if ((int)$row['HasImageOut'] === 1 && !empty($row['MaCC'])): ?><a href="/?action=attendance_image_out&amp;id=<?= (int)$row['MaCC'] ?>" target="_blank" rel="noopener">Xem ảnh ra</a><?php endif; ?>
-                                <?php if ((int)$row['HasImageIn'] !== 1 && (int)$row['HasImageOut'] !== 1): ?>--<?php endif; ?>
-                            </td>
                         </tr>
                     <?php endforeach; ?>
                     </tbody>
@@ -120,6 +136,9 @@ $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($pagina
                 </nav>
             <?php endif; ?>
         <?php endif; ?>
+    </div>
     </section>
 </main>
+<?php require __DIR__ . '/partials/evidence_lightbox.php'; ?>
+<script src="/public/js/evidence_lightbox.js" defer></script>
 <?php require __DIR__ . '/layout/footer.php'; ?>

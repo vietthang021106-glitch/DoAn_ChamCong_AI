@@ -1,9 +1,7 @@
 <?php require __DIR__ . '/layout/header.php'; ?>
 <main class="auth-container">
     <section class="form-panel auth-panel" aria-labelledby="login-title">
-        <p class="eyebrow">Smart Attendance</p>
         <h1 id="login-title">Đăng nhập</h1>
-        <p class="page-description">Đăng nhập bằng tài khoản đã được cấp.</p>
 
         <?php if ($loginError !== null): ?>
             <div class="notice notice--error" role="alert"><?= htmlspecialchars($loginError, ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></div>
