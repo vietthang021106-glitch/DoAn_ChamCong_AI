@@ -19,7 +19,6 @@
                 <a href="/?action=shifts" <?= $activeAction === 'shifts' ? 'aria-current="page"' : '' ?>>Phân ca</a>
                 <a href="/?action=attendance" <?= $activeAction === 'attendance' ? 'aria-current="page"' : '' ?>>Chấm công</a>
                 <a href="/?action=monitoring" <?= $activeAction === 'monitoring' ? 'aria-current="page"' : '' ?>>Sức khỏe &amp; Cảnh báo</a>
-                <a href="/?action=devices" <?= $activeAction === 'devices' ? 'aria-current="page"' : '' ?>>Thiết bị</a>
             </nav>
         <?php elseif ((int)($_SESSION['ma_vai_tro'] ?? 0) === 2): ?>
             <nav class="topbar-nav" aria-label="Trang cá nhân">

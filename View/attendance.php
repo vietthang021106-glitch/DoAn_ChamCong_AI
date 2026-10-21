@@ -1,4 +1,5 @@
 <?php require __DIR__ . '/layout/header.php'; ?>
+<?php if ($activeTab === 'attendance'): ?>
 <?php
 $paginationQuery = [
     'action' => 'attendance',
@@ -10,8 +11,16 @@ $paginationQuery = [
 ];
 $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($paginationQuery + ['page' => $targetPage]);
 ?>
+<?php endif; ?>
 <main class="page-container">
     <section class="workspace" aria-label="Tra cứu chấm công">
+        <nav class="workspace-tabs" aria-label="Các mục chấm công">
+            <a href="/?action=attendance" <?= $activeTab === 'attendance' ? 'aria-current="page"' : '' ?>>Chấm công</a>
+            <a href="/?action=attendance&amp;tab=scan_history" <?= $activeTab === 'scan_history' ? 'aria-current="page"' : '' ?>>Lịch sử quét thất bại</a>
+        </nav>
+        <?php if ($activeTab === 'scan_history'): ?>
+            <?php require __DIR__ . '/partials/scan_history.php'; ?>
+        <?php else: ?>
         <form class="workspace-filters attendance-workspace-filters" method="get" action="/">
             <input type="hidden" name="action" value="attendance">
             <div class="filter-grid attendance-filter-grid">
@@ -137,6 +146,7 @@ $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($pagina
             <?php endif; ?>
         <?php endif; ?>
     </div>
+        <?php endif; ?>
     </section>
 </main>
 <?php require __DIR__ . '/partials/evidence_lightbox.php'; ?>

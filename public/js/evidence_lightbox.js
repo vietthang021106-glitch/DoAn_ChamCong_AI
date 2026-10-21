@@ -13,9 +13,9 @@
         if (!button) return;
 
         image.src = button.dataset.evidenceSrc || '';
-        title.textContent = button.dataset.evidencePerson || 'Nhân viên';
+        title.textContent = button.dataset.evidenceTitle || button.dataset.evidencePerson || 'Nhân viên';
         kind.textContent = button.dataset.evidenceKind || 'Ảnh bằng chứng';
-        meta.textContent = [button.dataset.evidenceCode, button.dataset.evidenceTime]
+        meta.textContent = [button.dataset.evidenceCode, button.dataset.evidenceTime, button.dataset.evidenceDetail]
             .filter(Boolean)
             .join(' · ');
         dialog.showModal();

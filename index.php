@@ -27,7 +27,6 @@ require_once __DIR__ . '/Controller/AttendanceController.php';
 require_once __DIR__ . '/Controller/AiController.php';
 require_once __DIR__ . '/Controller/MonitoringController.php';
 require_once __DIR__ . '/Controller/MyController.php';
-require_once __DIR__ . '/Controller/DeviceController.php';
 require_once __DIR__ . '/Controller/FaceEnrollmentController.php';
 
 $authController = new AuthController();
@@ -38,7 +37,6 @@ $attendanceController = new AttendanceController();
 $aiController = new AiController();
 $monitoringController = new MonitoringController();
 $myController = new MyController();
-$deviceController = new DeviceController();
 $faceEnrollmentController = new FaceEnrollmentController();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $action = $_GET['action'] ?? 'index';
@@ -51,6 +49,12 @@ if ($requestPath === '/api/chamcong') {
         exit('Method Not Allowed');
     }
     $attendanceController->recordApi();
+    return;
+}
+
+if ($method === 'GET' && !isset($_GET['action'])
+    && isset($_SESSION['user_id']) && (int)($_SESSION['ma_vai_tro'] ?? 0) === 2) {
+    header('Location: /?action=my', true, 302);
     return;
 }
 
@@ -109,16 +113,6 @@ $faceEnrollmentActions = [
 ];
 if (isset($faceEnrollmentActions[$action]) && $method === 'POST') {
     $faceEnrollmentController->{$faceEnrollmentActions[$action]}();
-    return;
-}
-
-if ($action === 'devices' && $method === 'GET') {
-    $deviceController->index();
-    return;
-}
-
-if ($action === 'ai_camera' && $method === 'GET') {
-    header('Location: /?action=devices', true, 302);
     return;
 }
 
@@ -212,6 +206,11 @@ if ($action === 'attendance' && $method === 'GET') {
     return;
 }
 
+if ($action === 'scan_history_image' && $method === 'GET') {
+    $attendanceController->sendScanHistoryImage();
+    return;
+}
+
 if ($action === 'monitoring' && $method === 'GET') {
     $monitoringController->index();
     return;
@@ -251,11 +250,11 @@ if ($action === 'attendance_image_out' && $method === 'GET') {
     return;
 }
 
-if (in_array($action, ['index', 'dashboard', 'create', 'store', 'edit', 'update', 'login', 'logout', 'shifts', 'assign_shift', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift', 'attendance', 'health', 'alerts', 'monitoring', 'attendance_image_in', 'attendance_image_out', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'internal_face_gallery', 'ai_camera', 'devices', 'face_image', 'face_camera_frame', ...array_keys($faceEnrollmentActions)], true)) {
+if (in_array($action, ['index', 'dashboard', 'create', 'store', 'edit', 'update', 'login', 'logout', 'shifts', 'assign_shift', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift', 'attendance', 'scan_history_image', 'health', 'alerts', 'monitoring', 'attendance_image_in', 'attendance_image_out', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'internal_face_gallery', 'face_image', 'face_camera_frame', ...array_keys($faceEnrollmentActions)], true)) {
     $allowedMethods = match ($action) {
         'login' => 'GET, POST',
         'store', 'update', 'logout', 'assign_shift', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift' => 'POST',
-        'internal_face_gallery', 'ai_camera', 'devices', 'face_image', 'face_camera_frame', 'attendance_image_in', 'attendance_image_out', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'health', 'alerts', 'monitoring' => 'GET',
+        'internal_face_gallery', 'face_image', 'face_camera_frame', 'attendance_image_in', 'attendance_image_out', 'scan_history_image', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'health', 'alerts', 'monitoring' => 'GET',
         default => isset($faceEnrollmentActions[$action]) ? 'POST' : 'GET',
     };
     header('Allow: ' . $allowedMethods);

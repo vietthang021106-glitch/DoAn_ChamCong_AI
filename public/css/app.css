@@ -640,6 +640,10 @@ h2 {
     min-width: 1060px;
 }
 
+.scan-history-table {
+    min-width: 900px;
+}
+
 .evidence-cell span {
     display: inline-block;
     margin-right: 6px;
@@ -1230,25 +1234,6 @@ h2 {
     border-top: 1px solid var(--border-soft);
 }
 
-.device-camera-placeholder {
-    margin: 0;
-    padding: 22px 18px;
-    background: transparent;
-    border: 0;
-    border-top: 1px solid var(--border-soft);
-    border-radius: 0;
-    text-align: left;
-}
-
-.device-camera-placeholder h2 {
-    font-size: 14px;
-}
-
-.device-camera-placeholder p {
-    margin: 0;
-    color: var(--muted);
-}
-
 .form-page-heading {
     margin-bottom: 14px;
 }
@@ -1792,10 +1777,6 @@ h2 {
 @media (max-width: 680px) {
     .employee-form-grid {
         grid-template-columns: 1fr;
-    }
-
-    .device-camera-placeholder {
-        min-height: 240px;
     }
 
     .face-management-heading {

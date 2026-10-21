@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../Model/AttendanceModel.php';
+require_once __DIR__ . '/../Model/ScanHistoryModel.php';
 require_once __DIR__ . '/AuthController.php';
 require_once __DIR__ . '/../Service/AttendanceService.php';
 require_once __DIR__ . '/../Service/CameraFrameClient.php';
@@ -9,12 +10,14 @@ require_once __DIR__ . '/../Service/CameraFrameClient.php';
 final class AttendanceController
 {
     private AttendanceModel $attendance;
+    private ScanHistoryModel $scanHistory;
     private AttendanceService $service;
     private CameraFrameClient $camera;
 
     public function __construct()
     {
         $this->attendance = new AttendanceModel();
+        $this->scanHistory = new ScanHistoryModel();
         $this->service = new AttendanceService();
         $this->camera = new CameraFrameClient();
     }
@@ -23,6 +26,16 @@ final class AttendanceController
     public function index(): void
     {
         AuthController::requireAdmin();
+
+        $activeTab = (string)($_GET['tab'] ?? 'attendance');
+        if ($activeTab === 'scan_history') {
+            $this->scanHistoryIndex();
+            return;
+        }
+        if ($activeTab !== 'attendance') {
+            http_response_code(404);
+            return;
+        }
 
         $today = (new DateTimeImmutable('now', new DateTimeZone('Asia/Ho_Chi_Minh')))->format('Y-m-d');
         $fromDate = trim((string)($_GET['from_date'] ?? $today));
@@ -116,6 +129,86 @@ final class AttendanceController
         require __DIR__ . '/../View/attendance.php';
     }
 
+    /** Filter and render the administrator-only rejected-scan history. */
+    private function scanHistoryIndex(): void
+    {
+        $date = trim((string)($_GET['date'] ?? ''));
+        $employeeId = null;
+        $deviceId = null;
+        $reason = trim((string)($_GET['reason'] ?? ''));
+        $errors = [];
+        $scanRows = [];
+        $error = null;
+        $page = filter_var($_GET['page'] ?? 1, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $limit = filter_var($_GET['limit'] ?? 20, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 100]]);
+        $page = is_int($page) ? $page : 1;
+        $limit = is_int($limit) ? $limit : 20;
+
+        if (filter_var($_GET['page'] ?? 1, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]) === false) {
+            $errors['page'] = 'Trang không hợp lệ.';
+        }
+        if (filter_var($_GET['limit'] ?? 20, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 100]]) === false) {
+            $errors['limit'] = 'Số dòng mỗi trang không hợp lệ.';
+        }
+        if ($date !== '' && !$this->isValidDate($date)) {
+            $errors['date'] = 'Ngày không hợp lệ.';
+        }
+        foreach (['employee_id', 'device_id'] as $queryKey) {
+            $rawId = trim((string)($_GET[$queryKey] ?? ''));
+            if ($rawId === '') {
+                continue;
+            }
+            $parsedId = filter_var($rawId, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+            if (!is_int($parsedId)) {
+                $errors[$queryKey] = 'Giá trị bộ lọc không hợp lệ.';
+                continue;
+            }
+            if ($queryKey === 'employee_id') {
+                $employeeId = $parsedId;
+            } else {
+                $deviceId = $parsedId;
+            }
+        }
+        $reasonLabels = [];
+
+        $filters = [
+            'date' => $date === '' ? null : $date,
+            'employee_id' => $employeeId,
+            'device_id' => $deviceId,
+            'reason' => $reason === '' ? null : $reason,
+        ];
+        $employees = [];
+        $devices = [];
+        $totalRows = 0;
+        $totalPages = 1;
+        if ($errors !== []) {
+            http_response_code(422);
+        }
+        try {
+            $reasonLabels = $this->scanHistory->reasonLabels();
+            if ($reason !== '' && !array_key_exists($reason, $reasonLabels)) {
+                $errors['reason'] = 'Lý do quét không hợp lệ.';
+                http_response_code(422);
+            }
+            $employees = $this->attendance->findEmployees();
+            $devices = $this->scanHistory->findDevices();
+            if ($errors === []) {
+                $totalRows = $this->scanHistory->countFiltered($filters);
+                $totalPages = max(1, (int)ceil($totalRows / $limit));
+                $page = min($page, $totalPages);
+                $scanRows = $this->scanHistory->findPaginated($filters, $limit, ($page - 1) * $limit);
+            }
+        } catch (Throwable $exception) {
+            error_log('Scan history page read failed: ' . $exception->getMessage());
+            http_response_code(500);
+            $error = 'Không thể tải lịch sử quét. Vui lòng kiểm tra kết nối cơ sở dữ liệu.';
+        }
+
+        $activeTab = 'scan_history';
+        $pageTitle = 'Lịch sử quét thất bại';
+        require __DIR__ . '/../View/attendance.php';
+    }
+
     /** Trả ảnh vào/ra của một bản ghi; chỉ Admin được truy cập và binary không lưu lại thành file. */
     public function sendEvidence(string $type): void
     {
@@ -150,6 +243,35 @@ final class AttendanceController
         }
 
         header('Content-Type: ' . $mimeType);
+        header('Content-Length: ' . strlen($image));
+        header('Cache-Control: private, no-store');
+        header('X-Content-Type-Options: nosniff');
+        echo $image;
+    }
+
+    /** Return a scan JPEG only to Admin; raw image bytes never enter HTML. */
+    public function sendScanHistoryImage(): void
+    {
+        AuthController::requireAdmin();
+        $scanId = filter_var($_GET['id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if (!is_int($scanId)) {
+            http_response_code(404);
+            exit('Không tìm thấy ảnh lần quét.');
+        }
+
+        try {
+            $image = $this->scanHistory->findImageById($scanId);
+        } catch (Throwable $exception) {
+            error_log('Scan history image read failed: ' . $exception->getMessage());
+            http_response_code(500);
+            exit('Không thể tải ảnh lần quét.');
+        }
+        if ($image === null) {
+            http_response_code(404);
+            exit('Không tìm thấy ảnh lần quét.');
+        }
+
+        header('Content-Type: image/jpeg');
         header('Content-Length: ' . strlen($image));
         header('Cache-Control: private, no-store');
         header('X-Content-Type-Options: nosniff');

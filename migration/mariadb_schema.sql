@@ -1,6 +1,8 @@
--- Empty MariaDB schema derived from SQL Server metadata for DoAn_ChamCong_AI.
--- This file contains DDL only; it does not copy or seed any rows.
+-- MariaDB application schema; only the fixed scan-reason catalog is seeded.
+-- No employee, attendance, or AI data is copied or seeded.
 -- MariaDB 10.4 accepts DESC index syntax but does not implement descending indexes.
+
+SET NAMES utf8mb4;
 
 CREATE DATABASE IF NOT EXISTS `DoAn_ChamCong_AI_MariaDB`
     CHARACTER SET utf8mb4
@@ -117,6 +119,60 @@ CREATE TABLE `ChamCong` (
     CONSTRAINT `FK__ChamCong__MaTB__5441852A`
         FOREIGN KEY (`MaTB`) REFERENCES `ThietBi` (`MaTB`),
     CONSTRAINT `FK_ChamCong_CaLamViec`
+        FOREIGN KEY (`MaCa`) REFERENCES `CaLamViec` (`MaCa`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE `LoaiLyDoQuet` (
+    `MaLyDo` INT NOT NULL AUTO_INCREMENT,
+    `MaCode` VARCHAR(50) NOT NULL,
+    `TenLyDo` VARCHAR(100) NOT NULL,
+    `MoTa` VARCHAR(255) NULL,
+    `TrangThai` TINYINT(1) NOT NULL DEFAULT 1,
+    PRIMARY KEY (`MaLyDo`),
+    UNIQUE KEY `UQ_LoaiLyDoQuet_MaCode` (`MaCode`)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+INSERT INTO `LoaiLyDoQuet` (`MaCode`, `TenLyDo`, `MoTa`)
+SELECT seed.MaCode, seed.TenLyDo, seed.MoTa
+FROM (
+    SELECT 'KHONG_NHAN_DIEN' AS MaCode, 'Không nhận diện được' AS TenLyDo,
+        'Không xác định được nhân viên từ khuôn mặt quét.' AS MoTa
+    UNION ALL SELECT 'NHIEU_KHUON_MAT', 'Có nhiều khuôn mặt',
+        'Phát hiện nhiều khuôn mặt nên không xác định được một nhân viên duy nhất.'
+    UNION ALL SELECT 'KHONG_CO_PHAN_CA', 'Không có phân ca',
+        'Nhân viên đã được xác định nhưng không có phân ca trong ngày.'
+    UNION ALL SELECT 'CA_DA_KET_THUC', 'Ca đã kết thúc',
+        'Lần quét xảy ra khi ca làm việc đã kết thúc.'
+    UNION ALL SELECT 'DA_HOAN_THANH', 'Đã hoàn thành chấm công',
+        'Nhân viên đã có đủ giờ vào và giờ ra.'
+) AS seed
+LEFT JOIN LoaiLyDoQuet existing ON existing.MaCode = seed.MaCode
+WHERE existing.MaLyDo IS NULL;
+
+CREATE TABLE `LichSuQuet` (
+    `MaLanQuet` INT NOT NULL AUTO_INCREMENT,
+    `MaNV` INT NULL,
+    `MaTB` INT NULL,
+    `MaCa` INT NULL,
+    `MaLyDo` INT NOT NULL,
+    `ThoiGianQuet` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    `AnhQuet` LONGBLOB NOT NULL,
+    `SoKhuonMat` TINYINT UNSIGNED NULL,
+    `DoTinCay` DECIMAL(5,4) NULL,
+    `ChiTiet` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
+    PRIMARY KEY (`MaLanQuet`),
+    KEY `IX_LichSuQuet_ThoiGian` (`ThoiGianQuet`),
+    KEY `IX_LichSuQuet_NhanVien_ThoiGian` (`MaNV`, `ThoiGianQuet`),
+    KEY `IX_LichSuQuet_MaLyDo` (`MaLyDo`),
+    KEY `IX_LichSuQuet_ThietBi_MaLyDo_ThoiGian` (`MaTB`, `MaLyDo`, `ThoiGianQuet`),
+    CONSTRAINT `FK_LichSuQuet_LoaiLyDoQuet`
+        FOREIGN KEY (`MaLyDo`) REFERENCES `LoaiLyDoQuet` (`MaLyDo`)
+        ON UPDATE RESTRICT ON DELETE RESTRICT,
+    CONSTRAINT `FK_LichSuQuet_NhanVien`
+        FOREIGN KEY (`MaNV`) REFERENCES `NhanVien` (`MaNV`),
+    CONSTRAINT `FK_LichSuQuet_ThietBi`
+        FOREIGN KEY (`MaTB`) REFERENCES `ThietBi` (`MaTB`),
+    CONSTRAINT `FK_LichSuQuet_CaLamViec`
         FOREIGN KEY (`MaCa`) REFERENCES `CaLamViec` (`MaCa`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
