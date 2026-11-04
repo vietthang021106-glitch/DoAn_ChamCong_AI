@@ -6,6 +6,7 @@ import numpy as np
 
 
 EMBEDDING_DIMENSIONS = 512
+ENROLLMENT_IDENTITY_THRESHOLD = 0.45
 
 
 def normalize_embedding(value, dimensions=EMBEDDING_DIMENSIONS):
@@ -39,8 +40,17 @@ def cosine_similarity(first, second):
     return float(np.clip(np.dot(left, right), -1.0, 1.0))
 
 
+def max_sample_similarity(probe, samples):
+    """Return the highest cosine score across one person's original samples."""
+    if not samples:
+        raise ValueError("At least one face sample is required.")
+    probe_vector = normalize_embedding(probe)
+    return max(float(np.clip(np.dot(probe_vector, normalize_embedding(sample)), -1.0, 1.0))
+               for sample in samples)
+
+
 def aggregate_gallery(rows):
-    """Decode FaceEmbedding rows and make one normalized centroid per employee."""
+    """Keep every valid FaceEmbedding sample for multi-sample matching."""
     grouped = defaultdict(list)
     names = {}
     invalid_rows = []
@@ -48,15 +58,20 @@ def aggregate_gallery(rows):
     for row in rows:
         embedding_id, ma_nv, vector_data, dimensions, ho_ten = row
         try:
-            grouped[int(ma_nv)].append(decode_stored_embedding(vector_data, dimensions))
-            names[int(ma_nv)] = str(ho_ten or "")
+            employee_id = int(ma_nv)
+            vector = decode_stored_embedding(vector_data, dimensions)
+            name = str(ho_ten or "")
+            if employee_id in names and names[employee_id] != name:
+                raise ValueError("Inconsistent employee name in face gallery.")
+            grouped[employee_id].append(vector)
+            names[employee_id] = name
         except (TypeError, ValueError, OverflowError) as exc:
             invalid_rows.append({"MaEmbedding": embedding_id, "error": str(exc)})
 
-    gallery = {}
-    for ma_nv, vectors in grouped.items():
-        centroid = normalize_embedding(np.mean(np.stack(vectors), axis=0))
-        gallery[ma_nv] = {"HoTen": names[ma_nv], "embedding": centroid}
+    gallery = {
+        ma_nv: {"HoTen": names[ma_nv], "embeddings": tuple(vectors), "n_samples": len(vectors)}
+        for ma_nv, vectors in grouped.items()
+    }
     return gallery, invalid_rows
 
 
@@ -72,11 +87,12 @@ def _validate_threshold(threshold):
 
 def identify_embedding(probe, gallery, threshold):
     """
-    Match a probe against every employee centroid and return the best threshold result.
+    Match a probe against every enrolled sample and return the best person.
 
     A below-threshold best candidate is reported as UNKNOWN with no MaNV identity.
     """
     threshold = _validate_threshold(threshold)
+    probe_vector = normalize_embedding(probe)
     if not gallery:
         return {
             "status": "UNKNOWN",
@@ -90,10 +106,17 @@ def identify_embedding(probe, gallery, threshold):
     best_ma_nv = None
     best_score = -1.0
     for ma_nv, person in gallery.items():
-        score = cosine_similarity(probe, person["embedding"])
+        samples = person["embeddings"]
+        if not samples:
+            continue
+        score = max_sample_similarity(probe_vector, samples)
         if score > best_score:
             best_ma_nv = ma_nv
             best_score = score
+
+    if best_ma_nv is None:
+        return {"status": "UNKNOWN", "match": False, "MaNV": None,
+                "HoTen": "UNKNOWN", "similarity": None, "threshold": threshold}
 
     matched = best_score >= threshold
     person = gallery[best_ma_nv]
@@ -108,15 +131,16 @@ def identify_embedding(probe, gallery, threshold):
 
 
 def verify_embedding(probe, ma_nv, gallery, threshold):
-    """Perform 1:1 verification against one MaNV and the given threshold."""
+    """Verify against the best of a MaNV's enrollment samples."""
     threshold = _validate_threshold(threshold)
+    probe_vector = normalize_embedding(probe)
     try:
         target_id = int(ma_nv)
     except (TypeError, ValueError) as exc:
         raise ValueError("MaNV must be an integer.") from exc
 
     target = gallery.get(target_id)
-    if target is None:
+    if target is None or not target["embeddings"]:
         return {
             "status": "NOT_ENROLLED",
             "match": False,
@@ -127,7 +151,7 @@ def verify_embedding(probe, ma_nv, gallery, threshold):
             "threshold": threshold,
         }
 
-    score = cosine_similarity(probe, target["embedding"])
+    score = max_sample_similarity(probe_vector, target["embeddings"])
     matched = score >= threshold
     return {
         "status": "MATCH" if matched else "NO_MATCH",

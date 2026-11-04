@@ -2,12 +2,27 @@
 
 import time
 
+import cv2
 import numpy as np
 
 import face_engine as production_face_engine
 import face_matching
 
-from .config import EMBEDDING_DIMENSIONS
+from .config import (
+    EMBEDDING_DIMENSIONS,
+    ENROLLMENT_CENTER_TOLERANCE,
+    ENROLLMENT_EDGE_MARGIN_RATIO,
+    ENROLLMENT_MAX_SIZE_RATIO,
+    POSE_FRONTAL_PITCH_MAX_DEG,
+    POSE_FRONTAL_YAW_MAX_DEG,
+    POSE_ENROLLMENT_HYSTERESIS_DEG,
+    POSE_SIDE_PITCH_MAX_DEG,
+    POSE_SIDE_YAW_MAX_DEG,
+    POSE_SIDE_YAW_MIN_DEG,
+    POSE_VERTICAL_PITCH_MAX_DEG,
+    POSE_VERTICAL_PITCH_MIN_DEG,
+    POSE_VERTICAL_YAW_MAX_DEG,
+)
 
 
 def initialize_ai1():
@@ -21,22 +36,175 @@ def classify_pose(face):
     if not pose:
         return "unknown"
     try:
-        import ai_service
-
-        return ai_service._classify_head_pose(float(pose["yaw"]), float(pose["pitch"]))
-    except (ImportError, AttributeError):
         yaw, pitch = float(pose["yaw"]), float(pose["pitch"])
-        if abs(yaw) <= 12 and abs(pitch) <= 12:
-            return "frontal"
-        if 15 <= yaw <= 40 and abs(pitch) <= 18:
-            return "left"
-        if -40 <= yaw <= -15 and abs(pitch) <= 18:
-            return "right"
-        if 12 <= pitch <= 35 and abs(yaw) <= 15:
-            return "up"
-        if -35 <= pitch <= -12 and abs(yaw) <= 15:
-            return "down"
-        return "between"
+    except (KeyError, TypeError, ValueError):
+        return "unknown"
+    if not np.isfinite(yaw) or not np.isfinite(pitch):
+        return "unknown"
+
+    yaw_abs, pitch_abs = abs(yaw), abs(pitch)
+    if yaw_abs <= POSE_FRONTAL_YAW_MAX_DEG and pitch_abs <= POSE_FRONTAL_PITCH_MAX_DEG:
+        return "frontal"
+    # Positive yaw is the person's left and negative yaw is their right in the
+    # existing solvePnP convention (verified against the current AI1 pose tests).
+    if (POSE_SIDE_YAW_MIN_DEG <= yaw <= POSE_SIDE_YAW_MAX_DEG
+            and pitch_abs <= POSE_SIDE_PITCH_MAX_DEG):
+        return "left"
+    if (-POSE_SIDE_YAW_MAX_DEG <= yaw <= -POSE_SIDE_YAW_MIN_DEG
+            and pitch_abs <= POSE_SIDE_PITCH_MAX_DEG):
+        return "right"
+    if (POSE_VERTICAL_PITCH_MIN_DEG <= pitch <= POSE_VERTICAL_PITCH_MAX_DEG
+            and yaw_abs <= POSE_VERTICAL_YAW_MAX_DEG):
+        return "up"
+    if (-POSE_VERTICAL_PITCH_MAX_DEG <= pitch <= -POSE_VERTICAL_PITCH_MIN_DEG
+            and yaw_abs <= POSE_VERTICAL_YAW_MAX_DEG):
+        return "down"
+    return "between"
+
+
+def classify_enrollment_pose(face, expected_pose):
+    """Apply a small expected-pose hysteresis band to absorb solvePnP jitter."""
+    current = classify_pose(face)
+    if current == expected_pose or expected_pose not in {"frontal", "left", "right", "up", "down"}:
+        return current
+    pose = face.get("head_pose") if isinstance(face, dict) else None
+    if not pose:
+        return current
+    try:
+        yaw, pitch = float(pose["yaw"]), float(pose["pitch"])
+    except (KeyError, TypeError, ValueError):
+        return current
+    if not np.isfinite(yaw) or not np.isfinite(pitch):
+        return current
+
+    margin = POSE_ENROLLMENT_HYSTERESIS_DEG
+    yaw_abs, pitch_abs = abs(yaw), abs(pitch)
+    if (expected_pose == "frontal"
+            and yaw_abs <= POSE_FRONTAL_YAW_MAX_DEG + margin
+            and pitch_abs <= POSE_FRONTAL_PITCH_MAX_DEG + margin):
+        return "frontal"
+    if (expected_pose == "left"
+            and max(0.0, POSE_SIDE_YAW_MIN_DEG - margin) <= yaw <= POSE_SIDE_YAW_MAX_DEG + margin
+            and pitch_abs <= POSE_SIDE_PITCH_MAX_DEG + margin):
+        return "left"
+    if (expected_pose == "right"
+            and -POSE_SIDE_YAW_MAX_DEG - margin <= yaw <= -max(0.0, POSE_SIDE_YAW_MIN_DEG - margin)
+            and pitch_abs <= POSE_SIDE_PITCH_MAX_DEG + margin):
+        return "right"
+    if (expected_pose == "up"
+            and max(0.0, POSE_VERTICAL_PITCH_MIN_DEG - margin) <= pitch <= POSE_VERTICAL_PITCH_MAX_DEG + margin
+            and yaw_abs <= POSE_VERTICAL_YAW_MAX_DEG + margin):
+        return "up"
+    if (expected_pose == "down"
+            and -POSE_VERTICAL_PITCH_MAX_DEG - margin <= pitch <= -max(0.0, POSE_VERTICAL_PITCH_MIN_DEG - margin)
+            and yaw_abs <= POSE_VERTICAL_YAW_MAX_DEG + margin):
+        return "down"
+    return current
+
+
+def _quality_failure_code(quality, face):
+    if face and float(face.get("detection_score", 0.0)) < production_face_engine.ENROLLMENT_MIN_SCORE:
+        return "LOW DETECTION SCORE"
+    message = str(quality.get("instruction", "")).lower()
+    if "quá xa" in message:
+        return "FACE TOO SMALL"
+    if "quá gần" in message:
+        return "FACE TOO LARGE"
+    if "toàn bộ" in message or "cắt" in message:
+        return "FACE CROPPED"
+    if "mép khung" in message:
+        return "FACE TOO CLOSE TO EDGE"
+    if "ánh sáng" in message:
+        return "BAD LIGHTING"
+    if "nét" in message or "chưa rõ" in message:
+        return "TOO BLURRY"
+    if "trung tâm" in message or "giữa" in message or "khung hình" in message:
+        return "FACE POSITION"
+    return "QUALITY CHECK"
+
+
+def enrollment_debug_metrics(frame, face, expected_pose, quality=None, face_count=None):
+    """Collect per-frame UI diagnostics without logging biometric embeddings."""
+    quality = quality if isinstance(quality, dict) else {}
+    diagnostics = {
+        "detection_score": None,
+        "bbox": None,
+        "bbox_width_frame_ratio": None,
+        "bbox_height_frame_ratio": None,
+        "center_offset_x_px": None,
+        "center_offset_y_px": None,
+        "center_offset_x_ratio": None,
+        "center_offset_y_ratio": None,
+        "brightness": None,
+        "sharpness": None,
+        "yaw": None,
+        "pitch": None,
+        "raw_yaw": None,
+        "raw_pitch": None,
+        "reprojection_error_px": None,
+        "detected_pose": classify_pose(face) if face else "no_face",
+        "expected_pose": expected_pose,
+        "face_count": face_count,
+        "quality_result": "PASS" if quality.get("ready") else "FAIL",
+        "quality_code": "PASS" if quality.get("ready") else _quality_failure_code(quality, face),
+        "quality_reason": quality.get("instruction"),
+    }
+    if not isinstance(frame, np.ndarray) or frame.ndim != 3 or frame.shape[2] != 3 or frame.size == 0:
+        return diagnostics
+
+    height, width = frame.shape[:2]
+    if not face:
+        return diagnostics
+    try:
+        box = np.asarray(face.get("bbox"), dtype=np.float64).reshape(-1)
+        score = float(face.get("detection_score"))
+        pose = face.get("head_pose") or {}
+        yaw, pitch = float(pose["yaw"]), float(pose["pitch"])
+    except (AttributeError, KeyError, TypeError, ValueError):
+        box = np.empty(0, dtype=np.float64)
+        score, yaw, pitch = None, None, None
+    if score is not None and np.isfinite(score):
+        diagnostics["detection_score"] = score
+    if yaw is not None and np.isfinite(yaw):
+        diagnostics["yaw"] = yaw
+    if pitch is not None and np.isfinite(pitch):
+        diagnostics["pitch"] = pitch
+    diagnostics["raw_yaw"] = diagnostics["yaw"]
+    diagnostics["raw_pitch"] = diagnostics["pitch"]
+    try:
+        reprojection_error = float((face.get("head_pose") or {}).get("reprojection_error_px"))
+    except (AttributeError, TypeError, ValueError):
+        reprojection_error = None
+    if reprojection_error is not None and np.isfinite(reprojection_error):
+        diagnostics["reprojection_error_px"] = reprojection_error
+
+    if box.size != 4 or not np.all(np.isfinite(box)):
+        return diagnostics
+    x1, y1, x2, y2 = [float(value) for value in box]
+    face_width, face_height = x2 - x1, y2 - y1
+    diagnostics["bbox"] = [x1, y1, x2, y2]
+    if face_width <= 0 or face_height <= 0:
+        return diagnostics
+    center_x, center_y = (x1 + x2) / 2.0, (y1 + y2) / 2.0
+    offset_x, offset_y = center_x - width * 0.5, center_y - height * 0.51
+    diagnostics.update({
+        "bbox_width_frame_ratio": face_width / width,
+        "bbox_height_frame_ratio": face_height / height,
+        "center_offset_x_px": offset_x,
+        "center_offset_y_px": offset_y,
+        "center_offset_x_ratio": offset_x / width,
+        "center_offset_y_ratio": offset_y / height,
+    })
+    crop = frame[max(0, int(y1)):min(height, int(np.ceil(y2))),
+                 max(0, int(x1)):min(width, int(np.ceil(x2)))]
+    if crop.size:
+        try:
+            gray = cv2.cvtColor(cv2.resize(crop, (128, 160)), cv2.COLOR_BGR2GRAY)
+            diagnostics["brightness"] = float(gray.mean())
+            diagnostics["sharpness"] = float(cv2.Laplacian(gray, cv2.CV_64F).var())
+        except cv2.error:
+            pass
+    return diagnostics
 
 
 def extract_single_face_embedding(engine, frame):
@@ -51,10 +219,12 @@ def extract_single_face_embedding(engine, frame):
     latency = (time.perf_counter() - started) * 1000.0
     if len(faces) == 0:
         return {"status": "RETRY", "code": "NO FACE", "reason": "NO FACE",
-                "embedding": None, "face": None, "latency_ms": latency}
+                "embedding": None, "face": None, "faces": [], "face_count": 0,
+                "latency_ms": latency}
     if len(faces) != 1:
         return {"status": "RETRY", "code": "MULTIPLE FACES", "reason": "MULTIPLE FACES",
-                "embedding": None, "face": None, "latency_ms": latency}
+                "embedding": None, "face": faces[0], "faces": faces,
+                "face_count": len(faces), "latency_ms": latency}
     face = faces[0]
     try:
         detection_score = float(face.get("detection_score"))
@@ -63,39 +233,60 @@ def extract_single_face_embedding(engine, frame):
         embedding = face_matching.normalize_embedding(face.get("embedding"), EMBEDDING_DIMENSIONS)
     except (TypeError, ValueError) as exc:
         return {"status": "RETRY", "code": "INVALID EMBEDDING", "reason": str(exc),
-                "embedding": None, "face": face, "latency_ms": latency}
+                "embedding": None, "face": face, "faces": faces,
+                "face_count": 1, "latency_ms": latency}
     return {"status": "OK", "code": "OK", "reason": "Valid ArcFace embedding.",
-            "embedding": embedding, "face": face, "latency_ms": latency}
+            "embedding": embedding, "face": face, "faces": faces,
+            "face_count": 1, "latency_ms": latency}
 
 
-def validate_enrollment_frame(engine, frame, expected_pose):
-    """Apply production detection, quality, pose, and embedding checks to one pose."""
+def validate_enrollment_frame(engine, frame, expected_pose, *, enforce_pose=True):
+    """Validate enrollment image quality while keeping pose data diagnostic-only.
+
+    The desktop GUI can disable the pose gate for manual capture because
+    solvePnP can be noisy on ordinary webcams. The default keeps the legacy
+    pose check for other standalone callers.
+    """
     extracted = extract_single_face_embedding(engine, frame)
     if extracted["status"] != "OK":
-        return extracted
+        face = extracted.get("face")
+        quality = {"ready": False, "instruction": extracted.get("reason", extracted.get("code"))}
+        diagnostics = enrollment_debug_metrics(
+            frame, face, expected_pose, quality=quality, face_count=extracted.get("face_count")
+        )
+        diagnostics["quality_code"] = extracted.get("code", "QUALITY CHECK")
+        return {**extracted, "expected_pose": expected_pose,
+                "detected_pose": classify_pose(face) if face else "no_face",
+                "quality": quality, "diagnostics": diagnostics}
     face = extracted["face"]
-    quality = production_face_engine.assess_capture_quality(frame, face)
+    quality = production_face_engine.assess_capture_quality(
+        frame, face, center_tolerance=ENROLLMENT_CENTER_TOLERANCE,
+        max_size_ratio=ENROLLMENT_MAX_SIZE_RATIO,
+        edge_margin_ratio=ENROLLMENT_EDGE_MARGIN_RATIO,
+    )
+    raw_pose = classify_pose(face)
+    detected_pose = classify_enrollment_pose(face, expected_pose)
+    diagnostics = enrollment_debug_metrics(
+        frame, face, expected_pose, quality=quality, face_count=1
+    )
+    diagnostics["raw_pose_classification"] = raw_pose
+    diagnostics["detected_pose"] = detected_pose
     if not quality.get("ready"):
         message = str(quality.get("instruction", "Enrollment image quality failed."))
-        lowered = message.lower()
-        if "quá xa" in lowered:
-            code = "FACE TOO SMALL"
-        elif "quá gần" in lowered:
-            code = "FACE TOO LARGE"
-        elif "nét" in lowered or "chưa rõ" in lowered:
-            code = "TOO BLURRY"
-        elif "ánh sáng" in lowered:
-            code = "BAD LIGHTING"
-        elif "giữa" in lowered or "khung hình" in lowered:
-            code = "FACE POSITION"
-        else:
-            code = "QUALITY CHECK"
+        code = _quality_failure_code(quality, face)
+        diagnostics["quality_code"] = code
         return {**extracted, "status": "RETRY", "code": code, "reason": message,
-                "quality": quality, "detected_pose": classify_pose(face)}
-    detected_pose = classify_pose(face)
-    if detected_pose != expected_pose:
+                "quality": quality, "detected_pose": detected_pose,
+                "expected_pose": expected_pose, "diagnostics": diagnostics}
+    if enforce_pose and detected_pose != expected_pose:
+        pose = face.get("head_pose") or {}
+        reason = (f"WRONG POSE: expected {expected_pose}, detected {detected_pose}; "
+                  f"yaw={pose.get('yaw', '—')}, pitch={pose.get('pitch', '—')}.")
+        diagnostics["quality_code"] = "PASS"
         return {**extracted, "status": "RETRY", "code": "WRONG POSE",
-                "reason": f"WRONG POSE: detected {detected_pose}, expected {expected_pose}.",
-                "quality": quality, "detected_pose": detected_pose}
-    return {**extracted, "reason": "Enrollment frame valid.", "quality": quality,
-            "detected_pose": detected_pose}
+                "reason": reason, "quality": quality, "detected_pose": detected_pose,
+                "expected_pose": expected_pose, "diagnostics": diagnostics}
+    diagnostics["quality_code"] = "PASS"
+    return {**extracted, "reason": "Quality checks passed.", "quality": quality,
+            "detected_pose": detected_pose, "expected_pose": expected_pose,
+            "diagnostics": diagnostics}

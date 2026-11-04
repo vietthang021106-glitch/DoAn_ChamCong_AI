@@ -6,9 +6,10 @@ import time
 import cv2
 import numpy as np
 
+import face_engine as production_face_engine
 import face_matching
 
-from .ai1_adapter import extract_single_face_embedding
+from .ai1_adapter import classify_pose, extract_single_face_embedding
 from .config import (
     EMBEDDING_DIMENSIONS,
     FRAME_CONSISTENCY_THRESHOLD,
@@ -55,6 +56,61 @@ def face_sharpness(frame, bbox):
         return float(cv2.Laplacian(gray, cv2.CV_64F).var())
     except (TypeError, ValueError, cv2.error):
         return 0.0
+
+
+def assess_recognition_face_quality(frame, face):
+    """Apply a frame-relative size/crop/sharpness gate without an enrollment guide."""
+    def rejected(code, reason):
+        return {"ready": False, "code": code, "reason": reason, "sharpness": 0.0}
+
+    if not isinstance(frame, np.ndarray) or frame.ndim != 3 or frame.shape[2] != 3 or frame.size == 0:
+        return rejected("INVALID FRAME", "Khung hình camera không hợp lệ.")
+    height, width = frame.shape[:2]
+    try:
+        box = np.asarray(face.get("bbox"), dtype=np.float64).reshape(-1)
+        score = float(face.get("detection_score"))
+    except (AttributeError, TypeError, ValueError):
+        return rejected("INVALID BBOX", "Không đọc được vùng khuôn mặt.")
+    if box.size != 4 or not np.all(np.isfinite(box)) or not np.isfinite(score):
+        return rejected("INVALID BBOX", "Vùng khuôn mặt không hợp lệ.")
+    if score < production_face_engine.DETECTION_MIN_SCORE:
+        return rejected("LOW DETECTION SCORE", "Khuôn mặt chưa được phát hiện đủ rõ.")
+
+    x1, y1, x2, y2 = [float(value) for value in box]
+    face_width, face_height = x2 - x1, y2 - y1
+    if face_width <= 0 or face_height <= 0:
+        return rejected("INVALID BBOX", "Vùng khuôn mặt không hợp lệ.")
+    if face_width < max(48.0, width * 0.10) or face_height < max(48.0, height * 0.12):
+        return rejected("FACE TOO SMALL", "Mặt quá xa — tiến gần camera hơn.")
+    if face_width > width * 0.90 or face_height > height * 0.90:
+        return rejected("FACE TOO LARGE", "Mặt quá gần — lùi nhẹ khỏi camera.")
+
+    clipped_x1, clipped_y1 = max(0.0, x1), max(0.0, y1)
+    clipped_x2, clipped_y2 = min(float(width), x2), min(float(height), y2)
+    visible_area = max(0.0, clipped_x2 - clipped_x1) * max(0.0, clipped_y2 - clipped_y1)
+    if visible_area / (face_width * face_height) < 0.94:
+        return rejected("FACE CROPPED", "Khuôn mặt bị cắt ở mép khung hình.")
+
+    edge_x, edge_y = max(2.0, face_width * 0.02), max(2.0, face_height * 0.02)
+    if (x1 < edge_x or y1 < edge_y
+            or width - x2 < edge_x or height - y2 < edge_y):
+        return rejected("FACE TOO CLOSE TO EDGE", "Đưa khuôn mặt xa mép khung hình hơn.")
+
+    sharpness = face_sharpness(frame, box)
+    if not np.isfinite(sharpness) or sharpness < 20.0:
+        return rejected("TOO BLURRY", "Ảnh bị mờ — giữ yên và kiểm tra camera.")
+    return {"ready": True, "code": "OK", "reason": "Khuôn mặt sẵn sàng.",
+            "sharpness": sharpness}
+
+
+def _notify_frame_callback(callback, payload):
+    if callback is None:
+        return
+    try:
+        callback(payload)
+    except Exception:
+        # A preview update must never interrupt the recognition worker.
+        return
 
 
 def identify_embedding(embedding, gallery, threshold=RECOGNITION_THRESHOLD):
@@ -165,7 +221,7 @@ def recognize_sequence_from_source(engine, source, gallery, stop_event,
                                    interval_ms=FRAME_INTERVAL_MS,
                                    stale_seconds=STALE_FRAME_SECONDS,
                                    timeout_seconds=RECOGNITION_TIMEOUT_SECONDS,
-                                   progress_callback=None):
+                                   progress_callback=None, frame_callback=None):
     """Capture three fresh snapshots, verify identity consistency and match the sharpest."""
     started = time.perf_counter()
     deadline = time.monotonic() + float(timeout_seconds)
@@ -202,11 +258,36 @@ def recognize_sequence_from_source(engine, source, gallery, stop_event,
 
         extracted = extract_single_face_embedding(engine, frame)
         if extracted["status"] != "OK":
+            face = extracted.get("face")
+            _notify_frame_callback(frame_callback, {
+                "sequence": sequence,
+                "frame_shape": list(frame.shape[:2]),
+                "observed_at": time.monotonic(),
+                "bbox": list(face["bbox"]) if isinstance(face, dict) and face.get("bbox") else None,
+                "detection_score": face.get("detection_score") if isinstance(face, dict) else None,
+                "detected_pose": classify_pose(face) if isinstance(face, dict) else "—",
+                "quality_status": "RETRY",
+                "code": extracted["code"],
+                "reason": extracted.get("reason", extracted["code"]),
+            })
             return _retry_result(extracted["code"], threshold, started, len(snapshots))
         face = extracted["face"]
-        sharpness = face_sharpness(frame, face.get("bbox"))
-        if not np.isfinite(sharpness) or sharpness < 20.0:
-            return _retry_result("BLUR", threshold, started, len(snapshots))
+        quality = assess_recognition_face_quality(frame, face)
+        _notify_frame_callback(frame_callback, {
+            "sequence": sequence,
+            "frame_shape": list(frame.shape[:2]),
+            "observed_at": time.monotonic(),
+            "bbox": list(face["bbox"]),
+            "detection_score": float(face["detection_score"]),
+            "detected_pose": classify_pose(face),
+            "quality_status": "READY" if quality["ready"] else "RETRY",
+            "code": quality["code"],
+            "reason": quality["reason"],
+            "sharpness": quality["sharpness"],
+        })
+        if not quality["ready"]:
+            return _retry_result(quality["code"], threshold, started, len(snapshots))
+        sharpness = quality["sharpness"]
         snapshots.append({
             "frame": frame.copy(),
             "embedding": extracted["embedding"],

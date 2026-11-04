@@ -8,10 +8,19 @@ import uuid
 import numpy as np
 
 from camera_source import Esp32MjpegSource, FramePacket, FramePump, WebcamSource, validate_stream_url
+import face_matching
 from ai1_standalone_core.ai1_adapter import initialize_ai1
 from ai1_standalone_core.config import RECOGNITION_THRESHOLD
 from ai1_standalone_core.data_store import StandaloneStore
 from ai1_standalone_core.recognition import recognize_sequence_from_source, recognize_three_embeddings
+
+
+class DuplicateFaceError(ValueError):
+    """Raised when enrollment would assign an existing face to another ID."""
+
+    def __init__(self, duplicate):
+        self.duplicate = dict(duplicate)
+        super().__init__("Khuôn mặt đã tồn tại trong gallery standalone.")
 
 
 def create_camera_source(source_type="webcam", stream_url=None):
@@ -49,14 +58,17 @@ class AI1GuiController:
         self._legacy_sequence = 0
 
     def startup(self, stop_event=None):
-        """Initialize buffalo_l once, load local data once, then try the selected camera."""
+        """Load local data first, initialize buffalo_l once, then try the camera."""
         stop_event = stop_event or threading.Event()
         self.store.ensure()
-        self.engine = initialize_ai1()
         employees, gallery = self.store.load()
         with self._lock:
             self.employees = employees
             self.gallery = gallery
+
+        # Keep the standalone list/gallery available even if model initialization fails.
+        self.engine = initialize_ai1()
+        with self._lock:
             self.ready = True
 
         if stop_event.is_set():
@@ -142,13 +154,36 @@ class AI1GuiController:
         return self.snapshot()
 
     def register_employee(self, identity, name, embeddings_by_pose, staged_images, overwrite=False):
-        employees, gallery = self.store.add_employee(
-            identity, name, embeddings_by_pose, staged_images, overwrite=overwrite
-        )
+        frontal = embeddings_by_pose.get("frontal") if isinstance(embeddings_by_pose, dict) else None
         with self._lock:
+            if frontal is not None:
+                duplicate = self.find_duplicate_employee(frontal, exclude_identity=identity)
+                if duplicate is not None:
+                    raise DuplicateFaceError(duplicate)
+            employees, gallery = self.store.add_employee(
+                identity, name, embeddings_by_pose, staged_images, overwrite=overwrite
+            )
             self.employees = employees
             self.gallery = gallery
         return self.snapshot()
+
+    def find_duplicate_employee(self, embedding, exclude_identity=None):
+        """Find a different local employee matching by cosine / MAX sample score."""
+        with self._lock:
+            gallery = {
+                identity: person for identity, person in self.gallery.items()
+                if exclude_identity is None or str(identity) != str(exclude_identity)
+            }
+            threshold = self.threshold
+        result = face_matching.identify_embedding(embedding, gallery, threshold)
+        if not result["match"]:
+            return None
+        return {
+            "MaNV": result["MaNV"],
+            "HoTen": result["HoTen"],
+            "similarity": float(result["similarity"]),
+            "threshold": float(result["threshold"]),
+        }
 
     def delete_employee(self, identity, confirmed=False):
         employees, gallery = self.store.delete_employee(identity, confirmed=confirmed)
@@ -172,7 +207,7 @@ class AI1GuiController:
                 return True
             return False
 
-    def recognize(self, stop_event, progress_callback=None, session_id=None):
+    def recognize(self, stop_event, progress_callback=None, session_id=None, frame_callback=None):
         own_session = session_id is None
         if own_session:
             session_id = self.begin_session()
@@ -195,7 +230,7 @@ class AI1GuiController:
                 raise RuntimeError(self.camera_error or "Camera is unavailable.")
             return recognize_sequence_from_source(
                 engine, source, gallery, stop_event, threshold=self.threshold,
-                progress_callback=progress_callback,
+                progress_callback=progress_callback, frame_callback=frame_callback,
             )
         finally:
             if own_session:

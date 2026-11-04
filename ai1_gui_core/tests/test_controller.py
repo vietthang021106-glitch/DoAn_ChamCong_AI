@@ -6,7 +6,7 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from ai1_gui_core.controller import AI1GuiController
+from ai1_gui_core.controller import AI1GuiController, DuplicateFaceError
 
 
 class FakeCamera:
@@ -47,6 +47,25 @@ class ControllerTests(unittest.TestCase):
         self.assertFalse(result["camera_available"])
         self.assertEqual(result["camera_error"], "no webcam")
 
+    def test_startup_loads_standalone_gallery_before_model_initialization(self):
+        calls = []
+        self.store.ensure.side_effect = lambda: calls.append("ensure")
+        self.store.load.side_effect = lambda: (
+            calls.append("load") or ([self.employee], self.gallery)
+        )
+        controller = AI1GuiController(store=self.store, camera_factory=FakeCamera)
+
+        def initialize():
+            calls.append("model")
+            return object()
+
+        with patch("ai1_gui_core.controller.initialize_ai1", side_effect=initialize):
+            controller.startup(threading.Event())
+
+        self.assertEqual(calls[:3], ["ensure", "load", "model"])
+        self.assertEqual(controller.employees, [self.employee])
+        self.assertIn("MaNV_1", controller.gallery)
+
     def test_register_and_delete_update_cached_gallery(self):
         controller = AI1GuiController(store=self.store)
         state = controller.register_employee("MaNV_1", "Employee One", {}, "stage", overwrite=True)
@@ -57,6 +76,31 @@ class ControllerTests(unittest.TestCase):
         deleted = controller.delete_employee("MaNV_1", confirmed=True)
         self.assertEqual(deleted["employees"], [])
         self.store.delete_employee.assert_called_once_with("MaNV_1", confirmed=True)
+
+    def test_duplicate_face_detection_uses_threshold_and_excludes_same_employee(self):
+        controller = AI1GuiController(store=self.store, threshold=0.45)
+        controller.gallery = self.gallery
+        embedding = self.gallery["MaNV_1"]["embeddings"][0]
+
+        duplicate = controller.find_duplicate_employee(embedding, exclude_identity="MaNV_2")
+        self.assertEqual(duplicate["MaNV"], "MaNV_1")
+        self.assertEqual(duplicate["HoTen"], "Employee One")
+        self.assertGreaterEqual(duplicate["similarity"], 0.45)
+        self.assertEqual(duplicate["threshold"], 0.45)
+        self.assertIsNone(controller.find_duplicate_employee(
+            embedding, exclude_identity="MaNV_1"
+        ))
+
+    def test_duplicate_employee_registration_is_rejected_before_storage_write(self):
+        controller = AI1GuiController(store=self.store, threshold=0.45)
+        controller.gallery = self.gallery
+        embedding = self.gallery["MaNV_1"]["embeddings"][0]
+        with self.assertRaises(DuplicateFaceError) as raised:
+            controller.register_employee(
+                "MaNV_2", "Employee Two", {"frontal": embedding}, "stage"
+            )
+        self.assertEqual(raised.exception.duplicate["MaNV"], "MaNV_1")
+        self.store.add_employee.assert_not_called()
 
     def test_three_embedding_recognition_uses_standalone_recognition_logic(self):
         vector = np.zeros(512, dtype=np.float32)

@@ -2,6 +2,7 @@
 
 import json
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -54,10 +55,34 @@ class StandaloneLogicTests(unittest.TestCase):
             store = StandaloneStore(temp)
             store.ensure()
             employees, gallery = create_employee(store)
-            loaded_employees, loaded_gallery = store.load()
+            recreated_store = StandaloneStore(temp)
+            loaded_employees, loaded_gallery = recreated_store.load()
         self.assertEqual(loaded_employees, employees)
         self.assertEqual(len(loaded_gallery["MaNV_1"]["embeddings"]), 5)
         self.assertEqual(set(loaded_gallery["MaNV_1"]["poses"]), set(POSES))
+
+    def test_employee_one_thang_persists_after_store_recreation(self):
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as temp:
+            store = StandaloneStore(temp)
+            create_employee(store, identity="1", name="thang")
+
+            employees, gallery = StandaloneStore(temp).load()
+
+        self.assertEqual([(item["MaNV"], item["HoTen"]) for item in employees], [("1", "thang")])
+        self.assertEqual(len(gallery["1"]["embeddings"]), 5)
+
+    def test_default_store_root_is_project_absolute_independent_of_working_directory(self):
+        old_cwd = Path.cwd()
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as alternate_cwd:
+            try:
+                os.chdir(alternate_cwd)
+                store = StandaloneStore()
+                self.assertEqual(store.root, (PROJECT_ROOT / "ai1_standalone_data").resolve())
+                self.assertEqual(store.employees_path, store.root / "employees.json")
+                self.assertEqual(store.embeddings_path, store.root / "embeddings.npz")
+                self.assertEqual(store.images_root, store.root / "images")
+            finally:
+                os.chdir(old_cwd)
 
     def test_employee_add_persists_metadata_images_and_five_embeddings(self):
         with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as temp:
@@ -88,6 +113,27 @@ class StandaloneLogicTests(unittest.TestCase):
             self.assertEqual(employees[0]["HoTen"], "Nguyen Van A")
             self.assertAlmostEqual(face_matching.cosine_similarity(
                 gallery["MaNV_1"]["embeddings"][0], basis(0)), 1.0, places=6)
+
+    def test_reenroll_same_employee_replaces_all_five_samples_after_confirmation(self):
+        with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as temp:
+            store = StandaloneStore(temp)
+            create_employee(store, identity="1", name="thang")
+            stage = Path(temp) / ".replacement-stage"
+            stage.mkdir()
+            for pose in POSES:
+                (stage / f"{pose}.jpg").write_bytes(b"replacement image fixture")
+            replacements = {pose: basis(index + 20) for index, pose in enumerate(POSES)}
+
+            employees, gallery = store.add_employee(
+                "1", "thang updated", replacements, stage, overwrite=True
+            )
+
+        self.assertEqual([(item["MaNV"], item["HoTen"]) for item in employees],
+                         [("1", "thang updated")])
+        self.assertEqual(len(gallery["1"]["embeddings"]), 5)
+        self.assertAlmostEqual(
+            face_matching.cosine_similarity(gallery["1"]["embeddings"][0], basis(20)), 1.0
+        )
 
     def test_employee_delete_requires_confirmation_and_removes_local_data(self):
         with tempfile.TemporaryDirectory(dir=PROJECT_ROOT) as temp:
