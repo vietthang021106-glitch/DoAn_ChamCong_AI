@@ -190,6 +190,8 @@ class GuidedPoseTracker:
         self.capture_issued = False
         self.manual_fallback = False
         self.pose_started_at = None
+        self.stability_window_expirations = 0
+        self.stale_frame_count = 0
 
     @property
     def stable_count(self):
@@ -205,6 +207,8 @@ class GuidedPoseTracker:
         self.unreliable_count = 0
         self.manual_fallback = False
         self.pose_started_at = None
+        self.stability_window_expirations = 0
+        self.stale_frame_count = 0
         self._clear_window()
 
     def force_manual_fallback(self, reason):
@@ -222,31 +226,39 @@ class GuidedPoseTracker:
         return {"status": "POSE_UNRELIABLE", "reason": str(reason),
                 "stable_count": 0, "unreliable_count": self.unreliable_count}
 
+    def _timeout_reason(self, expected_pose):
+        reasons = []
+        if self.stability_window_expirations:
+            required_fps = (self.stable_frames - 1) / self.stability_window_seconds
+            reasons.append(
+                f"the {self.stable_frames}-frame/{self.stability_window_seconds:.1f}s "
+                f"stability window expired {self.stability_window_expirations} times "
+                f"(approximately {required_fps:.1f} fresh frames/s are required)"
+            )
+        if self.stale_frame_count:
+            reasons.append(
+                f"{self.stale_frame_count} frames were stale or repeated, possibly due to "
+                "camera delay or slow inference"
+            )
+        if not reasons:
+            return f"Pose {expected_pose} did not stabilize within {self.pose_timeout_seconds:.0f}s."
+        return (
+            f"Pose {expected_pose} timed out after {self.pose_timeout_seconds:.0f}s: "
+            + "; ".join(reasons)
+            + ". AUTO limits were not relaxed."
+        )
+
     def observe(self, expected_pose, outcome, frame, sequence, captured_at, now=None):
         """Consume one unique fresh quality-valid frame from the FramePump."""
         now = time.monotonic() if now is None else float(now)
-        try:
-            sequence = int(sequence)
-            age = now - float(captured_at)
-        except (TypeError, ValueError):
-            self._clear_window()
-            return {"status": "STALE_FRAME", "reason": "Timestamp/frame sequence invalid.",
-                    "stable_count": 0}
-        if sequence <= self.last_sequence:
-            self._clear_window()
-            return {"status": "STALE_FRAME", "reason": "Frame sequence is not fresh.",
-                    "stable_count": 0}
-        self.last_sequence = sequence
-        if not np.isfinite(age) or age < -0.1 or age > self.stale_seconds:
-            self._clear_window()
-            return {"status": "STALE_FRAME", "reason": "Frame is outside the freshness window.",
-                    "stable_count": 0}
         if expected_pose not in POSES:
             self._clear_window()
             return {"status": "COMPLETE", "stable_count": 0}
         if expected_pose != self.expected_pose:
             self.expected_pose = expected_pose
             self.pose_started_at = now
+            self.stability_window_expirations = 0
+            self.stale_frame_count = 0
             self._clear_window()
             self.unreliable_count = 0
         if self.manual_fallback:
@@ -254,9 +266,27 @@ class GuidedPoseTracker:
                     "stable_count": 0}
         if (self.pose_started_at is not None
                 and now - self.pose_started_at >= self.pose_timeout_seconds):
-            return self.force_manual_fallback(
-                f"Pose {expected_pose} did not stabilize within {self.pose_timeout_seconds:.0f}s."
-            )
+            return self.force_manual_fallback(self._timeout_reason(expected_pose))
+
+        try:
+            sequence = int(sequence)
+            age = now - float(captured_at)
+        except (TypeError, ValueError):
+            self.stale_frame_count += 1
+            self._clear_window()
+            return {"status": "STALE_FRAME", "reason": "Timestamp/frame sequence invalid.",
+                    "stable_count": 0, "stale_frame_count": self.stale_frame_count}
+        if sequence <= self.last_sequence:
+            self.stale_frame_count += 1
+            self._clear_window()
+            return {"status": "STALE_FRAME", "reason": "Frame sequence is not fresh.",
+                    "stable_count": 0, "stale_frame_count": self.stale_frame_count}
+        self.last_sequence = sequence
+        if not np.isfinite(age) or age < -0.1 or age > self.stale_seconds:
+            self.stale_frame_count += 1
+            self._clear_window()
+            return {"status": "STALE_FRAME", "reason": "Frame is outside the freshness window.",
+                    "stable_count": 0, "stale_frame_count": self.stale_frame_count}
         if not isinstance(outcome, dict) or outcome.get("status") != "OK":
             self._clear_window()
             return {"status": "QUALITY_REJECTED",
@@ -332,8 +362,11 @@ class GuidedPoseTracker:
                     "roll": None if angles is None else angles["roll"],
                     "stable_count": self.stable_count}
 
+        window_expired = False
         if self.window:
             if float(captured_at) - self.window[0]["captured_at"] > self.stability_window_seconds:
+                self.stability_window_expirations += 1
+                window_expired = True
                 self._clear_window()
         if self.window:
             max_delta = max(rotation_distance_degrees(item["rotation"], rotation)
@@ -370,7 +403,14 @@ class GuidedPoseTracker:
                     "pitch": None if angles is None else angles["pitch"],
                     "roll": None if angles is None else angles["roll"],
                     "reprojection_error_px": reprojection_error,
-                    "stable_count": self.stable_count, "calibrating": calibrating}
+                    "stable_count": self.stable_count, "calibrating": calibrating,
+                    "stability_window_expirations": self.stability_window_expirations,
+                    "reason": (
+                        f"Cửa sổ {self.stable_frames} frame / "
+                        f"{self.stability_window_seconds:.1f}s vừa hết hạn; "
+                        "camera hoặc AI xử lý frame chưa đủ nhanh. Giới hạn không thay đổi."
+                        if window_expired else None
+                    )}
         spread = max(
             rotation_distance_degrees(first["rotation"], second["rotation"])
             for index, first in enumerate(self.window)
@@ -412,11 +452,17 @@ class GuidedPoseTracker:
             "candidate": candidate,
         }
 
-    def capture_result(self, captured, next_pose=None):
+    def capture_result(self, captured, next_pose=None, now=None):
         """Advance once after gallery state has accepted the candidate sample."""
         self.capture_issued = False
         if captured:
             self.expected_pose = next_pose
+            self.pose_started_at = (
+                (time.monotonic() if now is None else float(now))
+                if next_pose in POSES else None
+            )
+            self.stability_window_expirations = 0
+            self.stale_frame_count = 0
             self._clear_window()
             self.unreliable_count = 0
         else:

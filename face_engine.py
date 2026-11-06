@@ -8,6 +8,9 @@ import cv2
 MODEL_NAME = "buffalo_l"
 EMBEDDING_DIMENSIONS = 512
 DETECTION_MIN_SCORE = 0.5
+# Enrollment lowers SCRFD's candidate floor only while checking face count. A
+# captured face still has to pass ENROLLMENT_MIN_SCORE in the quality gate.
+ENROLLMENT_DETECTION_FLOOR = 0.25
 ENROLLMENT_MIN_SCORE = 0.65
 
 # Generic 3D face reference ordered like InsightFace's five-point landmarks:
@@ -227,12 +230,15 @@ class FaceRecognitionEngine:
     # extract_embedding
     # ------------------------------------------------------------------
 
-    def detect_embeddings(self, frame):
+    def detect_embeddings(self, frame, detection_threshold=None):
         """
         Detect faces and extract one normalized 512D embedding per detected face.
 
         Args:
             frame: OpenCV BGR image.
+            detection_threshold: Optional SCRFD candidate threshold. The
+                enrollment path uses a lower floor to count weak secondary
+                detections; the enrollment quality gate still requires 0.65.
 
         Returns:
             list[dict]: Embedding bytes/array, bounding box, detector score, and pose.
@@ -241,9 +247,26 @@ class FaceRecognitionEngine:
             raise RuntimeError("Engine chua duoc khoi tao. Goi initialize() truoc.")
         if not isinstance(frame, np.ndarray) or frame.ndim != 3 or frame.shape[2] != 3 or frame.size == 0:
             raise RuntimeError("Frame BGR dau vao khong hop le.")
+        try:
+            minimum_score = DETECTION_MIN_SCORE if detection_threshold is None else float(detection_threshold)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Detection threshold must be between 0 and 1.") from exc
+        if not np.isfinite(minimum_score) or minimum_score < 0.0 or minimum_score > 1.0:
+            raise ValueError("Detection threshold must be between 0 and 1.")
 
         with self._lock:
-            faces = self._app.get(frame)
+            detector = getattr(self._app, "det_model", None)
+            original_threshold = getattr(detector, "det_thresh", None)
+            lower_threshold = minimum_score < DETECTION_MIN_SCORE
+            if lower_threshold and (detector is None or original_threshold is None):
+                raise RuntimeError("SCRFD does not expose a configurable detection threshold.")
+            try:
+                if lower_threshold:
+                    detector.det_thresh = minimum_score
+                faces = self._app.get(frame)
+            finally:
+                if lower_threshold:
+                    detector.det_thresh = original_threshold
 
         results = []
         for face in faces:
@@ -252,7 +275,7 @@ class FaceRecognitionEngine:
             except (TypeError, ValueError):
                 continue
             bbox = getattr(face, "bbox", None)
-            if not np.isfinite(score) or score < DETECTION_MIN_SCORE or score > 1.0:
+            if not np.isfinite(score) or score < minimum_score or score > 1.0:
                 continue
             if bbox is None:
                 continue
@@ -293,6 +316,10 @@ class FaceRecognitionEngine:
                 "head_pose": pose,
             })
         return results
+
+    def detect_enrollment_embeddings(self, frame):
+        """Count lower-confidence SCRFD candidates for enrollment only."""
+        return self.detect_embeddings(frame, detection_threshold=ENROLLMENT_DETECTION_FLOOR)
 
     def inspect_pose(self, frame):
         """

@@ -207,11 +207,15 @@ def enrollment_debug_metrics(frame, face, expected_pose, quality=None, face_coun
     return diagnostics
 
 
-def extract_single_face_embedding(engine, frame):
+def extract_single_face_embedding(engine, frame, *, include_low_confidence=False):
     """Extract one validated, L2-normalized 512D production ArcFace vector."""
     started = time.perf_counter()
     try:
-        faces = engine.detect_embeddings(frame)
+        enrollment_detector = getattr(engine, "detect_enrollment_embeddings", None)
+        if include_low_confidence and callable(enrollment_detector):
+            faces = enrollment_detector(frame)
+        else:
+            faces = engine.detect_embeddings(frame)
     except Exception as exc:
         return {"status": "RETRY", "code": "AI ERROR", "reason": str(exc),
                 "embedding": None, "face": None,
@@ -229,7 +233,11 @@ def extract_single_face_embedding(engine, frame):
     try:
         detection_score = float(face.get("detection_score"))
         if not np.isfinite(detection_score) or detection_score < production_face_engine.DETECTION_MIN_SCORE:
-            raise ValueError("Detection confidence is invalid.")
+            return {"status": "RETRY", "code": "LOW DETECTION SCORE",
+                    "reason": (f"Detection confidence {detection_score:.3f} is below "
+                              f"{production_face_engine.DETECTION_MIN_SCORE:.2f}."),
+                    "embedding": None, "face": face, "faces": faces,
+                    "face_count": 1, "latency_ms": latency}
         embedding = face_matching.normalize_embedding(face.get("embedding"), EMBEDDING_DIMENSIONS)
     except (TypeError, ValueError) as exc:
         return {"status": "RETRY", "code": "INVALID EMBEDDING", "reason": str(exc),
@@ -247,7 +255,7 @@ def validate_enrollment_frame(engine, frame, expected_pose, *, enforce_pose=True
     solvePnP can be noisy on ordinary webcams. The default keeps the legacy
     pose check for other standalone callers.
     """
-    extracted = extract_single_face_embedding(engine, frame)
+    extracted = extract_single_face_embedding(engine, frame, include_low_confidence=True)
     if extracted["status"] != "OK":
         face = extracted.get("face")
         quality = {"ready": False, "instruction": extracted.get("reason", extracted.get("code"))}

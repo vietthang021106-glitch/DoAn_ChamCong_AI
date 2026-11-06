@@ -1136,8 +1136,12 @@ class AI1Gui:
                         "calibration_reason": auto.get("reason"),
                         "reprojection_error_px": auto.get("reprojection_error_px"),
                         "stable_count": auto.get("stable_count", 0),
+                        "stability_window_expirations": auto.get("stability_window_expirations", 0),
                         "detected_pose": auto.get("detected_pose", analysis.get("detected_pose")),
                     })
+                    if (auto.get("status") == "STABILIZING"
+                            and auto.get("reason")):
+                        analysis["reason"] = auto["reason"]
                     if auto.get("status") in {"POSE_NOT_READY", "STABILIZING", "POSE_UNRELIABLE"}:
                         analysis["color"] = YELLOW
                     if auto.get("status") == "CAPTURE_READY" and not session.get("capture_pending"):

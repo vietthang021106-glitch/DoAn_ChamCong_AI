@@ -92,6 +92,35 @@ class MatchingTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             engine.detect_embeddings(frame)
 
+    def test_enrollment_counts_low_confidence_secondary_without_changing_normal_threshold(self):
+        from types import SimpleNamespace
+        from ai1_standalone_core.ai1_adapter import validate_enrollment_frame
+
+        frame = np.random.default_rng(7).integers(65, 195, (480, 640, 3), dtype=np.uint8)
+        vector = np.eye(1, 512, 0, dtype=np.float32)[0]
+        primary = SimpleNamespace(normed_embedding=vector, embedding=None, det_score=.98,
+                                  bbox=[220, 105, 420, 385], kps=None)
+        secondary = SimpleNamespace(normed_embedding=vector, embedding=None, det_score=.35,
+                                    bbox=[20, 60, 120, 180], kps=None)
+        detector = SimpleNamespace(det_thresh=.5)
+
+        def get_faces(_frame):
+            return [face for face in (primary, secondary)
+                    if face.det_score >= detector.det_thresh]
+
+        engine = face_engine.FaceRecognitionEngine()
+        engine._initialized = True
+        engine._app = SimpleNamespace(det_model=detector, get=get_faces)
+
+        self.assertEqual(len(engine.detect_embeddings(frame)), 1)
+        self.assertEqual(detector.det_thresh, .5)
+        enrollment = validate_enrollment_frame(engine, frame, "frontal")
+        self.assertEqual(enrollment["status"], "RETRY")
+        self.assertEqual(enrollment["code"], "MULTIPLE FACES")
+        self.assertEqual(enrollment["diagnostics"]["face_count"], 2)
+        self.assertEqual(detector.det_thresh, .5)
+        self.assertEqual(len(engine.detect_embeddings(frame)), 1)
+
     def test_face_engine_serializes_shared_model_inference(self):
         from types import SimpleNamespace
         state_lock = threading.Lock()

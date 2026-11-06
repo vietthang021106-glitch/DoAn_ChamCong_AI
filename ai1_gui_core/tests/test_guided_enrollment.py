@@ -202,21 +202,73 @@ class GuidedEnrollmentTests(unittest.TestCase):
         now = 100.0
         results = []
         for sequence in range(1, 9):
+            captured_at = now + (sequence - 1) * 0.1
             results.append(tracker.observe(
                 "frontal", valid_outcome(FRONTAL_ROTATION, sharpness=sequence),
-                frame, sequence, now, now=now,
+                frame, sequence, captured_at, now=captured_at,
             ))
         self.assertEqual([item["status"] for item in results[:-1]], ["STABILIZING"] * 7)
         self.assertEqual(results[-1]["status"], "CAPTURE_READY")
         self.assertEqual(results[-1]["candidate"]["sequence"], 8)
+        self.assertLessEqual(results[-1]["candidate"]["captured_at"] - 100.0, 1.0)
         duplicate = tracker.observe(
             "frontal", valid_outcome(FRONTAL_ROTATION, sharpness=20),
-            frame, 9, now, now=now,
+            frame, 9, 100.8, now=100.8,
         )
         self.assertEqual(duplicate["status"], "CAPTURE_PENDING")
-        tracker.capture_result(True, "left")
+        tracker.capture_result(True, "left", now=100.8)
         self.assertEqual(tracker.stable_count, 0)
         self.assertEqual(tracker.expected_pose, "left")
+
+    def test_pose_timeout_restarts_for_each_pose_across_session_longer_than_25_seconds(self):
+        tracker = GuidedPoseTracker(stable_frames=8)
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        sequence = 0
+        completed_at = None
+
+        for pose, start_time in (("frontal", 0.0), ("left", 12.0), ("right", 26.0)):
+            results = []
+            for index in range(8):
+                sequence += 1
+                timestamp = start_time + index * 0.1
+                results.append(tracker.observe(
+                    pose, valid_outcome(POSE_ROTATIONS[pose], sharpness=index + 1),
+                    frame, sequence, timestamp, now=timestamp,
+                ))
+            self.assertEqual(results[-1]["status"], "CAPTURE_READY", (pose, results[-1]))
+            capture_time = results[-1]["candidate"]["captured_at"]
+            if completed_at is None:
+                session_start = start_time
+            self.assertLess(capture_time - tracker.pose_started_at, 25.0)
+            next_pose = {"frontal": "left", "left": "right", "right": "up"}[pose]
+            tracker.capture_result(True, next_pose, now=capture_time)
+            completed_at = capture_time
+
+        self.assertGreater(completed_at - session_start, 25.0)
+        self.assertFalse(tracker.manual_fallback)
+        self.assertEqual(tracker.expected_pose, "up")
+
+    def test_low_fps_does_not_relax_one_second_window_and_falls_back_with_reason(self):
+        tracker = GuidedPoseTracker(stable_frames=8, stability_window_seconds=1.0,
+                                    pose_timeout_seconds=25.0)
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        results = []
+        for sequence in range(1, 128):
+            timestamp = 100.0 + (sequence - 1) * 0.2  # 5 fresh frames/s
+            result = tracker.observe(
+                "frontal", valid_outcome(FRONTAL_ROTATION, sharpness=sequence),
+                frame, sequence, timestamp, now=timestamp,
+            )
+            results.append(result)
+            if result["status"] == "FALLBACK_MANUAL":
+                break
+
+        self.assertFalse(any(item["status"] == "CAPTURE_READY" for item in results))
+        self.assertEqual(results[-1]["status"], "FALLBACK_MANUAL")
+        self.assertIn("window expired", results[-1]["reason"])
+        self.assertIn("7.0 fresh frames/s", results[-1]["reason"])
+        self.assertEqual(tracker.stable_frames, 8)
+        self.assertEqual(tracker.stability_window_seconds, 1.0)
 
     def test_bad_quality_stale_and_unreliable_pose_do_not_auto_capture(self):
         tracker = GuidedPoseTracker(stable_frames=2, unreliable_frame_limit=3)
@@ -251,14 +303,16 @@ class GuidedEnrollmentTests(unittest.TestCase):
             rotation = POSE_ROTATIONS[expected]
             for index in range(3):
                 sequence += 1
+                captured_at = now + index * 0.1
                 result = tracker.observe(
                     expected, valid_outcome(rotation, sharpness=10 + index),
-                    frame, sequence, now, now=now,
+                    frame, sequence, captured_at, now=captured_at,
                 )
             self.assertEqual(result["status"], "CAPTURE_READY", (expected, result))
             capture = enrollment.capture(result["candidate"]["outcome"])
-            tracker.capture_result(True, enrollment.current_pose)
+            tracker.capture_result(True, enrollment.current_pose, now=captured_at)
             self.assertEqual(capture["pose"], expected)
+            now = captured_at + 0.1
         self.assertTrue(enrollment.complete)
         self.assertTrue(enrollment.validate_complete()["valid"])
         self.assertEqual(set(enrollment.embeddings), set(POSES))
