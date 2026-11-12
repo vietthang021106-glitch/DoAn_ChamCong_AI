@@ -28,6 +28,7 @@ require_once __DIR__ . '/Controller/AiController.php';
 require_once __DIR__ . '/Controller/MonitoringController.php';
 require_once __DIR__ . '/Controller/MyController.php';
 require_once __DIR__ . '/Controller/FaceEnrollmentController.php';
+require_once __DIR__ . '/Controller/DeviceController.php';
 
 $authController = new AuthController();
 $controller = new EmployeeController();
@@ -38,6 +39,7 @@ $aiController = new AiController();
 $monitoringController = new MonitoringController();
 $myController = new MyController();
 $faceEnrollmentController = new FaceEnrollmentController();
+$deviceController = new DeviceController();
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
 $action = $_GET['action'] ?? 'index';
 $requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
@@ -206,6 +208,16 @@ if ($action === 'attendance' && $method === 'GET') {
     return;
 }
 
+if ($action === 'live_attendance_feed' && $method === 'GET') {
+    $attendanceController->liveAttendanceFeed();
+    return;
+}
+
+if ($action === 'devices' && $method === 'GET') {
+    $deviceController->index();
+    return;
+}
+
 if ($action === 'scan_history_image' && $method === 'GET') {
     $attendanceController->sendScanHistoryImage();
     return;
@@ -250,7 +262,7 @@ if ($action === 'attendance_image_out' && $method === 'GET') {
     return;
 }
 
-if (in_array($action, ['index', 'dashboard', 'create', 'store', 'edit', 'update', 'login', 'logout', 'shifts', 'assign_shift', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift', 'attendance', 'scan_history_image', 'health', 'alerts', 'monitoring', 'attendance_image_in', 'attendance_image_out', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'internal_face_gallery', 'face_image', 'face_camera_frame', ...array_keys($faceEnrollmentActions)], true)) {
+if (in_array($action, ['index', 'dashboard', 'create', 'store', 'edit', 'update', 'login', 'logout', 'shifts', 'assign_shift', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift', 'attendance', 'live_attendance_feed', 'devices', 'scan_history_image', 'health', 'alerts', 'monitoring', 'attendance_image_in', 'attendance_image_out', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'internal_face_gallery', 'face_image', 'face_camera_frame', ...array_keys($faceEnrollmentActions)], true)) {
     $allowedMethods = match ($action) {
         'login' => 'GET, POST',
         'store', 'update', 'logout', 'assign_shift', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift' => 'POST',

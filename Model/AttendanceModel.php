@@ -14,6 +14,31 @@ final class AttendanceModel
             SQL)->fetchAll();
     }
 
+    /** Đọc các lượt vào/ra gần nhất để màn hình giám sát cập nhật chỉ đọc. */
+    public function findRecentPunches(int $limit = 6): array
+    {
+        $statement = Database::getConnection()->prepare(<<<'SQL'
+            SELECT
+                CC.MaCC,
+                CC.MaNV,
+                NV.HoTen,
+                CC.GioVao,
+                CC.GioRa,
+                CLV.TenCa,
+                COALESCE(CC.GioRa, CC.GioVao) AS EventTime,
+                CASE WHEN CC.GioRa IS NOT NULL THEN 'OUT' ELSE 'IN' END AS PunchType
+            FROM ChamCong CC
+            INNER JOIN NhanVien NV ON NV.MaNV = CC.MaNV
+            LEFT JOIN CaLamViec CLV ON CLV.MaCa = CC.MaCa
+            ORDER BY COALESCE(CC.GioRa, CC.GioVao) DESC, CC.MaCC DESC
+            LIMIT :limit
+            SQL);
+        $statement->bindValue(':limit', max(1, min(50, $limit)), PDO::PARAM_INT);
+        $statement->execute();
+
+        return $statement->fetchAll(PDO::FETCH_ASSOC) ?: [];
+    }
+
     /** Lấy trạng thái từng nhân viên trong ngày, gồm ca và cờ có ảnh bằng chứng. */
     public function findDaily(
         string $date,

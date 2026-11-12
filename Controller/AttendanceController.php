@@ -32,6 +32,10 @@ final class AttendanceController
             $this->scanHistoryIndex();
             return;
         }
+        if ($activeTab === 'live') {
+            $this->liveAttendanceIndex();
+            return;
+        }
         if ($activeTab !== 'attendance') {
             http_response_code(404);
             return;
@@ -127,6 +131,43 @@ final class AttendanceController
         $isDaily = $fromDate === $toDate;
         $pageTitle = 'Chấm công';
         require __DIR__ . '/../View/attendance.php';
+    }
+
+    /** Màn hình giám sát chỉ đọc, dùng camera singleton và dữ liệu chấm công hiện có. */
+    private function liveAttendanceIndex(): void
+    {
+        $recentPunches = [];
+        $error = null;
+        try {
+            $recentPunches = $this->attendance->findRecentPunches(6);
+        } catch (Throwable $exception) {
+            error_log('Live attendance page read failed: ' . $exception->getMessage());
+            http_response_code(500);
+            $error = 'Không thể tải lượt chấm công gần đây. Vui lòng kiểm tra kết nối cơ sở dữ liệu.';
+        }
+
+        $activeTab = 'live';
+        $pageTitle = 'Giám sát chấm công trực tiếp';
+        require __DIR__ . '/../View/attendance.php';
+    }
+
+    /** JSON feed chỉ đọc cho bảng lượt chấm công mới nhất trên màn hình giám sát. */
+    public function liveAttendanceFeed(): void
+    {
+        AuthController::requireAdmin();
+        try {
+            $this->jsonResponse([
+                'success' => true,
+                'recent' => $this->attendance->findRecentPunches(6),
+                'server_time' => (new DateTimeImmutable('now', new DateTimeZone('Asia/Ho_Chi_Minh')))->format('H:i:s d/m/Y'),
+            ], 200);
+        } catch (Throwable $exception) {
+            error_log('Live attendance feed read failed: ' . $exception->getMessage());
+            $this->jsonResponse([
+                'success' => false,
+                'message' => 'Không thể cập nhật dữ liệu chấm công.',
+            ], 503);
+        }
     }
 
     /** Filter and render the administrator-only rejected-scan history. */

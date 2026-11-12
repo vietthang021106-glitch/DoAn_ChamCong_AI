@@ -16,10 +16,13 @@ $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($pagina
     <section class="workspace" aria-label="Tra cứu chấm công">
         <nav class="workspace-tabs" aria-label="Các mục chấm công">
             <a href="/?action=attendance" <?= $activeTab === 'attendance' ? 'aria-current="page"' : '' ?>>Chấm công</a>
+            <a href="/?action=attendance&amp;tab=live" <?= $activeTab === 'live' ? 'aria-current="page"' : '' ?>>Giám sát trực tiếp</a>
             <a href="/?action=attendance&amp;tab=scan_history" <?= $activeTab === 'scan_history' ? 'aria-current="page"' : '' ?>>Lịch sử quét thất bại</a>
         </nav>
         <?php if ($activeTab === 'scan_history'): ?>
             <?php require __DIR__ . '/partials/scan_history.php'; ?>
+        <?php elseif ($activeTab === 'live'): ?>
+            <?php require __DIR__ . '/partials/live_attendance.php'; ?>
         <?php else: ?>
         <form class="workspace-filters attendance-workspace-filters" method="get" action="/">
             <input type="hidden" name="action" value="attendance">
@@ -151,4 +154,5 @@ $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($pagina
 </main>
 <?php require __DIR__ . '/partials/evidence_lightbox.php'; ?>
 <script src="/public/js/evidence_lightbox.js" defer></script>
+<?php if ($activeTab === 'live'): ?><script src="/public/js/live_attendance.js" defer></script><?php endif; ?>
 <?php require __DIR__ . '/layout/footer.php'; ?>

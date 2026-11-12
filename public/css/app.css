@@ -964,6 +964,12 @@ h2 {
     font-weight: 650;
 }
 
+.device-list-description {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+}
+
 .workspace-toolbar .search-field {
     width: min(360px, 42vw);
 }
@@ -1748,6 +1754,122 @@ h2 {
     border-color: #d0d5dd;
 }
 
+.live-monitor {
+    padding-top: 18px;
+}
+
+.live-monitor-heading,
+.live-monitor-panel-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.live-monitor-heading {
+    margin-bottom: 18px;
+}
+
+.live-monitor-heading h1 {
+    margin: 4px 0 6px;
+    font-size: 22px;
+}
+
+.live-monitor-heading > div > p:last-child,
+.live-monitor-note {
+    margin: 0;
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.live-monitor-heading .eyebrow {
+    margin: 0;
+    color: #175cd3;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+}
+
+.live-monitor-updated,
+.live-monitor-panel-heading > span {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.live-monitor-grid {
+    display: grid;
+    grid-template-columns: minmax(300px, 1.1fr) minmax(360px, 1fr);
+    align-items: start;
+    gap: 16px;
+}
+
+.live-monitor-panel {
+    min-width: 0;
+    padding: 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--surface);
+}
+
+.live-monitor-panel-heading {
+    margin-bottom: 12px;
+}
+
+.live-monitor-panel-heading h2 {
+    margin: 0;
+    font-size: 16px;
+}
+
+.live-monitor-camera {
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    aspect-ratio: 4 / 3;
+    border-radius: 6px;
+    background: #182230;
+}
+
+.live-monitor-camera img {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.live-monitor-note {
+    margin-top: 10px;
+    line-height: 1.5;
+}
+
+.live-monitor-table {
+    min-width: 620px;
+}
+
+.live-punch-tag {
+    display: inline-flex;
+    padding: 3px 7px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.live-punch-tag--in {
+    color: #067647;
+    background: var(--green-pale);
+}
+
+.live-punch-tag--out {
+    color: #175cd3;
+    background: var(--blue-pale);
+}
+
+.live-monitor-empty {
+    padding: 18px !important;
+    color: var(--muted);
+    text-align: center;
+}
+
 .face-lightbox {
     width: min(760px, calc(100vw - 32px));
     max-width: none;
@@ -1772,6 +1894,12 @@ h2 {
     max-height: calc(100vh - 110px);
     object-fit: contain;
     background: #f2f4f7;
+}
+
+@media (max-width: 760px) {
+    .live-monitor-grid {
+        grid-template-columns: 1fr;
+    }
 }
 
 @media (max-width: 680px) {
