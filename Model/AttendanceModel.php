@@ -5,6 +5,13 @@ require_once __DIR__ . '/Database.php';
 
 final class AttendanceModel
 {
+    private ?PDO $connection;
+
+    public function __construct(?PDO $connection = null)
+    {
+        $this->connection = $connection;
+    }
+
     public function findEmployees(): array
     {
         return Database::getConnection()->query(<<<'SQL'
@@ -17,20 +24,39 @@ final class AttendanceModel
     /** Đọc các lượt vào/ra gần nhất để màn hình giám sát cập nhật chỉ đọc. */
     public function findRecentPunches(int $limit = 6): array
     {
-        $statement = Database::getConnection()->prepare(<<<'SQL'
-            SELECT
-                CC.MaCC,
-                CC.MaNV,
-                NV.HoTen,
-                CC.GioVao,
-                CC.GioRa,
-                CLV.TenCa,
-                COALESCE(CC.GioRa, CC.GioVao) AS EventTime,
-                CASE WHEN CC.GioRa IS NOT NULL THEN 'OUT' ELSE 'IN' END AS PunchType
-            FROM ChamCong CC
-            INNER JOIN NhanVien NV ON NV.MaNV = CC.MaNV
-            LEFT JOIN CaLamViec CLV ON CLV.MaCa = CC.MaCa
-            ORDER BY COALESCE(CC.GioRa, CC.GioVao) DESC, CC.MaCC DESC
+        $connection = $this->connection ?? Database::getConnection();
+        $statement = $connection->prepare(<<<'SQL'
+            SELECT MaCC, MaNV, HoTen, MaCa, TenCa, EventTime, PunchType
+            FROM (
+                SELECT
+                    CC.MaCC,
+                    CC.MaNV,
+                    NV.HoTen,
+                    CC.MaCa,
+                    CLV.TenCa,
+                    CC.GioVao AS EventTime,
+                    'IN' AS PunchType
+                FROM ChamCong CC
+                INNER JOIN NhanVien NV ON NV.MaNV = CC.MaNV
+                LEFT JOIN CaLamViec CLV ON CLV.MaCa = CC.MaCa
+                WHERE CC.GioVao IS NOT NULL
+
+                UNION ALL
+
+                SELECT
+                    CC.MaCC,
+                    CC.MaNV,
+                    NV.HoTen,
+                    CC.MaCa,
+                    CLV.TenCa,
+                    CC.GioRa AS EventTime,
+                    'OUT' AS PunchType
+                FROM ChamCong CC
+                INNER JOIN NhanVien NV ON NV.MaNV = CC.MaNV
+                LEFT JOIN CaLamViec CLV ON CLV.MaCa = CC.MaCa
+                WHERE CC.GioRa IS NOT NULL
+            ) AS PunchEvents
+            ORDER BY EventTime DESC, MaCC DESC, PunchType DESC
             LIMIT :limit
             SQL);
         $statement->bindValue(':limit', max(1, min(50, $limit)), PDO::PARAM_INT);
