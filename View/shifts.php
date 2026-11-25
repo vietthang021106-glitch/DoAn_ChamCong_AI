@@ -76,6 +76,80 @@
         </form>
     </section>
 
+    <section class="workspace-section shift-batch-tools" aria-label="Phân ca hàng loạt và sao chép lịch">
+        <details class="shift-batch-details">
+            <summary class="button button--secondary">Phân ca hàng loạt</summary>
+            <form class="employee-form shift-bulk-form" method="post" action="/?action=bulk_assign_shift">
+                <input type="hidden" name="_csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                <input type="hidden" name="return_tab" value="assignments">
+                <input type="hidden" name="return_date" value="<?= htmlspecialchars($selectedDate, ENT_QUOTES, 'UTF-8') ?>">
+                <fieldset class="shift-employee-picker">
+                    <legend>Nhân viên *</legend>
+                    <div class="shift-employee-options">
+                        <?php foreach ($employees as $employee): ?>
+                            <?php $employeeId = (int)$employee['MaNV']; ?>
+                            <label>
+                                <input type="checkbox" name="MaNV[]" value="<?= $employeeId ?>">
+                                <span>NV<?= str_pad((string)$employeeId, 3, '0', STR_PAD_LEFT) ?> · <?= htmlspecialchars((string)$employee['HoTen'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></span>
+                            </label>
+                        <?php endforeach; ?>
+                    </div>
+                </fieldset>
+                <div class="filter-grid">
+                    <div class="form-field">
+                        <label for="bulk-shift-id">Ca làm việc *</label>
+                        <select id="bulk-shift-id" name="MaCa" required>
+                            <option value="">Chọn ca</option>
+                            <?php foreach ($availableShifts as $shift): ?>
+                                <option value="<?= (int)$shift['MaCa'] ?>">
+                                    <?= htmlspecialchars((string)$shift['TenCa'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?> (<?= htmlspecialchars(substr((string)$shift['GioBatDau'], 0, 5), ENT_QUOTES, 'UTF-8') ?>–<?= htmlspecialchars(substr((string)$shift['GioKetThuc'], 0, 5), ENT_QUOTES, 'UTF-8') ?>)
+                                </option>
+                            <?php endforeach; ?>
+                        </select>
+                    </div>
+                    <div class="form-field">
+                        <label for="bulk-start-date">Từ ngày *</label>
+                        <input id="bulk-start-date" type="date" name="TuNgay" value="<?= htmlspecialchars($selectedDate, ENT_QUOTES, 'UTF-8') ?>" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="bulk-end-date">Đến ngày *</label>
+                        <input id="bulk-end-date" type="date" name="DenNgay" value="<?= htmlspecialchars($bulkEndDate, ENT_QUOTES, 'UTF-8') ?>" required>
+                    </div>
+                </div>
+                <fieldset class="shift-weekday-picker">
+                    <legend>Ngày áp dụng *</legend>
+                    <div class="shift-weekday-options">
+                        <?php foreach ([1 => 'T2', 2 => 'T3', 3 => 'T4', 4 => 'T5', 5 => 'T6', 6 => 'T7', 7 => 'CN'] as $weekday => $label): ?>
+                            <label><input type="checkbox" name="ThuApDung[]" value="<?= $weekday ?>" <?= in_array($weekday, $defaultWeekdays, true) ? 'checked' : '' ?>> <?= $label ?></label>
+                        <?php endforeach; ?>
+                    </div>
+                </fieldset>
+                <div class="form-actions"><button class="button button--primary" type="submit">Phân ca hàng loạt</button></div>
+            </form>
+        </details>
+
+        <details class="shift-batch-details">
+            <summary class="button button--secondary">Copy tuần trước</summary>
+            <form class="employee-form shift-copy-week-form" method="post" action="/?action=copy_week_shifts">
+                <input type="hidden" name="_csrf_token" value="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>">
+                <input type="hidden" name="return_tab" value="assignments">
+                <input type="hidden" name="return_date" value="<?= htmlspecialchars($selectedDate, ENT_QUOTES, 'UTF-8') ?>">
+                <div class="filter-grid">
+                    <div class="form-field">
+                        <label for="source-week">Tuần nguồn, bắt đầu thứ Hai *</label>
+                        <input id="source-week" type="date" name="TuanNguon" value="<?= htmlspecialchars($currentWeekStart, ENT_QUOTES, 'UTF-8') ?>" required>
+                    </div>
+                    <div class="form-field">
+                        <label for="target-week">Tuần đích, bắt đầu thứ Hai *</label>
+                        <input id="target-week" type="date" name="TuanDich" value="<?= htmlspecialchars($nextWeekStart, ENT_QUOTES, 'UTF-8') ?>" required>
+                    </div>
+                </div>
+                <p class="field-hint">Lịch trong tuần nguồn sẽ được chép sang cùng thứ của tuần kế tiếp.</p>
+                <div class="form-actions"><button class="button button--primary" type="submit">Sao chép lịch tuần</button></div>
+            </form>
+        </details>
+    </section>
+
     <section class="workspace-section" aria-label="Danh sách phân ca">
             <form class="workspace-toolbar shift-date-toolbar" method="get" action="/">
                 <input type="hidden" name="action" value="shifts">

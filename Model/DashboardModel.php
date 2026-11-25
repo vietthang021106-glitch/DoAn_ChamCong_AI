@@ -10,9 +10,12 @@ final class DashboardModel
     public function findOverview(string $date): array
     {
         $pdo = Database::getConnection();
-        $totalEmployees = (int)$pdo->query('SELECT COUNT(*) FROM NhanVien')->fetchColumn();
+        $activeEmployee = Database::activeEmployeePredicate('', $pdo);
+        $activeEmployeeNv = Database::activeEmployeePredicate('nv', $pdo);
+        $activeEmployeeAlert = Database::activeEmployeePredicate('ActiveNV', $pdo);
+        $totalEmployees = (int)$pdo->query('SELECT COUNT(*) FROM NhanVien WHERE ' . $activeEmployee)->fetchColumn();
         $registeredEmployees = (int)$pdo->query(
-            'SELECT COUNT(DISTINCT MaNV) FROM FaceEmbedding'
+            'SELECT COUNT(DISTINCT fe.MaNV) FROM FaceEmbedding fe INNER JOIN NhanVien nv ON nv.MaNV = fe.MaNV WHERE ' . $activeEmployeeNv
         )->fetchColumn();
 
         $attendanceRows = (new AttendanceModel())->findDaily($date);
@@ -80,14 +83,15 @@ final class DashboardModel
         $weekStart = (new DateTimeImmutable($date, new DateTimeZone('Asia/Ho_Chi_Minh')))
             ->modify('-6 days')
             ->format('Y-m-d');
-        $weeklyStatement = $pdo->prepare(<<<'SQL'
+        $weeklyStatement = $pdo->prepare(<<<SQL
             SELECT
-                DATE(GioVao) AS Ngay,
-                COUNT(MaCC) AS SoNguoiVao,
-                SUM(CASE WHEN GioRa IS NOT NULL THEN 1 ELSE 0 END) AS SoNguoiRa
-            FROM ChamCong
-            WHERE GioVao >= :week_start AND GioVao < :day_after
-            GROUP BY DATE(GioVao)
+                DATE(CC.GioVao) AS Ngay,
+                COUNT(CC.MaCC) AS SoNguoiVao,
+                SUM(CASE WHEN CC.GioRa IS NOT NULL THEN 1 ELSE 0 END) AS SoNguoiRa
+            FROM ChamCong CC
+            INNER JOIN NhanVien NV ON NV.MaNV = CC.MaNV AND {$activeEmployeeNv}
+            WHERE CC.GioVao >= :week_start AND CC.GioVao < :day_after
+            GROUP BY DATE(CC.GioVao)
             ORDER BY Ngay ASC
             SQL);
         $weeklyStatement->execute([
@@ -114,7 +118,7 @@ final class DashboardModel
             ];
         }
 
-        $alerts = $pdo->query(<<<'SQL'
+        $alerts = $pdo->query(<<<SQL
             SELECT
                 NV.HoTen,
                 COALESCE(BH.TenBieuHien, LCB.TenLoaiCB) AS LoaiCanhBao,
@@ -124,6 +128,11 @@ final class DashboardModel
             LEFT JOIN LoaiCanhBao LCB ON LCB.MaLoaiCB = CB.MaLoaiCB
             LEFT JOIN LichSuTrangThai TT ON TT.MaTT = CB.MaTT
             LEFT JOIN DanhMucBieuHien BH ON BH.MaBieuHien = TT.MaBieuHien
+            WHERE CB.MaNV IS NULL OR EXISTS (
+                SELECT 1 FROM NhanVien ActiveNV
+                WHERE ActiveNV.MaNV = CB.MaNV
+                  AND {$activeEmployeeAlert}
+            )
             ORDER BY CB.ThoiGian DESC, CB.MaCB DESC
             LIMIT 5
             SQL)->fetchAll();

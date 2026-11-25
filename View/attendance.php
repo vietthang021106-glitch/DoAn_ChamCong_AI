@@ -24,6 +24,21 @@ $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($pagina
         <?php elseif ($activeTab === 'live'): ?>
             <?php require __DIR__ . '/partials/live_attendance.php'; ?>
         <?php else: ?>
+        <section class="ai1-recognition" data-ai1-recognition data-csrf="<?= htmlspecialchars(CsrfToken::token(), ENT_QUOTES, 'UTF-8') ?>" aria-label="Nhận diện khuôn mặt AI1">
+            <div class="ai1-recognition-copy">
+                <p class="eyebrow">AI1 · ArcFace buffalo_l</p>
+                <h2>Quét khuôn mặt</h2>
+                <p>Dùng ba khung hình mới, kiểm tra chúng nhất quán rồi chọn khung rõ nhất. Chức năng này chỉ hiển thị kết quả nhận diện, không ghi chấm công.</p>
+                <button class="button button--primary" type="button" data-ai1-recognition-start>Bắt đầu quét</button>
+                <p class="ai1-recognition-status" data-ai1-recognition-status data-state="idle" role="status" aria-live="polite">Sẵn sàng</p>
+                <div class="ai1-recognition-result" data-ai1-recognition-result hidden></div>
+            </div>
+            <div class="ai1-recognition-camera-wrap">
+                <img data-ai1-recognition-camera alt="Khung hình camera AI1" hidden>
+                <canvas data-ai1-recognition-canvas hidden aria-label="Khung hình nhận diện tốt nhất"></canvas>
+                <div data-ai1-recognition-empty>Camera dùng chung từ nguồn hiện tại.</div>
+            </div>
+        </section>
         <form class="workspace-filters attendance-workspace-filters" method="get" action="/">
             <input type="hidden" name="action" value="attendance">
             <div class="filter-grid attendance-filter-grid">
@@ -154,5 +169,6 @@ $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($pagina
 </main>
 <?php require __DIR__ . '/partials/evidence_lightbox.php'; ?>
 <script src="/public/js/evidence_lightbox.js" defer></script>
+<script src="/public/js/face_recognition.js" defer></script>
 <?php if ($activeTab === 'live'): ?><script src="/public/js/live_attendance.js" defer></script><?php endif; ?>
 <?php require __DIR__ . '/layout/footer.php'; ?>

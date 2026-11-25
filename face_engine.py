@@ -2,6 +2,7 @@
 
 import numpy as np
 import threading
+import inspect
 import cv2
 
 
@@ -303,9 +304,13 @@ class FaceRecognitionEngine:
 
             keypoints = getattr(face, "kps", None)
             pose = None
+            keypoint_payload = None
             if keypoints is not None:
                 try:
                     pose = estimate_head_pose(keypoints, frame.shape)
+                    keypoint_payload = np.asarray(
+                        keypoints, dtype=np.float64
+                    ).reshape(5, 2).tolist()
                 except (ValueError, cv2.error):
                     pose = None
             results.append({
@@ -313,6 +318,10 @@ class FaceRecognitionEngine:
                 "vector_bytes": embedding.astype("<f4", copy=False).tobytes(),
                 "bbox": [float(value) for value in bbox],
                 "detection_score": score,
+                # InsightFace SCRFD landmarks are the two eye centers, nose
+                # tip, and two mouth corners. They are for head-pose geometry,
+                # never pupil/gaze classification.
+                "keypoints": keypoint_payload,
                 "head_pose": pose,
             })
         return results
@@ -320,6 +329,89 @@ class FaceRecognitionEngine:
     def detect_enrollment_embeddings(self, frame):
         """Count lower-confidence SCRFD candidates for enrollment only."""
         return self.detect_embeddings(frame, detection_threshold=ENROLLMENT_DETECTION_FLOOR)
+
+    def detect_pose_faces(self, frame, detection_threshold=ENROLLMENT_DETECTION_FLOOR):
+        """Run SCRFD and solvePnP without invoking ArcFace recognition.
+
+        AUTO enrollment calls this for its per-frame pose/quality tracking. The
+        same detector instance and engine lock are used as ``detect_embeddings``;
+        ArcFace is reserved for the selected best frame. The temporary detector
+        threshold (needed by older InsightFace versions) is always restored.
+        """
+        if not self._initialized or self._app is None:
+            raise RuntimeError("Engine chua duoc khoi tao. Goi initialize() truoc.")
+        if (not isinstance(frame, np.ndarray) or frame.ndim != 3
+                or frame.shape[2] != 3 or frame.size == 0):
+            raise RuntimeError("Frame BGR dau vao khong hop le.")
+        try:
+            minimum_score = float(detection_threshold)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Detection threshold must be between 0 and 1.") from exc
+        if not np.isfinite(minimum_score) or not 0.0 <= minimum_score <= 1.0:
+            raise ValueError("Detection threshold must be between 0 and 1.")
+
+        with self._lock:
+            detector = getattr(self._app, "det_model", None)
+            detect = getattr(detector, "detect", None)
+            if not callable(detect):
+                raise RuntimeError("InsightFace SCRFD detector is unavailable.")
+            original_threshold = getattr(detector, "det_thresh", None)
+            lower_threshold = minimum_score < DETECTION_MIN_SCORE
+            supports_det_thresh = False
+            try:
+                supports_det_thresh = "det_thresh" in inspect.signature(detect).parameters
+            except (TypeError, ValueError):
+                pass
+            if lower_threshold and not supports_det_thresh and original_threshold is None:
+                raise RuntimeError("SCRFD does not expose a configurable detection threshold.")
+            try:
+                if lower_threshold and not supports_det_thresh:
+                    detector.det_thresh = minimum_score
+                kwargs = {"max_num": 0, "metric": "default"}
+                if supports_det_thresh:
+                    kwargs["det_thresh"] = minimum_score
+                bboxes, keypoints = detect(frame, **kwargs)
+            finally:
+                if lower_threshold and not supports_det_thresh:
+                    detector.det_thresh = original_threshold
+
+        if bboxes is None:
+            return []
+        try:
+            boxes = np.asarray(bboxes, dtype=np.float64)
+            points = None if keypoints is None else np.asarray(keypoints, dtype=np.float64)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("SCRFD returned malformed detections.") from exc
+        if boxes.size == 0:
+            return []
+        if boxes.ndim != 2 or boxes.shape[1] < 5:
+            raise RuntimeError("SCRFD returned malformed bounding boxes.")
+        if points is not None and (points.ndim != 3 or points.shape[1:] != (5, 2)):
+            points = None
+
+        results = []
+        for index, row in enumerate(boxes):
+            score = float(row[4])
+            bbox = row[:4]
+            if (not np.isfinite(score) or score < minimum_score or score > 1.0
+                    or not np.all(np.isfinite(bbox)) or bbox[2] <= bbox[0]
+                    or bbox[3] <= bbox[1]):
+                continue
+            keypoint_payload = None
+            pose = None
+            if points is not None and index < len(points) and np.all(np.isfinite(points[index])):
+                keypoint_payload = points[index].tolist()
+                try:
+                    pose = estimate_head_pose(points[index], frame.shape)
+                except (ValueError, cv2.error):
+                    pose = None
+            results.append({
+                "bbox": [float(value) for value in bbox],
+                "detection_score": score,
+                "keypoints": keypoint_payload,
+                "head_pose": pose,
+            })
+        return results
 
     def inspect_pose(self, frame):
         """

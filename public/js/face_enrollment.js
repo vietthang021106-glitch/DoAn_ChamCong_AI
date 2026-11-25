@@ -8,13 +8,21 @@
     const section = root.closest('.face-management');
     const startButton = section.querySelector('[data-face-start]');
     const deleteButton = section.querySelector('[data-face-delete]');
+    const deviceSelect = section.querySelector('[data-face-device]');
+    const modeSelect = section.querySelector('[data-face-mode]');
     const cancelButton = root.querySelector('[data-face-cancel]');
     const completeButton = root.querySelector('[data-face-complete]');
+    const captureButton = root.querySelector('[data-face-capture]');
+    const manualFallbackButton = root.querySelector('[data-face-manual-fallback]');
+    const terminalLink = root.querySelector('[data-face-terminal-link]');
     const camera = root.querySelector('[data-face-camera]');
     const cameraEmpty = root.querySelector('[data-face-camera-empty]');
     const stepLabel = root.querySelector('[data-face-step]');
     const feedback = root.querySelector('[data-face-feedback]');
     const poseList = root.querySelector('[data-face-pose-list]');
+    const guide = root.querySelector('[data-face-guide]');
+    const thumbnails = [...root.querySelectorAll('[data-pose-thumb]')];
+    const enrollmentUi = window.AI1EnrollmentUI;
     const result = section.querySelector('[data-face-result]');
     const poses = [
         { key: 'frontal', label: 'Chính diện' },
@@ -23,16 +31,23 @@
         { key: 'up', label: 'Ngẩng nhẹ' },
         { key: 'down', label: 'Cúi nhẹ' },
     ];
+    const poseName = (key) => poses.find((pose) => pose.key === key)?.label || ({
+        no_face: 'Không có khuôn mặt',
+        multiple_faces: 'Có nhiều khuôn mặt',
+        unknown: 'Chưa xác định',
+        between: 'Chưa đúng hướng',
+    }[key] || key || 'Chưa xác định');
 
     let captured = 0;
     let running = false;
     let busy = false;
-    let stableSince = 0;
     let poseTimer = null;
     let frameTimer = null;
+    let activeMode = 'AUTO';
+    let duplicateCheckStatus = null;
 
-    const post = async (action) => {
-        const body = new URLSearchParams({ _csrf_token: csrfToken });
+    const post = async (action, values = {}) => {
+        const body = new URLSearchParams({ _csrf_token: csrfToken, ...values });
         const response = await fetch(`/?action=${action}&id=${encodeURIComponent(employeeId)}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
@@ -58,6 +73,42 @@
         result.hidden = false;
     };
 
+    const duplicateUnavailableReason = (reason) => ({
+        THRESHOLD_NOT_CALIBRATED: 'chưa có ngưỡng chống trùng được hiệu chỉnh.',
+        INCOMPLETE_GALLERY: 'gallery của nhân viên khác không có đúng 5 mẫu chuẩn để đối chiếu.',
+        GALLERY_UNAVAILABLE: 'không đọc được gallery hiện tại.',
+        GALLERY_ENROLLMENT_LOCK_UNAVAILABLE: 'không khóa được gallery trong lúc lưu.',
+        INVALID_OR_UNREADABLE_EMBEDDING: 'có embedding không hợp lệ trong gallery.',
+    }[reason] || '');
+
+    const renderDuplicateCheck = (check) => {
+        duplicateCheckStatus = check?.status || 'CHECK_UNAVAILABLE';
+        completeButton.disabled = duplicateCheckStatus !== 'CLEAR';
+
+        if (duplicateCheckStatus === 'CLEAR') {
+            guide.dataset.state = 'ready';
+            feedback.textContent = 'Kiểm tra trùng: CLEAR · chưa phát hiện bằng chứng trùng. Có thể lưu 5 mẫu.';
+            return;
+        }
+
+        if (duplicateCheckStatus === 'SUSPECTED_DUPLICATE') {
+            const candidateId = Number(check.candidate_id);
+            const employeeCode = Number.isInteger(candidateId) && candidateId > 0
+                ? 'NV' + String(candidateId).padStart(3, '0')
+                : 'nhân viên khác';
+            const candidateName = check.candidate_name ? ' · ' + check.candidate_name : '';
+            guide.dataset.state = 'fail';
+            feedback.textContent = 'Phát hiện khuôn mặt có khả năng trùng với nhân viên '
+                + employeeCode + candidateName + '. Vui lòng kiểm tra trước khi đăng ký; lưu đang bị chặn.';
+            return;
+        }
+
+        const detail = duplicateUnavailableReason(check?.reason);
+        guide.dataset.state = 'fail';
+        feedback.textContent = 'Chưa thể kiểm tra trùng khuôn mặt. Vui lòng thử lại.'
+            + (detail ? ' Nguyên nhân: ' + detail : '') + ' Lưu đang bị chặn.';
+    };
+
     const renderStep = () => {
         const step = poses[captured];
         stepLabel.textContent = step
@@ -67,6 +118,26 @@
             item.classList.toggle('is-complete', index < captured);
             item.classList.toggle('is-active', index === captured && captured < poses.length);
         });
+        thumbnails.forEach((figure, index) => {
+            const image = figure.querySelector('img');
+            figure.classList.toggle('is-complete', index < captured);
+            if (index >= captured) image.removeAttribute('src');
+        });
+    };
+
+    const showCapturedThumbnail = (index) => {
+        const figure = thumbnails[index];
+        const image = figure?.querySelector('img');
+        if (!image) return;
+        image.src = `/?action=face_enrollment_preview&id=${encodeURIComponent(employeeId)}&index=${index}&ts=${Date.now()}`;
+        figure.classList.add('is-complete');
+    };
+
+    const showCapturedThumbnails = (previous, current, complete = false) => {
+        const indexes = enrollmentUi
+            ? enrollmentUi.thumbnailIndexesToLoad(previous, current, activeMode, complete)
+            : (complete ? Array.from({ length: Math.max(0, Math.min(5, current)) }, (_value, index) => index) : []);
+        indexes.forEach(showCapturedThumbnail);
     };
 
     const setCamera = (enabled) => {
@@ -90,7 +161,6 @@
         clearInterval(poseTimer);
         poseTimer = null;
         running = false;
-        stableSince = 0;
     };
 
     camera.addEventListener('error', () => {
@@ -106,58 +176,114 @@
         }
     });
 
-    const captureCurrentPose = async () => {
-        busy = true;
-        stableSince = 0;
-        try {
-            const { response, payload } = await post('face_enrollment_capture');
-            if (!response.ok || !payload.success) {
-                feedback.textContent = payload.instruction || payload.message || 'Mẫu chưa hợp lệ, hãy giữ đúng hướng.';
-                return;
-            }
-            captured = Number(payload.captured);
-            renderStep();
-            if (payload.complete) {
-                stopPosePolling();
-                completeButton.hidden = false;
-                completeButton.disabled = false;
-                cancelButton.hidden = true;
-                feedback.textContent = 'Đã ghi nhận đủ 5 góc. Lưu batch để hoàn tất.';
-            } else {
-                feedback.textContent = 'Đã ghi nhận. Đang chuyển sang hướng tiếp theo.';
-            }
-        } catch (error) {
-            feedback.textContent = error.message;
-        } finally {
-            busy = false;
-        }
-    };
-
     const inspectPose = async () => {
         if (!running || busy) return;
         busy = true;
         try {
             const { response, payload } = await post('face_enrollment_pose');
             if (!response.ok || !payload.success) {
-                stableSince = 0;
-                feedback.textContent = payload.message || 'Không đọc được frame từ camera.';
+                guide.dataset.state = 'fail';
+                const stable = Number(payload.stable_frame_count || 0);
+                const required = Number(payload.stable_frames_required || (activeMode === 'AUTO' ? 5 : 8));
+                const detected = poseName(payload.current_pose);
+                const quality = payload.quality_ok === false ? 'Quality: FAIL' : 'Quality: kiểm tra';
+                feedback.textContent = `${payload.state || 'Chưa sẵn sàng'} · pose cần ${poses[captured]?.label || '—'} · phát hiện ${detected} · ${quality} · ${payload.reason || payload.message || 'Không đọc được trạng thái AI1.'}`;
                 return;
             }
-            feedback.textContent = payload.instruction || 'Đang kiểm tra hướng khuôn mặt.';
-            if (!payload.pose_ok) {
-                stableSince = 0;
+            const newCaptured = Number(payload.captured ?? captured);
+            if (newCaptured !== captured) {
+                const previous = captured;
+                captured = newCaptured;
+                renderStep();
+                showCapturedThumbnails(previous, newCaptured, false);
+            }
+
+            if (payload.state === 'MANUAL_FALLBACK') {
+                stopPosePolling();
+                guide.dataset.state = 'fail';
+                captureButton.hidden = true;
+                manualFallbackButton.hidden = false;
+                completeButton.hidden = true;
+                feedback.textContent = `${payload.reason || 'AUTO tạm dừng.'} Bạn có thể tiếp tục bằng MANUAL.`;
                 return;
             }
-            if (stableSince === 0) stableSince = Date.now();
-            if (Date.now() - stableSince >= 800) {
-                await captureCurrentPose();
+
+            if (payload.complete || payload.state === 'AWAITING_CONFIRMATION' || captured >= poses.length) {
+                // AUTO samples are copied from the AI worker into the PHP session
+                // only after all five have passed validation. Reload every indexed
+                // image now that hydrateAutoSamples() has completed.
+                showCapturedThumbnails(captured, captured, true);
+                stopPosePolling();
+                guide.dataset.state = 'ready';
+                captureButton.hidden = true;
+                manualFallbackButton.hidden = true;
+                completeButton.hidden = false;
+                cancelButton.hidden = false;
+                renderDuplicateCheck(payload.duplicate_check);
+                return;
+            }
+
+            if (payload.auto_captured) {
+                guide.dataset.state = 'ready';
+                feedback.textContent = `${payload.instruction || 'Đã tự động chụp.'} Bước ${captured + 1}/5 · ${poses[captured].label}`;
+                return;
+            }
+
+            const stable = Number(payload.stable_frame_count || 0);
+            const required = Number(payload.stable_frames_required || (activeMode === 'AUTO' ? 5 : 8));
+            const instruction = payload.instruction || 'Đang kiểm tra hướng khuôn mặt.';
+            const expected = poses[captured]?.label || 'Hoàn tất 5 góc';
+            const detected = poseName(payload.current_pose);
+            const quality = activeMode === 'MANUAL'
+                ? (payload.ready ? 'Quality: GOOD' : 'Quality: chưa đạt')
+                : (Number.isFinite(Number(payload.inference_fps))
+                    ? `AI1 AUTO · ${Number(payload.inference_fps).toFixed(1)} FPS` : 'AI1 AUTO');
+            guide.dataset.state = payload.ready ? 'ready' : 'adjust';
+            if (activeMode === 'MANUAL') {
+                captureButton.hidden = !(payload.ready && stable >= required);
+                feedback.textContent = `${payload.ready ? 'Sẵn sàng chụp' : 'Chưa sẵn sàng'} · cần ${expected} · phát hiện ${detected} · ${quality} · ${instruction} · ổn định ${stable}/${required}`;
+            } else {
+                captureButton.hidden = true;
+                feedback.textContent = `${expected} · ${quality} · ${instruction || 'Đang thu mẫu tự động.'} · mẫu ${captured}/5`;
             }
         } catch (error) {
-            stableSince = 0;
-            feedback.textContent = error.message;
+            guide.dataset.state = 'fail';
+            feedback.textContent = `Chưa sẵn sàng · ${error.message}`;
         } finally {
             busy = false;
         }
+    };
+
+    const beginEnrollment = async (mode, terminalWindow = null) => {
+        activeMode = mode;
+        const deviceId = root.dataset.deviceId || deviceSelect?.value || '';
+        const { response, payload } = await post('face_enrollment_start', {
+            mode,
+            device_id: deviceId,
+        });
+        if (!response.ok || !payload.success) throw new Error(payload.message || 'Không thể bắt đầu đăng ký.');
+        terminalLink.href = `/?action=man-hinh-cham-cong&device_id=${encodeURIComponent(deviceId)}`;
+        terminalLink.hidden = false;
+        if (terminalWindow && !terminalWindow.closed) {
+            terminalWindow.location = terminalLink.href;
+        }
+        captured = 0;
+        duplicateCheckStatus = null;
+        renderStep();
+        guide.dataset.state = 'adjust';
+        root.hidden = false;
+        result.hidden = true;
+        setCamera(mode === 'MANUAL');
+        cancelButton.hidden = false;
+        captureButton.hidden = true;
+        manualFallbackButton.hidden = true;
+        completeButton.hidden = true;
+        completeButton.disabled = true;
+        feedback.textContent = mode === 'AUTO'
+            ? 'Màn hình chấm công sẽ hiển thị phiên này. AI1 tự thu năm hướng; không cần nhấn phím.'
+            : 'Chọn đúng từng hướng. Khi đủ quality và ổn định 8 frame, nhấn “Chụp pose hiện tại”.';
+        running = true;
+        poseTimer = setInterval(inspectPose, mode === 'AUTO' ? 350 : 150);
     };
 
     startButton.addEventListener('click', async () => {
@@ -165,24 +291,53 @@
             return;
         }
         startButton.disabled = true;
+        const selectedMode = modeSelect?.value || 'AUTO';
+        const terminalWindow = window.open('about:blank', `attendance-terminal-${root.dataset.deviceId || 'device'}`);
         try {
-            const { response, payload } = await post('face_enrollment_start');
-            if (!response.ok || !payload.success) throw new Error(payload.message || 'Không thể bắt đầu đăng ký.');
-            captured = 0;
-            renderStep();
-            root.hidden = false;
-            result.hidden = true;
-            setCamera(true);
-            cancelButton.hidden = false;
-            completeButton.hidden = true;
-            completeButton.disabled = true;
-            feedback.textContent = 'Đang chờ khuôn mặt trước camera.';
-            running = true;
-            poseTimer = setInterval(inspectPose, 500);
+            await beginEnrollment(selectedMode, terminalWindow);
         } catch (error) {
+            if (terminalWindow && !terminalWindow.closed) terminalWindow.close();
             showResult(error.message, 'error');
         } finally {
             startButton.disabled = false;
+        }
+    });
+
+    captureButton.addEventListener('click', async () => {
+        if (activeMode !== 'MANUAL' || busy || !running) return;
+        captureButton.disabled = true;
+        try {
+            const { response, payload } = await post('face_enrollment_capture');
+            if (!response.ok || !payload.success) throw new Error(payload.reason || payload.message || 'Không thể chụp pose.');
+            const previous = captured;
+            captured = Number(payload.captured ?? captured);
+            renderStep();
+            showCapturedThumbnails(previous, captured, Boolean(payload.complete));
+            captureButton.hidden = true;
+            if (payload.complete || captured >= poses.length) {
+                stopPosePolling();
+                completeButton.hidden = false;
+                renderDuplicateCheck(payload.duplicate_check);
+            } else {
+                feedback.textContent = `Đã chụp ${captured}/5 · Pose tiếp theo: ${poses[captured].label}`;
+            }
+        } catch (error) {
+            feedback.textContent = error.message;
+        } finally {
+            captureButton.disabled = false;
+        }
+    });
+
+    manualFallbackButton.addEventListener('click', async () => {
+        manualFallbackButton.disabled = true;
+        try {
+            await post('face_enrollment_cancel');
+            modeSelect.value = 'MANUAL';
+            await beginEnrollment('MANUAL');
+        } catch (error) {
+            showResult(error.message, 'error');
+        } finally {
+            manualFallbackButton.disabled = false;
         }
     });
 
@@ -190,13 +345,23 @@
         completeButton.disabled = true;
         try {
             const { response, payload } = await post('face_enrollment_complete');
-            if (!response.ok || !payload.success) throw new Error(payload.message || 'Không thể lưu batch.');
+            if (!response.ok || !payload.success) {
+                if (payload.duplicate_check) renderDuplicateCheck(payload.duplicate_check);
+                const error = new Error(payload.message || 'Không thể lưu batch.');
+                error.duplicateCheck = payload.duplicate_check;
+                throw error;
+            }
             showResult(payload.gallery_updated
                 ? 'Đã lưu 5 mẫu khuôn mặt và làm mới gallery AI.'
-                : 'Đã lưu 5 mẫu. Gallery AI chưa làm mới; dữ liệu cũ vẫn an toàn.', 'success');
+                : 'Đã lưu 5 mẫu, nhưng gallery AI1 chưa đồng bộ. Nhận diện sẽ tạm dừng cho đến khi đồng bộ thành công.',
+                payload.gallery_updated ? 'success' : 'warning');
             setTimeout(() => window.location.reload(), 900);
         } catch (error) {
-            completeButton.disabled = false;
+            if (error.duplicateCheck) {
+                renderDuplicateCheck(error.duplicateCheck);
+            } else {
+                completeButton.disabled = duplicateCheckStatus !== 'CLEAR';
+            }
             showResult(error.message, 'error');
         }
     });
@@ -210,6 +375,9 @@
         }
         root.hidden = true;
         setCamera(false);
+        guide.dataset.state = 'adjust';
+        thumbnails.forEach((figure) => figure.querySelector('img')?.removeAttribute('src'));
+        thumbnails.forEach((figure) => figure.classList.remove('is-complete'));
         showResult('Đã hủy phiên. Chưa có mẫu nào được lưu.', 'info');
     });
 

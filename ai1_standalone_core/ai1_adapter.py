@@ -298,3 +298,70 @@ def validate_enrollment_frame(engine, frame, expected_pose, *, enforce_pose=True
     return {**extracted, "reason": "Quality checks passed.", "quality": quality,
             "detected_pose": detected_pose, "expected_pose": expected_pose,
             "diagnostics": diagnostics}
+
+
+def validate_enrollment_pose_frame(engine, frame, expected_pose):
+    """Validate one AUTO tracking frame with SCRFD/quality only, no ArcFace.
+
+    The same strict detection-count, confidence, bounds, centering, size,
+    brightness and sharpness gates used for enrollment remain active. The
+    selected frame is later passed through ``validate_enrollment_frame`` to
+    produce its 512D embedding and repeat those gates before capture.
+    """
+    started = time.perf_counter()
+    try:
+        detector = getattr(engine, "detect_pose_faces", None)
+        if not callable(detector):
+            return {"status": "RETRY", "code": "POSE DETECTOR UNAVAILABLE",
+                    "reason": "SCRFD pose-only interface is unavailable; AUTO tracking stopped.",
+                    "embedding": None, "face": None, "faces": [], "face_count": 0,
+                    "expected_pose": expected_pose,
+                    "latency_ms": (time.perf_counter() - started) * 1000.0}
+        faces = detector(frame, detection_threshold=production_face_engine.ENROLLMENT_DETECTION_FLOOR)
+    except Exception as exc:
+        return {"status": "RETRY", "code": "AI ERROR", "reason": str(exc),
+                "embedding": None, "face": None, "faces": [], "face_count": 0,
+                "expected_pose": expected_pose,
+                "latency_ms": (time.perf_counter() - started) * 1000.0}
+    latency = (time.perf_counter() - started) * 1000.0
+    if len(faces) == 0:
+        return {"status": "RETRY", "code": "NO FACE", "reason": "NO FACE",
+                "embedding": None, "face": None, "faces": [], "face_count": 0,
+                "expected_pose": expected_pose, "latency_ms": latency,
+                "diagnostics": {"face_count": 0, "quality_result": "FAIL",
+                                "quality_code": "NO FACE"}}
+    if len(faces) != 1:
+        return {"status": "RETRY", "code": "MULTIPLE FACES",
+                "reason": "Chỉ được có đúng một khuôn mặt trong khung.",
+                "embedding": None, "face": faces[0], "faces": faces,
+                "face_count": len(faces), "expected_pose": expected_pose,
+                "latency_ms": latency,
+                "diagnostics": {"face_count": len(faces), "quality_result": "FAIL",
+                                "quality_code": "MULTIPLE FACES"}}
+
+    face = faces[0]
+    quality = production_face_engine.assess_capture_quality(
+        frame, face, center_tolerance=ENROLLMENT_CENTER_TOLERANCE,
+        max_size_ratio=ENROLLMENT_MAX_SIZE_RATIO,
+        edge_margin_ratio=ENROLLMENT_EDGE_MARGIN_RATIO,
+    )
+    diagnostics = enrollment_debug_metrics(frame, face, expected_pose,
+                                           quality=quality, face_count=1)
+    diagnostics["quality_code"] = "PASS" if quality.get("ready") else _quality_failure_code(quality, face)
+    diagnostics["detected_pose"] = classify_enrollment_pose(face, expected_pose)
+    code = "OK" if quality.get("ready") else diagnostics["quality_code"]
+    return {
+        "status": "OK" if quality.get("ready") else "RETRY",
+        "code": code,
+        "reason": ("Pose tracking quality checks passed." if quality.get("ready")
+                   else str(quality.get("instruction", code))),
+        "embedding": None,
+        "face": face,
+        "faces": faces,
+        "face_count": 1,
+        "quality": quality,
+        "diagnostics": diagnostics,
+        "detected_pose": diagnostics["detected_pose"],
+        "expected_pose": expected_pose,
+        "latency_ms": latency,
+    }

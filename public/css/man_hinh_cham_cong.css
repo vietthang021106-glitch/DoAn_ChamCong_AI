@@ -1,0 +1,308 @@
+:root {
+    color-scheme: light;
+    font-family: "Segoe UI", Arial, sans-serif;
+    font-synthesis: none;
+    text-rendering: optimizeLegibility;
+    --terminal-ink: #202a32;
+    --terminal-muted: #58646d;
+    --terminal-line: #d5dade;
+    --terminal-paper: #ffffff;
+    --terminal-ground: #edf0f2;
+    --terminal-green: #176a3a;
+    --terminal-red: #a72b2b;
+}
+
+* { box-sizing: border-box; }
+
+html,
+body {
+    width: 100%;
+    min-width: 320px;
+    height: 100%;
+    min-height: 100%;
+    margin: 0;
+}
+
+body {
+    color: var(--terminal-ink);
+    background: var(--terminal-ground);
+}
+
+.attendance-terminal {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    width: 100%;
+    height: 100svh;
+    min-height: 440px;
+    overflow: hidden;
+}
+
+.terminal-header {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    min-height: 82px;
+    padding: 10px clamp(18px, 3vw, 40px);
+    border-bottom: 1px solid var(--terminal-line);
+    background: var(--terminal-paper);
+}
+
+.terminal-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.terminal-mark {
+    width: 5px;
+    height: 35px;
+    background: #4b5962;
+}
+
+.terminal-title p,
+.terminal-title h1,
+.terminal-date,
+.terminal-status,
+.terminal-result,
+.terminal-hint {
+    margin: 0;
+}
+
+.terminal-title p {
+    color: var(--terminal-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .12em;
+}
+
+.terminal-title h1 {
+    margin-top: 2px;
+    font-size: clamp(17px, 2vw, 22px);
+    line-height: 1.1;
+    letter-spacing: .035em;
+}
+
+.terminal-clock-block {
+    display: grid;
+    justify-items: center;
+    gap: 1px;
+    min-width: 180px;
+}
+
+.terminal-clock {
+    font-variant-numeric: tabular-nums;
+    font-size: clamp(32px, 5vw, 47px);
+    font-weight: 600;
+    line-height: 1;
+    letter-spacing: .035em;
+}
+
+.terminal-date {
+    color: var(--terminal-muted);
+    font-size: 13px;
+}
+
+.terminal-device {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    justify-self: end;
+    color: var(--terminal-muted);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: .08em;
+}
+
+.terminal-fullscreen {
+    padding: 7px 10px;
+    border: 1px solid var(--terminal-line);
+    background: #fff;
+    color: var(--terminal-ink);
+    font: inherit;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.terminal-main {
+    display: grid;
+    min-height: 0;
+    padding: 10px 20px;
+    place-items: center;
+}
+
+.terminal-camera-section {
+    display: grid;
+    width: 100%;
+    height: 100%;
+    min-height: 0;
+    place-items: center;
+}
+
+.terminal-camera {
+    position: relative;
+    width: min(94vw, calc((100svh - 188px) * var(--frame-ratio, 1.333333)));
+    max-width: 100%;
+    max-height: 100%;
+    aspect-ratio: var(--frame-ratio, 1.333333);
+    overflow: hidden;
+    background: #121619;
+    border: 1px solid #20282d;
+}
+
+.terminal-camera img,
+.terminal-camera canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.terminal-scan-ring {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
+    display: block;
+    width: 100%;
+    height: 100%;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.terminal-scan-ring[hidden] { display: none; }
+
+.terminal-camera img[hidden],
+.terminal-camera canvas[hidden] {
+    display: none;
+}
+
+.terminal-camera-empty {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    padding: 20px;
+    color: #f3f5f6;
+    font-size: clamp(15px, 2vw, 20px);
+    text-align: center;
+    place-items: center;
+}
+
+.terminal-camera-empty[hidden] { display: none; }
+
+.terminal-enrollment-panel {
+    position: absolute;
+    right: clamp(8px, 2vw, 22px);
+    bottom: clamp(8px, 2vw, 22px);
+    left: clamp(8px, 2vw, 22px);
+    padding: clamp(10px, 1.8vw, 18px);
+    border: 1px solid rgba(213, 218, 222, .95);
+    background: rgba(255, 255, 255, .96);
+    color: var(--terminal-ink);
+}
+
+.terminal-enrollment-panel[hidden] { display: none; }
+
+.terminal-enrollment-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.terminal-enrollment-heading p,
+.terminal-enrollment-pose,
+.terminal-enrollment-message { margin: 0; }
+
+.terminal-enrollment-heading p {
+    color: var(--terminal-muted);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .08em;
+}
+
+.terminal-enrollment-heading strong { font-size: clamp(14px, 1.7vw, 20px); }
+.terminal-enrollment-pose { margin-top: 5px; font-size: clamp(19px, 2.6vw, 30px); font-weight: 700; }
+.terminal-enrollment-message { margin-top: 3px; color: var(--terminal-muted); font-size: clamp(13px, 1.5vw, 17px); }
+
+.terminal-enrollment-steps {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 5px;
+    margin: 10px 0 0;
+    padding: 0;
+    list-style: none;
+}
+
+.terminal-enrollment-steps li {
+    padding: 5px 3px;
+    border-top: 3px solid var(--terminal-line);
+    color: var(--terminal-muted);
+    font-size: clamp(10px, 1.2vw, 13px);
+    text-align: center;
+}
+
+.terminal-enrollment-steps li.is-complete { border-color: var(--terminal-green); color: var(--terminal-green); }
+.terminal-enrollment-steps li.is-active { border-color: #64737d; color: var(--terminal-ink); font-weight: 700; }
+
+.terminal-footer {
+    display: grid;
+    justify-items: center;
+    min-height: 76px;
+    padding: 10px 20px 12px;
+    border-top: 1px solid var(--terminal-line);
+    background: var(--terminal-paper);
+    text-align: center;
+}
+
+.terminal-status {
+    align-self: end;
+    color: var(--terminal-ink);
+    font-size: clamp(17px, 2.2vw, 23px);
+    font-weight: 600;
+    line-height: 1.2;
+}
+
+.terminal-status[data-state="success"] { color: var(--terminal-green); }
+.terminal-status[data-state="error"],
+.terminal-status[data-state="unknown"],
+.terminal-status[data-state="offline"] { color: var(--terminal-red); }
+
+.terminal-result {
+    margin-top: 3px;
+    color: var(--terminal-ink);
+    font-size: 15px;
+    line-height: 1.35;
+    white-space: pre-line;
+}
+
+.terminal-hint {
+    align-self: end;
+    color: var(--terminal-muted);
+    font-size: 12px;
+}
+
+.terminal-result:not([hidden]) + .terminal-hint { display: none; }
+
+@media (max-height: 640px) {
+    .terminal-header { min-height: 70px; padding-block: 7px; }
+    .terminal-main { padding-block: 6px; }
+    .terminal-footer { min-height: 66px; padding-block: 7px; }
+    .terminal-camera {
+        width: min(94vw, calc((100svh - 148px) * var(--frame-ratio, 1.333333)));
+    }
+    .terminal-clock { font-size: 34px; }
+}
+
+@media (max-width: 600px) {
+    .terminal-header {
+        grid-template-columns: 1fr auto;
+        min-height: 76px;
+    }
+    .terminal-clock-block { grid-column: 2; grid-row: 1; min-width: 120px; }
+    .terminal-device { font-size: 10px; }
+    .terminal-fullscreen { padding: 5px 7px; font-size: 10px; }
+    .terminal-main { padding-inline: 8px; }
+    .terminal-camera {
+        width: min(96vw, calc((100svh - 160px) * var(--frame-ratio, 1.333333)));
+    }
+    .terminal-enrollment-steps { gap: 2px; }
+}

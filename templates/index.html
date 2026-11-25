@@ -491,48 +491,10 @@
   </div>
 </div>
 
-<!-- ================================================================
-     MODAL: ĐĂNG KÝ KHUÔN MẶT
-================================================================ -->
-<div class="modal-backdrop" id="modal-face" role="dialog" aria-modal="true" aria-labelledby="modal-face-title">
-  <div class="modal">
-    <div class="modal-header">
-      <div>
-        <div class="modal-title" id="modal-face-title">Đăng ký khuôn mặt</div>
-        <div class="modal-subtitle" id="modal-face-sub">--</div>
-      </div>
-      <button class="modal-close" onclick="closeFaceModal()" aria-label="Đóng">
-        <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    </div>
-    <div class="modal-body">
-      <div id="face-enrollment-body" style="display:grid;grid-template-columns:minmax(0,1.3fr) minmax(200px,1fr);gap:16px;align-items:start;">
-        <img id="face-enrollment-preview" src="{{ url_for('video_feed') }}" alt="Camera đăng ký khuôn mặt" style="width:100%;aspect-ratio:4/3;object-fit:cover;background:#111;border-radius:4px;">
-        <div>
-          <div id="face-enrollment-pose" style="font-size:18px;font-weight:650;margin-bottom:8px;">Chuẩn bị đăng ký</div>
-          <div id="face-enrollment-current" class="text-sm text-muted" style="margin-bottom:6px;">Đang kiểm tra hướng đầu...</div>
-          <div id="face-enrollment-progress" class="text-sm text-muted" style="margin-bottom:12px;">5 hướng: thẳng, trái, phải, lên, xuống</div>
-          <div id="face-enrollment-message" class="text-sm" style="min-height:40px;margin-bottom:12px;" aria-live="polite">Hướng đúng ổn định 0.8 giây sẽ tự chụp.</div>
-          <button class="btn btn-primary" id="face-enrollment-capture" onclick="captureFaceAngle()" disabled>Chụp góc này</button>
-        </div>
-      </div>
-      <div id="face-enrollment-complete" hidden>
-        <div style="font-size:18px;font-weight:650;margin-bottom:14px;">✓ Hoàn tất thêm nhân viên</div>
-        <div class="form-control-static" style="margin-bottom:8px;">✓ <span id="face-complete-name"></span></div>
-        <div class="form-control-static" style="margin-bottom:8px;">✓ <span id="face-complete-code"></span></div>
-        <div class="form-control-static" style="margin-bottom:8px;">✓ Vai trò: <span id="face-complete-role"></span></div>
-        <div class="form-control-static">✓ Khuôn mặt: Đã đăng ký</div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" id="face-modal-close-btn" onclick="closeFaceModal()">Hủy</button>
-    </div>
-  </div>
-</div>
-
 <div id="toast-container"></div>
 <script src="{{ url_for('static', filename='js/ui.js') }}"></script>
 <script>
+const _phpEmployeeUrl = {{ php_employee_url|tojson }};
 /* =====================================================================
    NAVIGATION — Section switching
    ===================================================================== */
@@ -988,10 +950,10 @@ function empRenderTable(emps) {
       : `<span class="role-chip">${escHtml(emp.TenVaiTro || '--')}</span>`;
     const faceHtml = emp.DaDangKyKhuonMat
       ? `<span class="badge badge-green">Đã đăng ký</span>`
-      : `<button class="btn btn-ghost btn-sm" onclick="openFaceModal(${emp.MaNV}, '${escHtml(emp.HoTen)}')" title="Đăng ký khuôn mặt">
+      : `<a class="btn btn-ghost btn-sm" href="${escHtml(_phpEmployeeUrl)}" title="Đăng ký khuôn mặt trong giao diện PHP">
            <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" style="width:13px;height:13px;"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-           Chưa đăng ký
-         </button>`;
+           Đăng ký trong quản lý nhân viên
+         </a>`;
     return `
     <tr>
       <td><div class="emp-cell"><div class="emp-avatar">${av}</div><div><div class="emp-name">${escHtml(emp.HoTen)}</div><div class="emp-id">NV${String(emp.MaNV).padStart(3,'0')}</div></div></div></td>
@@ -1095,169 +1057,81 @@ async function submitEdit() {
   finally { btn.disabled = false; btn.textContent = 'Lưu thay đổi'; }
 }
 
-/* --- Modal FACE --- */
-let _faceEnrollment = null;
-const _facePoseLabels = ['Nhìn thẳng', 'Quay trái', 'Quay phải', 'Ngẩng lên', 'Cúi xuống'];
-const _facePoseKeys = ['frontal', 'left', 'right', 'up', 'down'];
-let _facePosePollTimer = null;
-let _facePoseStableSince = null;
-let _facePosePollingBusy = false;
-let _faceCaptureBusy = false;
-
-function stopFacePosePolling() {
-  if (_facePosePollTimer) clearInterval(_facePosePollTimer);
-  _facePosePollTimer = null;
-  _facePoseStableSince = null;
-}
-
-async function pollFacePose() {
-  if (!_faceEnrollment || _facePosePollingBusy || _faceCaptureBusy) return;
-  _facePosePollingBusy = true;
-  try {
-    const {maNV, sessionId, captured} = _faceEnrollment;
-    const response = await fetch(`/api/employees/${maNV}/face/register`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({action:'pose', session_id:sessionId})
-    });
-    const data = await response.json();
-    if (response.status === 400 && /session|hết hạn|không hợp lệ/i.test(data.message || '')) {
-      stopFacePosePolling();
-      _faceEnrollment = null;
-      throw new Error('Session đã hết hạn. Đóng modal rồi mở lại để bắt đầu phiên mới.');
-    }
-    const expectedIndex = Math.min(captured, 4);
-    const expected = _facePoseKeys[expectedIndex];
-    const poseTitle = `Góc ${expectedIndex + 1}/5 — ${_facePoseLabels[expectedIndex]}`;
-    document.getElementById('face-enrollment-pose').textContent = poseTitle;
-    const currentLabel = ({frontal:'Nhìn thẳng',left:'Quay trái',right:'Quay phải',up:'Ngẩng lên',down:'Cúi xuống',no_face:'Không thấy mặt',multiple_faces:'Nhiều khuôn mặt',unknown:'Chưa xác định',between:'Đang chuyển hướng'})[data.current_pose] || 'Chưa có dữ liệu';
-    const angles = Number.isFinite(data.yaw) && Number.isFinite(data.pitch)
-      ? ` · yaw ${data.yaw.toFixed(0)}°, pitch ${data.pitch.toFixed(0)}°` : '';
-    document.getElementById('face-enrollment-current').textContent = `Phát hiện: ${currentLabel}${angles}`;
-    document.getElementById('face-enrollment-progress').textContent = `Đã chụp ${captured}/5 góc`;
-    const button = document.getElementById('face-enrollment-capture');
-    button.disabled = !response.ok || !data.pose_ok || expected !== data.expected_pose;
-    if (!response.ok) throw new Error(data.message || data.instruction || 'Không đọc được pose từ camera.');
-    document.getElementById('face-enrollment-message').textContent = data.instruction || 'Đang kiểm tra hướng đầu.';
-    if (!data.pose_ok) {
-      _facePoseStableSince = null;
-      return;
-    }
-    if (_facePoseStableSince === null) _facePoseStableSince = Date.now();
-    const heldMs = Date.now() - _facePoseStableSince;
-    if (heldMs >= 800) {
-      await captureFaceAngle(true);
-    } else {
-      document.getElementById('face-enrollment-message').textContent = `Đúng hướng, giữ yên ${((800-heldMs)/1000).toFixed(1)} giây...`;
-    }
-  } catch(e) {
-    _facePoseStableSince = null;
-    document.getElementById('face-enrollment-capture').disabled = true;
-    document.getElementById('face-enrollment-message').textContent = e.message;
-  } finally {
-    _facePosePollingBusy = false;
-  }
-}
-
-async function openFaceModal(maNV, hoTen, flow = null) {
-  stopFacePosePolling();
-  const employeeCode = `NV${String(maNV).padStart(3, '0')}`;
-  document.getElementById('modal-face-title').textContent = flow?.isNewEmployee ? 'Bước 2/3 — Đăng ký khuôn mặt' : 'Đăng ký khuôn mặt';
-  document.getElementById('modal-face-sub').textContent = `Nhân viên: ${hoTen} (${employeeCode})`;
-  document.getElementById('face-enrollment-body').hidden = false;
-  document.getElementById('face-enrollment-complete').hidden = true;
-  document.getElementById('face-modal-close-btn').textContent = 'Hủy';
-  openModal('modal-face');
-  document.getElementById('face-enrollment-capture').disabled = true;
-  document.getElementById('face-enrollment-pose').textContent = 'Đang khởi tạo AI...';
-  try {
-    const resp = await fetch(`/api/employees/${maNV}/face/register`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'start'})});
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.message || 'Không thể khởi tạo đăng ký');
-    _faceEnrollment = {maNV, sessionId:data.session_id, captured:0, flow};
-    document.getElementById('face-enrollment-pose').textContent = `Góc 1/5 — ${_facePoseLabels[0]}`;
-    document.getElementById('face-enrollment-progress').textContent = 'Đã chụp 0/5 góc';
-    document.getElementById('face-enrollment-current').textContent = 'Đang kiểm tra hướng đầu...';
-    document.getElementById('face-enrollment-message').textContent = 'Nhìn thẳng camera. Hướng đúng ổn định 0.8 giây sẽ tự chụp.';
-    document.getElementById('face-enrollment-capture').disabled = true;
-    _facePosePollTimer = setInterval(pollFacePose, 250);
-    pollFacePose();
-  } catch(e) {
-    document.getElementById('face-enrollment-pose').textContent = 'Không thể bắt đầu';
-    document.getElementById('face-enrollment-message').textContent = e.message;
-  }
-}
-async function captureFaceAngle(autoCapture=false) {
-  if (!_faceEnrollment) return;
-  _faceCaptureBusy = true;
-  _facePoseStableSince = null;
-  const btn = document.getElementById('face-enrollment-capture'); btn.disabled = true;
-  document.getElementById('face-enrollment-message').textContent = autoCapture ? 'Pose ổn định, đang chụp...' : 'Đang xác minh hướng trên frame chụp...';
-  try {
-    const resp = await fetch(`/api/employees/${_faceEnrollment.maNV}/face/register`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'capture',session_id:_faceEnrollment.sessionId})});
-    const data = await resp.json();
-    if (!resp.ok) throw new Error(data.message || 'Không chụp được góc này');
-    _faceEnrollment.captured = data.captured;
-    document.getElementById('face-enrollment-progress').textContent = `Đã chụp ${data.captured}/5 góc`;
-    if (data.captured < 5) {
-      document.getElementById('face-enrollment-pose').textContent = `Góc ${data.captured+1}/5 — ${_facePoseLabels[data.captured]}`;
-      document.getElementById('face-enrollment-message').textContent = `Đã nhận góc ${data.captured}. ${_facePoseLabels[data.captured]} để tiếp tục.`;
-      return;
-    }
-    stopFacePosePolling();
-    const done = await fetch(`/api/employees/${_faceEnrollment.maNV}/face/register`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'complete',session_id:_faceEnrollment.sessionId})});
-    const result = await done.json();
-    if (!done.ok) throw new Error(result.message || 'Không lưu được embedding');
-    const flow = _faceEnrollment.flow;
-    _faceEnrollment = null;
-    await empLoadEmployees();
-    if (flow?.isNewEmployee) {
-      document.getElementById('modal-face-title').textContent = 'Bước 3/3 — Hoàn tất';
-      document.getElementById('face-enrollment-body').hidden = true;
-      document.getElementById('face-enrollment-complete').hidden = false;
-      document.getElementById('face-complete-name').textContent = flow.employeeName;
-      document.getElementById('face-complete-code').textContent = `Mã nhân viên: ${flow.employeeCode}`;
-      document.getElementById('face-complete-role').textContent = flow.roleName;
-      document.getElementById('face-modal-close-btn').textContent = 'Hoàn tất';
-    } else {
-      document.getElementById('face-enrollment-pose').textContent = 'Đăng ký hoàn tất';
-      document.getElementById('face-enrollment-message').textContent = 'Đã lưu đủ 5 embedding vào FaceEmbedding.';
-      showToast('Đăng ký khuôn mặt thành công', 'success');
-      setTimeout(() => closeModal('modal-face'), 700);
-    }
-  } catch(e) {
-    document.getElementById('face-enrollment-message').textContent = e.message;
-  } finally {
-    _faceCaptureBusy = false;
-  }
-}
-async function closeFaceModal() {
-  stopFacePosePolling();
-  if (_faceEnrollment) fetch(`/api/employees/${_faceEnrollment.maNV}/face/register`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'cancel',session_id:_faceEnrollment.sessionId})}).catch(()=>{});
-  _faceEnrollment = null;
-  closeModal('modal-face');
-}
+/* Enrollment is owned by the PHP/MariaDB employee flow. */
+function openFaceModal() { window.location.assign(_phpEmployeeUrl); }
 
 let _faceRecognitionTimer = null;
+let _faceRecognitionSessionId = null;
+let _faceRecognitionPollBusy = false;
 async function pollFaceRecognition() {
+  if (!_faceRecognitionSessionId || _faceRecognitionPollBusy) return;
+  _faceRecognitionPollBusy = true;
   try {
-    const response = await fetch('/api/face/identify/camera', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});
+    const response = await fetch(`/api/face/recognition-sessions/${encodeURIComponent(_faceRecognitionSessionId)}`, {cache:'no-store'});
     const data = await response.json();
     const el = document.getElementById('face-recognition-result');
     if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
-    el.textContent = data.status === 'MATCH' ? `${data.HoTen} (MaNV ${data.MaNV}) · ${(data.similarity*100).toFixed(1)}%` : `${data.status || 'UNKNOWN'} · ${data.similarity == null ? '--' : (data.similarity*100).toFixed(1)+'%'}`;
-    el.className = data.match ? 'text-sm' : 'text-sm text-muted';
-  } catch(e) { document.getElementById('face-recognition-result').textContent = e.message; }
+    const state = data.state || 'CAPTURING';
+    const result = data.result || {};
+    if (state === 'CAPTURING') {
+      el.textContent = `ĐANG QUÉT KHUÔN MẶT · ${data.progress || `${data.captured_frames || 0}/3`}`;
+      el.className = 'text-sm';
+    } else if (state === 'PROCESSING') {
+      el.textContent = 'ĐANG XỬ LÝ...';
+      el.className = 'text-sm';
+    } else if (state === 'COMPLETED') {
+      if (result.recognized) {
+        el.textContent = `✓ ${result.ho_ten || 'Nhân viên'} (MaNV ${result.ma_nv}) · ${(result.score * 100).toFixed(1)}%`;
+        el.className = 'text-sm';
+      } else {
+        el.textContent = result.reason === 'UNKNOWN' ? 'UNKNOWN · Không xác định khuôn mặt' : 'THỬ LẠI';
+        el.className = 'text-sm text-muted';
+      }
+      stopFaceRecognitionPolling();
+    } else if (state === 'ABORTED') {
+      el.textContent = `THỬ LẠI · ${result.retry_reason || result.reason || 'Phiên bị hủy'}`;
+      el.className = 'text-sm text-muted';
+      stopFaceRecognitionPolling();
+    }
+  } catch(e) {
+    document.getElementById('face-recognition-result').textContent = e.message;
+    stopFaceRecognitionPolling();
+  } finally { _faceRecognitionPollBusy = false; }
+}
+function stopFaceRecognitionPolling() {
+  if (_faceRecognitionTimer) clearInterval(_faceRecognitionTimer);
+  _faceRecognitionTimer = null;
+  _faceRecognitionSessionId = null;
+  const button = document.getElementById('face-recognition-toggle');
+  button.textContent = 'Bắt đầu nhận diện';
+  button.disabled = false;
 }
 function toggleFaceRecognition() {
   const button = document.getElementById('face-recognition-toggle');
   if (_faceRecognitionTimer) {
-    clearInterval(_faceRecognitionTimer); _faceRecognitionTimer = null;
-    button.textContent = 'Bắt đầu nhận diện';
+    stopFaceRecognitionPolling();
+    document.getElementById('face-recognition-result').textContent = 'Đã dừng chờ kết quả; session hiện tại sẽ tự kết thúc trong giới hạn thời gian.';
     return;
   }
-  button.textContent = 'Dừng nhận diện';
-  pollFaceRecognition();
-  _faceRecognitionTimer = setInterval(pollFaceRecognition, 1200);
+  button.disabled = true;
+  document.getElementById('face-recognition-result').textContent = 'ĐANG KHỞI TẠO SESSION...';
+  fetch('/api/face/recognition-sessions', {method:'POST',headers:{'Content-Type':'application/json'},body:'{}'})
+    .then(async (response) => {
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.message || `HTTP ${response.status}`);
+      _faceRecognitionSessionId = data.session_id;
+      if (!_faceRecognitionSessionId) throw new Error('AI service không trả session ID.');
+      button.disabled = false;
+      button.textContent = 'Dừng nhận diện';
+      document.getElementById('face-recognition-result').textContent = 'ĐANG QUÉT KHUÔN MẶT · 0/3';
+      _faceRecognitionTimer = setInterval(pollFaceRecognition, 250);
+      pollFaceRecognition();
+    })
+    .catch((error) => {
+      document.getElementById('face-recognition-result').textContent = error.message;
+      button.textContent = 'Bắt đầu nhận diện';
+      button.disabled = false;
+    });
 }
 
 function empShowErr(id, msg) { const el=document.getElementById(id); if(el){el.textContent=msg;el.classList.add('show');} }

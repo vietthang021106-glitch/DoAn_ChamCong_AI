@@ -7,6 +7,9 @@ require_once __DIR__ . '/../Model/FaceEmbeddingModel.php';
 require_once __DIR__ . '/../Security/CsrfToken.php';
 require_once __DIR__ . '/../Service/AiClient.php';
 require_once __DIR__ . '/../Service/CameraFrameClient.php';
+require_once __DIR__ . '/../Service/EnrollmentCaptureState.php';
+require_once __DIR__ . '/../Model/DeviceModel.php';
+require_once __DIR__ . '/../Service/AttendanceCameraBinding.php';
 
 final class FaceEnrollmentController
 {
@@ -34,9 +37,11 @@ final class FaceEnrollmentController
         AuthController::requireAdmin();
         $jpeg = $this->camera->captureJpeg();
         if (!is_string($jpeg) || strlen($jpeg) > self::MAX_IMAGE_BYTES) {
-            http_response_code(503);
-            header('Cache-Control: private, no-store');
-            exit;
+            $this->jsonResponse([
+                'success' => false,
+                'code' => 'CAMERA_SOURCE_UNAVAILABLE',
+                'message' => 'Không nhận được hình từ camera. Hãy chạy app.py ở cổng 5000 và kiểm tra nguồn camera.',
+            ], 503);
         }
 
         header('Content-Type: image/jpeg');
@@ -54,31 +59,139 @@ final class FaceEnrollmentController
             return;
         }
 
+        $mode = strtoupper(trim((string)($_POST['mode'] ?? 'AUTO')));
+        if (!in_array($mode, ['AUTO', 'MANUAL'], true)) {
+            $this->jsonResponse(['success' => false, 'message' => 'Chế độ đăng ký không hợp lệ.'], 400);
+            return;
+        }
         try {
-            if ($this->employees->findById($employeeId) === null) {
+            $devices = (new DeviceModel())->findAll();
+            $boundDeviceId = AttendanceCameraBinding::deviceId($devices);
+        } catch (Throwable $exception) {
+            error_log('Face enrollment device lookup failed.');
+            $this->jsonResponse(['success' => false, 'message' => 'Không thể xác định thiết bị camera.'], 503);
+            return;
+        }
+        $requestedDeviceId = filter_var($_POST['device_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if ($boundDeviceId === null || !is_int($requestedDeviceId) || $requestedDeviceId !== $boundDeviceId) {
+            $this->jsonResponse([
+                'success' => false,
+                'message' => 'Camera AI1 chưa được gán đúng cho một thiết bị chấm công. Không thể bắt đầu đăng ký.',
+            ], 409);
+            return;
+        }
+
+        foreach (($_SESSION[self::SESSION_KEY] ?? []) as $otherEmployeeId => $existingBatch) {
+            if (!is_array($existingBatch) || time() - (int)($existingBatch['started_at'] ?? 0) > self::SESSION_TTL) {
+                continue;
+            }
+            if (in_array($existingBatch['state'] ?? '', ['ENROLLING', 'AWAITING_CONFIRMATION'], true)) {
+                $this->jsonResponse([
+                    'success' => false,
+                    'busy' => true,
+                    'message' => 'Camera đang được sử dụng bởi một phiên đăng ký khác. Hãy hoàn tất hoặc hủy phiên đó trước.',
+                ], 409);
+                return;
+            }
+        }
+
+        try {
+            $employee = $this->employees->findById($employeeId);
+            if ($employee === null) {
                 $this->jsonResponse(['success' => false, 'message' => 'Không tìm thấy nhân viên.'], 404);
                 return;
             }
-            $health = $this->ai->health();
-            if (empty($health['model_ready'])) {
-                $this->jsonResponse(['success' => false, 'message' => 'AI enrollment chưa sẵn sàng.'], 503);
+            // Verify the existing camera owner first. This only reads one frame
+            // from CameraFrameClient; it never opens a second VideoCapture.
+            if ($this->camera->captureSnapshot() === null) {
+                $this->jsonResponse([
+                    'success' => false,
+                    'code' => 'CAMERA_SOURCE_UNAVAILABLE',
+                    'message' => 'Không nhận được frame từ camera AI1 tại 127.0.0.1:5000. Hãy chạy app.py và kiểm tra camera.',
+                ], 503);
                 return;
             }
 
-            $existingCount = $this->faceEmbeddings->countByEmployee($employeeId);
-            $_SESSION[self::SESSION_KEY][$employeeId] = [
+            try {
+                $health = $this->ai->health();
+            } catch (Throwable $exception) {
+                error_log('Face enrollment AI1 health check failed: ' . $exception->getMessage());
+                $this->jsonResponse([
+                    'success' => false,
+                    'code' => 'AI1_UNAVAILABLE',
+                    'message' => 'Không kết nối được AI1 tại 127.0.0.1:5001. Hãy chạy python ai_service.py.',
+                ], 503);
+                return;
+            }
+            if (empty($health['model_ready'])) {
+                $this->jsonResponse([
+                    'success' => false,
+                    'code' => 'AI1_MODEL_UNAVAILABLE',
+                    'message' => 'Dịch vụ AI1 đang chạy nhưng model buffalo_l chưa sẵn sàng.',
+                ], 503);
+                return;
+            }
+
+            $galleryState = $this->faceEmbeddings->enrollmentRevision($employeeId);
+            $existingCount = $galleryState['count'];
+            $state = EnrollmentCaptureState::create() + [
                 'started_at' => time(),
                 'replace_existing' => $existingCount > 0,
-                'samples' => [],
+                'expected_revision' => $galleryState['revision'],
+                'device_id' => $boundDeviceId,
+                'mode' => $mode,
+                'state' => 'ENROLLING',
+                'employee_name' => (string)($employee['HoTen'] ?? ''),
             ];
+            if ($mode === 'AUTO') {
+                $aiSession = $this->ai->startEnrollmentSession();
+                $aiSessionId = strtolower((string)($aiSession['session_id'] ?? ''));
+                if (($aiSession['success'] ?? false) !== true
+                    || !preg_match('/^[a-f0-9]{32}$/D', $aiSessionId)) {
+                    $this->jsonResponse([
+                        'success' => false,
+                        'busy' => !empty($aiSession['busy']),
+                        'message' => (string)($aiSession['message'] ?? 'Không thể khởi động AUTO Enrollment.'),
+                    ], !empty($aiSession['busy']) ? 409 : 503);
+                    return;
+                }
+                $state['ai_session_id'] = $aiSessionId;
+                $state['state'] = 'ENROLLING';
+            } else {
+                $aiSession = $this->ai->startManualEnrollmentLock();
+                $aiSessionId = strtolower((string)($aiSession['session_id'] ?? ''));
+                if (($aiSession['success'] ?? false) !== true
+                    || !preg_match('/^[a-f0-9]{32}$/D', $aiSessionId)) {
+                    $this->jsonResponse([
+                        'success' => false,
+                        'busy' => !empty($aiSession['busy']),
+                        'message' => (string)($aiSession['message'] ?? 'Không thể khóa camera cho đăng ký MANUAL.'),
+                    ], !empty($aiSession['busy']) ? 409 : 503);
+                    return;
+                }
+                $state['ai_session_id'] = $aiSessionId;
+            }
+            $_SESSION[self::SESSION_KEY][$employeeId] = $state;
             $this->jsonResponse([
                 'success' => true,
                 'captured' => 0,
                 'total' => count(self::POSES),
+                'current_pose_index' => 0,
+                'stable_frame_count' => 0,
+                'stable_frames_required' => $mode === 'AUTO' ? 5 : EnrollmentCaptureState::STABLE_FRAMES_REQUIRED,
+                'progress' => '0/5',
                 'replace_existing' => $existingCount > 0,
+                'mode' => $mode,
+                'device_id' => $boundDeviceId,
+                'state' => 'ENROLLING',
             ]);
         } catch (Throwable $exception) {
-            $this->jsonResponse(['success' => false, 'message' => 'Không thể bắt đầu đăng ký khuôn mặt.'], 503);
+            error_log('Face enrollment start failed: ' . $exception->getMessage());
+            $this->jsonResponse([
+                'success' => false,
+                'code' => 'ENROLLMENT_START_FAILED',
+                'message' => 'Không thể bắt đầu đăng ký. Kiểm tra camera app.py (cổng 5000), AI1 (cổng 5001) và trạng thái nhân viên.',
+            ], 503);
         }
     }
 
@@ -94,25 +207,218 @@ final class FaceEnrollmentController
             return;
         }
 
-        $pose = self::POSES[count($state['samples'])] ?? null;
+        if (($state['mode'] ?? 'MANUAL') === 'AUTO') {
+            $this->pollAutoEnrollment($employeeId, $state);
+            return;
+        }
+
+        $poseIndex = EnrollmentCaptureState::poseIndex($state);
+        $pose = self::POSES[$poseIndex] ?? null;
         if ($pose === null) {
             $this->jsonResponse(['success' => false, 'message' => 'Đã đủ 5 mẫu.'], 409);
             return;
         }
 
-        $jpeg = $this->cameraFrame();
-        if ($jpeg === null) {
-            $this->jsonResponse(['success' => false, 'message' => 'Camera chưa sẵn sàng.'], 503);
+        $snapshot = $this->camera->captureSnapshot();
+        if ($snapshot === null) {
+            EnrollmentCaptureState::reset($state);
+            $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+            $this->jsonResponse(array_merge([
+                'success' => false,
+                'ready' => false,
+                'reason' => 'Camera chưa sẵn sàng.',
+                'message' => 'Camera chưa sẵn sàng.',
+            ], $this->progressPayload($state, $pose)), 503);
+            return;
+        }
+        $jpeg = $snapshot['jpeg'];
+        $sequence = $snapshot['sequence'];
+        if ($sequence <= (int)($state['last_camera_sequence'] ?? 0)) {
+            $stability = EnrollmentCaptureState::observeSnapshot($state, $sequence, false);
+            $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+            $this->jsonResponse(array_merge([
+                'success' => true,
+                'ready' => false,
+                'reason' => 'Đang chờ frame camera mới.',
+                'message' => 'Đang chờ frame camera mới.',
+            ], $this->progressPayload($state, $pose), $stability));
             return;
         }
 
         try {
             $result = $this->ai->inspectEnrollmentImage($jpeg, $pose);
-            $result['captured'] = count($state['samples']);
-            $this->jsonResponse($result, !empty($result['success']) ? 200 : 503);
+            $ready = !empty($result['success']) && !empty($result['pose_ok']);
+            $stability = EnrollmentCaptureState::observeSnapshot($state, $sequence, $ready);
+            $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+            $payload = array_merge($result, $this->progressPayload($state, $pose), $stability, [
+                'ready' => $ready,
+                'reason' => $ready ? '' : (string)($result['instruction'] ?? $result['message'] ?? 'Frame chưa hợp lệ.'),
+                'auto_captured' => false,
+            ]);
+
+            if ($stability['capture_due'] && ($state['mode'] ?? 'MANUAL') !== 'MANUAL') {
+                $capture = $this->captureSample($employeeId, $state, $pose, $jpeg, true);
+                $this->jsonResponse(array_merge($payload, $capture['payload']), $capture['status']);
+                return;
+            }
+
+            $this->jsonResponse($payload, !empty($result['success']) ? 200 : 503);
         } catch (Throwable $exception) {
-            $this->jsonResponse(['success' => false, 'message' => 'Không thể kiểm tra hướng khuôn mặt.'], 503);
+            EnrollmentCaptureState::reset($state);
+            $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+            $this->jsonResponse(array_merge([
+                'success' => false,
+                'ready' => false,
+                'reason' => 'Không thể kiểm tra hướng khuôn mặt.',
+                'message' => 'Không thể kiểm tra hướng khuôn mặt.',
+            ], $this->progressPayload($state, $pose)), 503);
         }
+    }
+
+    /** Return the AI-owned AUTO session progress to the Admin monitor. */
+    private function pollAutoEnrollment(int $employeeId, array &$state): void
+    {
+        $sessionId = (string)($state['ai_session_id'] ?? '');
+        try {
+            $aiState = $this->ai->enrollmentSessionStatus($sessionId);
+        } catch (Throwable $exception) {
+            $this->jsonResponse([
+                'success' => false,
+                'ready' => false,
+                'state' => 'OFFLINE',
+                'reason' => 'Mất kết nối với AI1. Phiên cũ vẫn chưa bị thay thế.',
+                'message' => 'Mất kết nối với AI1. Phiên cũ vẫn chưa bị thay thế.',
+            ], 503);
+            return;
+        }
+        if (($aiState['success'] ?? false) !== true) {
+            $this->jsonResponse([
+                'success' => false,
+                'ready' => false,
+                'state' => 'FAILED',
+                'reason' => (string)($aiState['message'] ?? 'Không đọc được trạng thái AI1.'),
+                'message' => (string)($aiState['message'] ?? 'Không đọc được trạng thái AI1.'),
+            ], 503);
+            return;
+        }
+
+        $captured = max(0, min(count(self::POSES), (int)($aiState['captured'] ?? 0)));
+        $state['state'] = (string)($aiState['state'] ?? 'ENROLLING');
+        $state['current_pose_index'] = $captured;
+        $state['stable_frame_count'] = max(0, (int)($aiState['stable_count'] ?? 0));
+        $state['stable_frames_required'] = max(1, (int)($aiState['stable_frames_required'] ?? 5));
+        $state['inference_fps'] = $aiState['inference_fps'] ?? null;
+        $state['status_reason'] = (string)($aiState['reason'] ?? '');
+        $state['last_ai_status_at'] = time();
+
+        if ($state['state'] === 'AWAITING_CONFIRMATION' && !$this->hydrateAutoSamples($employeeId, $state)) {
+            $this->jsonResponse([
+                'success' => false,
+                'ready' => false,
+                'state' => 'FAILED',
+                'reason' => 'Không thể kiểm tra đủ năm mẫu từ AI1. Bộ dữ liệu cũ vẫn được giữ nguyên.',
+                'message' => 'Không thể kiểm tra đủ năm mẫu từ AI1. Bộ dữ liệu cũ vẫn được giữ nguyên.',
+            ], 502);
+            return;
+        }
+        if ($state['state'] === 'AWAITING_CONFIRMATION'
+            && !is_array($state['duplicate_check'] ?? null)) {
+            $state['duplicate_check'] = $this->faceEmbeddings->checkDuplicate(
+                $employeeId,
+                $state['samples']
+            );
+        }
+
+        $previouslyReported = (int)($state['reported_captured'] ?? 0);
+        $state['reported_captured'] = $captured;
+        $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+        $expectedPose = is_string($aiState['expected_pose'] ?? null) ? $aiState['expected_pose'] : null;
+        $poseIndex = max(0, min(count(self::POSES) - 1, $captured));
+        if ($captured >= count(self::POSES)) {
+            $expectedPose = null;
+        }
+        $this->jsonResponse([
+            'success' => true,
+            'ready' => $state['state'] === 'AWAITING_CONFIRMATION',
+            'state' => $state['state'],
+            'mode' => 'AUTO',
+            'captured' => $captured,
+            'total' => count(self::POSES),
+            'current_pose_index' => $poseIndex,
+            'expected_pose' => $expectedPose,
+            'current_pose' => (string)($aiState['detected_pose'] ?? 'unknown'),
+            'progress' => $captured . '/' . count(self::POSES),
+            'stable_frame_count' => (int)($aiState['stable_count'] ?? 0),
+            'stable_frames_required' => max(1, (int)($aiState['stable_frames_required'] ?? 5)),
+            'inference_fps' => $aiState['inference_fps'] ?? null,
+            'reason' => (string)($aiState['reason'] ?? ''),
+            'instruction' => (string)($aiState['reason'] ?? ''),
+            'auto_captured' => $captured > $previouslyReported,
+            'complete' => $state['state'] === 'AWAITING_CONFIRMATION',
+            'duplicate_check' => $state['duplicate_check'] ?? null,
+        ]);
+    }
+
+    /** Move exactly five AI samples into the Admin's temporary session only for review/save. */
+    private function hydrateAutoSamples(int $employeeId, array &$state): bool
+    {
+        if (count($state['samples'] ?? []) === count(self::POSES)) {
+            return true;
+        }
+        try {
+            $payload = $this->ai->enrollmentSessionSamples((string)$state['ai_session_id']);
+        } catch (Throwable $exception) {
+            error_log('Smart Enrollment samples could not be fetched.');
+            return false;
+        }
+        $samples = $payload['samples'] ?? null;
+        if (($payload['success'] ?? false) !== true || !is_array($samples) || count($samples) !== count(self::POSES)) {
+            return false;
+        }
+
+        $decoded = [];
+        foreach (self::POSES as $index => $pose) {
+            $item = $samples[$index] ?? null;
+            if (!is_array($item) || ($item['pose'] ?? null) !== $pose) {
+                return false;
+            }
+            $vector = base64_decode((string)($item['vector'] ?? ''), true);
+            $image = base64_decode((string)($item['image_jpeg'] ?? ''), true);
+            $sha256 = (string)($item['image_sha256'] ?? '');
+            if (!is_string($vector) || strlen($vector) !== 2048
+                || !is_string($image) || $image === '' || strlen($image) > self::MAX_IMAGE_BYTES
+                || !preg_match('/^[a-f0-9]{64}$/D', $sha256)
+                || !hash_equals($sha256, hash('sha256', $image))
+                || !$this->isValidImage($image)) {
+                return false;
+            }
+            $floats = unpack('g*', $vector);
+            if (!is_array($floats) || count($floats) !== 512) {
+                return false;
+            }
+            $normSquared = 0.0;
+            foreach ($floats as $value) {
+                if (!is_float($value) && !is_int($value)) {
+                    return false;
+                }
+                if (!is_finite((float)$value)) {
+                    return false;
+                }
+                $normSquared += (float)$value * (float)$value;
+            }
+            $norm = sqrt($normSquared);
+            if (!is_finite($norm) || abs($norm - 1.0) > 0.02) {
+                return false;
+            }
+            $decoded[] = ['pose' => $pose, 'vector' => $vector, 'image' => $image];
+        }
+
+        $state['samples'] = $decoded;
+        $state['current_pose_index'] = count(self::POSES);
+        $state['state'] = 'AWAITING_CONFIRMATION';
+        $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+
+        return true;
     }
 
     /** Thu một mẫu đã được AI xác nhận, giữ ảnh và vector theo cặp trong batch session. */
@@ -127,46 +433,55 @@ final class FaceEnrollmentController
             return;
         }
 
-        $pose = self::POSES[count($state['samples'])] ?? null;
+        if (($state['mode'] ?? 'MANUAL') === 'AUTO') {
+            $this->jsonResponse(['success' => false, 'message' => 'AUTO Enrollment tự chọn mẫu; không nhận lệnh chụp thủ công.'], 409);
+            return;
+        }
+
+        $poseIndex = EnrollmentCaptureState::poseIndex($state);
+        $pose = self::POSES[$poseIndex] ?? null;
         if ($pose === null) {
             $this->jsonResponse(['success' => false, 'message' => 'Đã đủ 5 mẫu.'], 409);
             return;
         }
-        $jpeg = $this->cameraFrame();
-        if ($jpeg === null) {
-            $this->jsonResponse(['success' => false, 'message' => 'Camera chưa sẵn sàng.'], 503);
+        if (($state['stable_frame_count'] ?? 0) < EnrollmentCaptureState::STABLE_FRAMES_REQUIRED) {
+            $this->jsonResponse(array_merge([
+                'success' => false,
+                'ready' => false,
+                'reason' => 'Cần đủ 8 frame hợp lệ liên tiếp trước khi capture.',
+                'message' => 'Cần đủ 8 frame hợp lệ liên tiếp trước khi capture.',
+            ], $this->progressPayload($state, $pose)), 409);
             return;
         }
-
-        try {
-            $result = $this->ai->captureEnrollmentSample($jpeg, $pose);
-            if (empty($result['success']) || empty($result['pose_ok'])) {
-                $this->jsonResponse($result, 409);
-                return;
-            }
-
-            $vector = base64_decode((string)($result['vector'] ?? ''), true);
-            $image = base64_decode((string)($result['image_jpeg'] ?? ''), true);
-            if (!is_string($vector) || strlen($vector) !== 2048 || !is_string($image)
-                || $image === '' || strlen($image) > self::MAX_IMAGE_BYTES
-                || !hash_equals((string)($result['image_sha256'] ?? ''), hash('sha256', $image))
-                || !$this->isValidImage($image)) {
-                $this->jsonResponse(['success' => false, 'message' => 'Mẫu AI trả về không hợp lệ.'], 502);
-                return;
-            }
-
-            $state['samples'][] = ['vector' => $vector, 'image' => $image, 'pose' => $pose];
+        $snapshot = $this->camera->captureSnapshot();
+        if ($snapshot === null) {
+            EnrollmentCaptureState::reset($state);
             $_SESSION[self::SESSION_KEY][$employeeId] = $state;
-            $this->jsonResponse([
-                'success' => true,
-                'captured' => count($state['samples']),
-                'total' => count(self::POSES),
-                'pose' => $pose,
-                'complete' => count($state['samples']) === count(self::POSES),
-            ]);
-        } catch (Throwable $exception) {
-            $this->jsonResponse(['success' => false, 'message' => 'Không thể ghi nhận mẫu khuôn mặt.'], 503);
+            $this->jsonResponse(array_merge([
+                'success' => false,
+                'ready' => false,
+                'reason' => 'Camera chưa sẵn sàng.',
+                'message' => 'Camera chưa sẵn sàng.',
+            ], $this->progressPayload($state, $pose)), 503);
+            return;
         }
+        $jpeg = $snapshot['jpeg'];
+        if ($snapshot['sequence'] <= (int)($state['last_camera_sequence'] ?? 0)) {
+            EnrollmentCaptureState::reset($state);
+            $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+            $this->jsonResponse(array_merge([
+                'success' => false,
+                'ready' => false,
+                'reason' => 'Frame camera chưa mới. Hãy giữ pose và thử lại.',
+                'message' => 'Frame camera chưa mới. Hãy giữ pose và thử lại.',
+            ], $this->progressPayload($state, $pose)), 409);
+            return;
+        }
+        $state['last_camera_sequence'] = $snapshot['sequence'];
+        $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+
+        $capture = $this->captureSample($employeeId, $state, $pose, $jpeg, false);
+        $this->jsonResponse($capture['payload'], $capture['status']);
     }
 
     /** Xác thực batch đủ 5 pose rồi thay toàn bộ embedding cũ trong một transaction. */
@@ -180,13 +495,34 @@ final class FaceEnrollmentController
         if ($state === null) {
             return;
         }
-        if (count($state['samples']) !== count(self::POSES)) {
+        if (($state['mode'] ?? 'MANUAL') === 'AUTO'
+            && !$this->hydrateAutoSamples($employeeId, $state)) {
+            $this->jsonResponse([
+                'success' => false,
+                'message' => 'AUTO chưa thu đủ năm mẫu hợp lệ để xác nhận lưu.',
+            ], 409);
+            return;
+        }
+        if (count($state['samples']) !== count(self::POSES)
+            || EnrollmentCaptureState::poseIndex($state) !== count(self::POSES)) {
             $this->jsonResponse(['success' => false, 'message' => 'Cần xác nhận đủ 5 góc trước khi lưu.'], 409);
             return;
         }
 
         try {
-            $ids = $this->faceEmbeddings->replaceByEmployee($employeeId, $state['samples']);
+            $ids = $this->faceEmbeddings->replaceByEmployee(
+                $employeeId,
+                $state['samples'],
+                (string)($state['expected_revision'] ?? '')
+            );
+            $deviceId = (int)($state['device_id'] ?? 0);
+            if (is_string($state['ai_session_id'] ?? null)) {
+                try {
+                    $this->ai->closeEnrollmentSession((string)$state['ai_session_id']);
+                } catch (Throwable $exception) {
+                    error_log('Smart Enrollment AI session close failed after save.');
+                }
+            }
             unset($_SESSION[self::SESSION_KEY][$employeeId]);
             $galleryUpdated = false;
             try {
@@ -194,12 +530,54 @@ final class FaceEnrollmentController
             } catch (Throwable $exception) {
                 $galleryUpdated = false;
             }
+            $this->rememberDeviceEnrollmentNotice(
+                $deviceId,
+                'COMPLETED',
+                $galleryUpdated
+                    ? 'Đăng ký khuôn mặt thành công.'
+                    : 'Đã lưu đăng ký. Hệ thống đang đồng bộ AI1; vui lòng thử lại sau.',
+                $employeeId,
+                (string)($state['employee_name'] ?? '')
+            );
             $this->jsonResponse([
                 'success' => true,
                 'saved' => count($ids),
                 'gallery_updated' => $galleryUpdated,
-                'message' => 'Đã lưu đủ 5 mẫu khuôn mặt.',
+                'message' => $galleryUpdated
+                    ? 'Đã lưu đủ 5 mẫu khuôn mặt.'
+                    : 'Đã lưu đủ 5 mẫu, nhưng gallery AI1 chưa đồng bộ. Nhận diện sẽ bị tạm chặn cho đến khi đồng bộ thành công.',
             ]);
+        } catch (FaceDuplicateCheckException $exception) {
+            $check = $exception->checkResult();
+            $_SESSION[self::SESSION_KEY][$employeeId]['duplicate_check'] = $check;
+            $deviceId = (int)($state['device_id'] ?? 0);
+            $this->rememberDeviceEnrollmentNotice(
+                $deviceId,
+                'FAILED',
+                'Không thể hoàn tất đăng ký. Vui lòng liên hệ quản trị viên.'
+            );
+            $candidateId = (int)($check['candidate_id'] ?? 0);
+            $candidateCode = $candidateId > 0 ? 'NV' . str_pad((string)$candidateId, 3, '0', STR_PAD_LEFT) : '';
+            $message = ($check['status'] ?? '') === 'SUSPECTED_DUPLICATE' && $candidateCode !== ''
+                ? 'Phát hiện khuôn mặt có khả năng trùng với nhân viên ' . $candidateCode
+                    . '. Vui lòng kiểm tra trước khi đăng ký.'
+                : 'Chưa thể kiểm tra trùng khuôn mặt. Vui lòng thử lại.';
+            $this->jsonResponse([
+                'success' => false,
+                'code' => 'DUPLICATE_FACE_CHECK',
+                'duplicate_check' => $check,
+                'message' => $message,
+            ], ($check['status'] ?? '') === 'SUSPECTED_DUPLICATE' ? 409 : 503);
+        } catch (FaceEnrollmentConflict $exception) {
+            $deviceId = (int)($state['device_id'] ?? 0);
+            $this->cancelAiSession($state);
+            unset($_SESSION[self::SESSION_KEY][$employeeId]);
+            $this->rememberDeviceEnrollmentNotice($deviceId, 'FAILED', 'Dữ liệu khuôn mặt đã thay đổi. Hãy làm mới và đăng ký lại.');
+            $this->jsonResponse([
+                'success' => false,
+                'conflict' => true,
+                'message' => $exception->getMessage(),
+            ], 409);
         } catch (Throwable $exception) {
             error_log('Face enrollment batch save failed: ' . $exception->getMessage());
             $this->jsonResponse(['success' => false, 'message' => 'Không thể lưu batch. Dữ liệu khuôn mặt cũ vẫn được giữ nguyên.'], 500);
@@ -212,6 +590,15 @@ final class FaceEnrollmentController
         $employeeId = $this->requestEmployeeId();
         if (!$this->requirePostCsrf()) {
             return;
+        }
+        $state = $_SESSION[self::SESSION_KEY][$employeeId] ?? null;
+        if (is_array($state)) {
+            $this->cancelAiSession($state);
+            $this->rememberDeviceEnrollmentNotice(
+                (int)($state['device_id'] ?? 0),
+                'CANCELLED',
+                'Phiên đăng ký đã được hủy.'
+            );
         }
         unset($_SESSION[self::SESSION_KEY][$employeeId]);
         $this->jsonResponse(['success' => true]);
@@ -280,10 +667,313 @@ final class FaceEnrollmentController
         }
     }
 
+    /** Serve one uncommitted capture thumbnail from the authenticated PHP session. */
+    public function sessionPreview(): void
+    {
+        $employeeId = $this->requestEmployeeId();
+        $index = filter_var($_GET['index'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => 4]]);
+        $sample = is_int($index)
+            ? ($_SESSION[self::SESSION_KEY][$employeeId]['samples'][$index] ?? null)
+            : null;
+        $image = is_array($sample) ? ($sample['image'] ?? null) : null;
+        if (!is_string($image) || !$this->isValidImage($image)) {
+            http_response_code(404);
+            header('Cache-Control: private, no-store');
+            exit;
+        }
+
+        $mime = (new finfo(FILEINFO_MIME_TYPE))->buffer($image);
+        header('Content-Type: ' . $mime);
+        header('Content-Length: ' . strlen($image));
+        header('Cache-Control: private, no-store');
+        header('X-Content-Type-Options: nosniff');
+        echo $image;
+    }
+
+    /** Safe, read-only enrollment state for the authenticated attendance display. */
+    public function deviceStatus(): void
+    {
+        AuthController::requireAdmin();
+        if (($_SERVER['REQUEST_METHOD'] ?? '') !== 'GET') {
+            $this->jsonResponse(['success' => false, 'message' => 'Chỉ chấp nhận GET.'], 405);
+        }
+        $deviceId = filter_var($_GET['device_id'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        if (!is_int($deviceId)) {
+            $this->jsonResponse(['success' => false, 'message' => 'Thiết bị không hợp lệ.'], 400);
+        }
+        try {
+            $devices = (new DeviceModel())->findAll();
+            if (AttendanceCameraBinding::deviceId($devices) !== $deviceId) {
+                $this->jsonResponse(['success' => false, 'message' => 'Thiết bị chưa được gán nguồn camera AI1.'], 403);
+            }
+        } catch (Throwable $exception) {
+            $this->jsonResponse(['success' => false, 'message' => 'Không thể xác minh thiết bị.'], 503);
+        }
+
+        foreach (($_SESSION[self::SESSION_KEY] ?? []) as $employeeId => $state) {
+            if (!is_array($state) || (int)($state['device_id'] ?? 0) !== $deviceId) {
+                continue;
+            }
+            if (time() - (int)($state['started_at'] ?? 0) > self::SESSION_TTL) {
+                $this->cancelAiSession($state);
+                unset($_SESSION[self::SESSION_KEY][$employeeId]);
+                $this->rememberDeviceEnrollmentNotice($deviceId, 'EXPIRED', 'Phiên đăng ký đã hết hạn.');
+                break;
+            }
+            $captured = count($state['samples'] ?? []);
+            $stateName = (string)($state['state'] ?? 'ENROLLING');
+            $reason = (string)($state['status_reason'] ?? '');
+            $expectedPose = self::POSES[min($captured, count(self::POSES) - 1)] ?? null;
+            $aiState = [];
+            if (($state['mode'] ?? '') === 'AUTO') {
+                try {
+                    $aiState = $this->ai->enrollmentSessionStatus((string)($state['ai_session_id'] ?? ''));
+                    if (($aiState['success'] ?? false) === true) {
+                        $captured = (int)($aiState['captured'] ?? $captured);
+                        $stateName = (string)($aiState['state'] ?? $stateName);
+                        $expectedPose = $aiState['expected_pose'] ?? $expectedPose;
+                        $reason = (string)($aiState['reason'] ?? $reason);
+                    } else {
+                        $stateName = 'OFFLINE';
+                        $reason = 'Mất kết nối với AI1. Dữ liệu cũ vẫn được giữ nguyên.';
+                    }
+                } catch (Throwable $exception) {
+                    $stateName = 'OFFLINE';
+                    $reason = 'Mất kết nối với AI1. Dữ liệu cũ vẫn được giữ nguyên.';
+                }
+            }
+            $employee = $this->employees->findById((int)$employeeId);
+            $faceBox = $aiState['face_bbox'] ?? null;
+            $frameWidth = filter_var($aiState['frame_width'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 8192]]);
+            $frameHeight = filter_var($aiState['frame_height'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 8192]]);
+            if (!is_array($faceBox) || count($faceBox) !== 4 || !is_int($frameWidth) || !is_int($frameHeight)) {
+                $faceBox = null;
+                $frameWidth = 0;
+                $frameHeight = 0;
+            } else {
+                foreach ($faceBox as $coordinate) {
+                    if (!is_numeric($coordinate) || !is_finite((float)$coordinate)) {
+                        $faceBox = null;
+                        $frameWidth = 0;
+                        $frameHeight = 0;
+                        break;
+                    }
+                }
+                if (is_array($faceBox)) {
+                    $faceBox = array_map('floatval', array_values($faceBox));
+                }
+            }
+            $feedbackCode = strtoupper(trim((string)($aiState['feedback_code'] ?? '')));
+            $qualityCode = strtoupper(trim((string)($aiState['quality_code'] ?? '')));
+            if (!preg_match('/^[A-Z0-9_ ]{0,40}$/D', $feedbackCode)) {
+                $feedbackCode = '';
+            }
+            if (!preg_match('/^[A-Z0-9_ ]{0,40}$/D', $qualityCode)) {
+                $qualityCode = '';
+            }
+            $detectedPose = strtolower((string)($aiState['detected_pose'] ?? 'unknown'));
+            if (!in_array($detectedPose, ['frontal', 'left', 'right', 'up', 'down', 'between', 'no_face', 'unknown', 'multiple_faces'], true)) {
+                $detectedPose = 'unknown';
+            }
+            $this->jsonResponse([
+                'success' => true,
+                'state' => $stateName,
+                'mode' => (string)($state['mode'] ?? 'MANUAL'),
+                'employee_id' => (int)$employeeId,
+                'employee_name' => (string)($employee['HoTen'] ?? ''),
+                'expected_pose' => is_string($expectedPose) ? $expectedPose : null,
+                'captured' => max(0, min(count(self::POSES), $captured)),
+                'total' => count(self::POSES),
+                'stable_frame_count' => max(0, (int)($aiState['stable_count'] ?? $state['stable_frame_count'] ?? 0)),
+                'stable_frames_required' => max(1, (int)($aiState['stable_frames_required'] ?? $state['stable_frames_required'] ?? 5)),
+                'detected_pose' => $detectedPose,
+                'observation_status' => (string)($aiState['observation_status'] ?? ''),
+                'feedback_code' => $feedbackCode,
+                'quality_code' => $qualityCode,
+                'face_bbox' => $faceBox,
+                'frame_width' => $frameWidth,
+                'frame_height' => $frameHeight,
+                'reason' => $reason,
+            ]);
+        }
+
+        $notice = $_SESSION['kiosk_enrollment_notices'][$deviceId] ?? null;
+        if (is_array($notice) && (int)($notice['expires_at'] ?? 0) >= time()) {
+            $this->jsonResponse([
+                'success' => true,
+                'state' => (string)($notice['state'] ?? 'IDLE'),
+                'captured' => 5,
+                'total' => count(self::POSES),
+                'reason' => (string)($notice['message'] ?? ''),
+                'employee_id' => (int)($notice['employee_id'] ?? 0),
+                'employee_name' => (string)($notice['employee_name'] ?? ''),
+            ]);
+        }
+        unset($_SESSION['kiosk_enrollment_notices'][$deviceId]);
+        $this->jsonResponse(['success' => true, 'state' => 'IDLE', 'captured' => 0, 'total' => count(self::POSES)]);
+    }
+
+    /** Capture one paired JPEG/vector into the uncommitted PHP session batch. */
+    private function captureSample(int $employeeId, array &$state, string $pose, string $jpeg, bool $automatic): array
+    {
+        try {
+            $reference = $state['samples'][0]['vector'] ?? null;
+            $result = $this->ai->captureEnrollmentSample($jpeg, $pose, $reference);
+            if (empty($result['success']) || empty($result['pose_ok'])) {
+                EnrollmentCaptureState::reset($state);
+                $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+                $fields = array_intersect_key($result, array_flip([
+                    'current_pose', 'expected_pose', 'yaw', 'pitch', 'instruction',
+                ]));
+                $reason = (string)($result['instruction'] ?? 'Frame không còn đạt điều kiện capture.');
+                return [
+                    'status' => 409,
+                    'payload' => array_merge($fields, $this->progressPayload($state, $pose), [
+                        'success' => false,
+                        'ready' => false,
+                        'reason' => $reason,
+                        'message' => $reason,
+                        'auto_captured' => false,
+                    ]),
+                ];
+            }
+
+            $vector = base64_decode((string)($result['vector'] ?? ''), true);
+            $image = base64_decode((string)($result['image_jpeg'] ?? ''), true);
+            if (!is_string($vector) || strlen($vector) !== 2048 || !is_string($image)
+                || $image === '' || strlen($image) > self::MAX_IMAGE_BYTES
+                || !hash_equals((string)($result['image_sha256'] ?? ''), hash('sha256', $image))
+                || !$this->isValidImage($image)) {
+                EnrollmentCaptureState::reset($state);
+                $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+                return [
+                    'status' => 502,
+                    'payload' => array_merge($this->progressPayload($state, $pose), [
+                        'success' => false,
+                        'ready' => false,
+                        'reason' => 'Mẫu AI trả về không hợp lệ.',
+                        'message' => 'Mẫu AI trả về không hợp lệ.',
+                        'auto_captured' => false,
+                    ]),
+                ];
+            }
+
+            $captured = EnrollmentCaptureState::recordSample(
+                $state,
+                self::POSES,
+                $pose,
+                ['vector' => $vector, 'image' => $image],
+            );
+            $state['state'] = $captured === count(self::POSES) ? 'AWAITING_CONFIRMATION' : 'ENROLLING';
+            if ($captured === count(self::POSES)) {
+                $state['duplicate_check'] = $this->faceEmbeddings->checkDuplicate(
+                    $employeeId,
+                    $state['samples']
+                );
+            }
+            $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+            $nextPose = self::POSES[$state['current_pose_index']] ?? null;
+            $progress = $this->progressPayload($state, $nextPose);
+            return [
+                'status' => 200,
+                'payload' => array_merge(
+                    array_intersect_key($result, array_flip(['current_pose', 'yaw', 'pitch'])),
+                    $progress,
+                    [
+                        'success' => true,
+                        'ready' => true,
+                        'reason' => '',
+                        'pose' => $pose,
+                        'captured' => $captured,
+                        'next_pose' => $nextPose,
+                        'complete' => $captured === count(self::POSES),
+                        'duplicate_check' => $state['duplicate_check'] ?? null,
+                        'auto_captured' => $automatic,
+                        'stable_frame_count' => 0,
+                        'stable_frames_required' => EnrollmentCaptureState::STABLE_FRAMES_REQUIRED,
+                        'instruction' => $automatic
+                            ? ($nextPose === null ? 'Đã tự động chụp đủ 5 góc.' : 'Đã tự động chụp. Đang chuyển sang pose tiếp theo.')
+                            : 'Mẫu đã được ghi nhận.',
+                    ],
+                ),
+            ];
+        } catch (Throwable $exception) {
+            EnrollmentCaptureState::reset($state);
+            $_SESSION[self::SESSION_KEY][$employeeId] = $state;
+            error_log('Face enrollment sample capture failed: ' . $exception->getMessage());
+            return [
+                'status' => 503,
+                'payload' => array_merge($this->progressPayload($state, $pose), [
+                    'success' => false,
+                    'ready' => false,
+                    'reason' => 'Không thể ghi nhận mẫu khuôn mặt.',
+                    'message' => 'Không thể ghi nhận mẫu khuôn mặt.',
+                    'auto_captured' => false,
+                ]),
+            ];
+        }
+    }
+
+    private function progressPayload(array $state, ?string $expectedPose): array
+    {
+        $captured = count($state['samples'] ?? []);
+        $index = EnrollmentCaptureState::poseIndex($state);
+
+        return [
+            'captured' => $captured,
+            'total' => count(self::POSES),
+            'current_pose_index' => $index,
+            'expected_pose' => $expectedPose,
+            'progress' => $captured . '/' . count(self::POSES),
+            'stable_frame_count' => (int)($state['stable_frame_count'] ?? 0),
+            'stable_frames_required' => EnrollmentCaptureState::STABLE_FRAMES_REQUIRED,
+        ];
+    }
+
+    private function cancelAiSession(array $state): void
+    {
+        if (!is_string($state['ai_session_id'] ?? null)) {
+            return;
+        }
+        try {
+            $this->ai->cancelEnrollmentSession($state['ai_session_id']);
+        } catch (Throwable $exception) {
+            error_log('Smart Enrollment AI session cancellation failed.');
+        }
+    }
+
+    private function rememberDeviceEnrollmentNotice(
+        int $deviceId,
+        string $state,
+        string $message,
+        int $employeeId = 0,
+        string $employeeName = ''
+    ): void
+    {
+        if ($deviceId < 1) {
+            return;
+        }
+        if (!isset($_SESSION['kiosk_enrollment_notices']) || !is_array($_SESSION['kiosk_enrollment_notices'])) {
+            $_SESSION['kiosk_enrollment_notices'] = [];
+        }
+        $_SESSION['kiosk_enrollment_notices'][$deviceId] = [
+            'state' => $state,
+            'message' => $message,
+            'employee_id' => $employeeId,
+            'employee_name' => $employeeName,
+            'expires_at' => time() + 6,
+        ];
+    }
+
     private function activeBatch(int $employeeId): ?array
     {
         $state = $_SESSION[self::SESSION_KEY][$employeeId] ?? null;
         if (!is_array($state) || time() - (int)($state['started_at'] ?? 0) > self::SESSION_TTL) {
+            if (is_array($state)) {
+                $deviceId = (int)($state['device_id'] ?? 0);
+                $this->cancelAiSession($state);
+                $this->rememberDeviceEnrollmentNotice($deviceId, 'EXPIRED', 'Phiên đăng ký đã hết hạn.');
+            }
             unset($_SESSION[self::SESSION_KEY][$employeeId]);
             $this->jsonResponse(['success' => false, 'message' => 'Phiên đăng ký đã hết hạn. Hãy bắt đầu lại.'], 410);
             return null;

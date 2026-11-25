@@ -5,6 +5,14 @@ require_once __DIR__ . '/Database.php';
 
 final class AccountModel
 {
+    private ?PDO $connection;
+    private static ?WeakMap $standaloneAdminSchemaCache = null;
+
+    public function __construct(?PDO $connection = null)
+    {
+        $this->connection = $connection;
+    }
+
     private const WERKZEUG_SCRYPT_VERIFIER = <<<'PYTHON'
 import hashlib
 import hmac
@@ -40,24 +48,35 @@ except Exception:
     sys.exit(2)
 PYTHON;
 
-    /** Xác thực credential hiện có và trả thông tin session-safe, không trả mật khẩu. */
+    /** Authenticate the single Admin account without requiring an employee row. */
     public function authenticate(string $username, string $password): ?array
     {
-        $statement = Database::getConnection()->prepare(<<<'SQL'
-            SELECT
-                tk.MaTK AS UserId,
-                tk.MaNV AS EmployeeId,
-                tk.TenDangNhap AS Username,
-                tk.MatKhau AS StoredPassword,
-                nv.HoTen AS DisplayName,
-                nv.MaVaiTro AS RoleId,
-                vt.TenVaiTro AS RoleName
-            FROM TaiKhoan tk
-            INNER JOIN NhanVien nv ON nv.MaNV = tk.MaNV
-            INNER JOIN VaiTro vt ON vt.MaVaiTro = nv.MaVaiTro
-            WHERE tk.TenDangNhap = :username
-            LIMIT 1
-            SQL);
+        $pdo = $this->connection();
+        if ($this->supportsStandaloneAdminAccounts($pdo)) {
+            $statement = $pdo->prepare(<<<'SQL'
+                SELECT MaTK AS UserId, TenDangNhap AS Username, MatKhau AS StoredPassword
+                FROM TaiKhoan
+                WHERE LoaiTaiKhoan = 'ADMIN' AND MaNV IS NULL AND TenDangNhap = :username
+                LIMIT 1
+                SQL);
+        } else {
+            // Temporary compatibility for databases before the explicit account migration.
+            $statement = $pdo->prepare(<<<'SQL'
+                SELECT tk.MaTK AS UserId, tk.TenDangNhap AS Username, tk.MatKhau AS StoredPassword
+                FROM TaiKhoan tk
+                INNER JOIN NhanVien nv ON nv.MaNV = tk.MaNV
+                INNER JOIN VaiTro vt ON vt.MaVaiTro = nv.MaVaiTro
+                WHERE vt.TenVaiTro = 'Quản trị viên' AND tk.TenDangNhap = :username
+                  AND (
+                    SELECT COUNT(*)
+                    FROM TaiKhoan admin_account
+                    INNER JOIN NhanVien admin_employee ON admin_employee.MaNV = admin_account.MaNV
+                    INNER JOIN VaiTro admin_role ON admin_role.MaVaiTro = admin_employee.MaVaiTro
+                    WHERE admin_role.TenVaiTro = 'Quản trị viên'
+                  ) = 1
+                LIMIT 1
+                SQL);
+        }
         $statement->execute(['username' => $username]);
         $account = $statement->fetch();
 
@@ -67,73 +86,95 @@ PYTHON;
 
         return [
             'user_id' => (int)$account['UserId'],
-            'ma_nv' => (int)$account['EmployeeId'],
             'username' => (string)$account['Username'],
-            'display_name' => (string)($account['DisplayName'] ?? ''),
-            'ma_vai_tro' => (int)$account['RoleId'],
-            'role' => (string)$account['RoleName'],
+            'display_name' => 'Quản trị viên',
+            'is_admin' => true,
+            'role' => 'Quản trị viên',
         ];
     }
 
-    public function usernameExists(string $username, ?int $exceptEmployeeId = null): bool
+    /** Check the Admin account by account ID; standalone mode does not join NhanVien. */
+    public function isAdminAccountActive(int $accountId): bool
     {
-        $sql = 'SELECT 1 FROM TaiKhoan WHERE TenDangNhap = :username';
-        $params = ['username' => $username];
-        if ($exceptEmployeeId !== null) {
-            $sql .= ' AND MaNV <> :employee_id';
-            $params['employee_id'] = $exceptEmployeeId;
+        if ($accountId < 1) {
+            return false;
         }
-        $sql .= ' LIMIT 1';
-        $statement = Database::getConnection()->prepare($sql);
-        $statement->execute($params);
+
+        $pdo = $this->connection();
+        if ($this->supportsStandaloneAdminAccounts($pdo)) {
+            $statement = $pdo->prepare(<<<'SQL'
+                SELECT 1
+                FROM TaiKhoan
+                WHERE MaTK = :account_id AND LoaiTaiKhoan = 'ADMIN' AND MaNV IS NULL
+                LIMIT 1
+                SQL);
+        } else {
+            $statement = $pdo->prepare(<<<'SQL'
+                SELECT 1
+                FROM TaiKhoan tk
+                INNER JOIN NhanVien nv ON nv.MaNV = tk.MaNV
+                INNER JOIN VaiTro vt ON vt.MaVaiTro = nv.MaVaiTro
+                WHERE tk.MaTK = :account_id AND vt.TenVaiTro = 'Quản trị viên'
+                  AND (
+                    SELECT COUNT(*)
+                    FROM TaiKhoan admin_account
+                    INNER JOIN NhanVien admin_employee ON admin_employee.MaNV = admin_account.MaNV
+                    INNER JOIN VaiTro admin_role ON admin_role.MaVaiTro = admin_employee.MaVaiTro
+                    WHERE admin_role.TenVaiTro = 'Quản trị viên'
+                  ) = 1
+                LIMIT 1
+                SQL);
+        }
+        $statement->execute(['account_id' => $accountId]);
 
         return $statement->fetchColumn() !== false;
     }
 
-    /** Lấy username và mã tài khoản liên kết với nhân viên, không đọc password. */
-    public function findByEmployeeId(int $employeeId): ?array
+    /** Verify the current session employee is still active in the database. */
+    public function isEmployeeActive(int $employeeId): bool
     {
-        $statement = Database::getConnection()->prepare(<<<'SQL'
-            SELECT MaTK, MaNV, TenDangNhap
-            FROM TaiKhoan
-            WHERE MaNV = :employee_id
-            ORDER BY MaTK
-            LIMIT 1
-            SQL);
+        $pdo = $this->connection();
+        $activeEmployee = Database::activeEmployeePredicate('', $pdo);
+        $statement = $pdo->prepare(
+            'SELECT 1 FROM NhanVien WHERE MaNV = :employee_id AND ' . $activeEmployee . ' LIMIT 1'
+        );
         $statement->execute(['employee_id' => $employeeId]);
-        $account = $statement->fetch();
 
-        return $account === false ? null : $account;
+        return $statement->fetchColumn() !== false;
     }
 
-    /** Chèn tài khoản đã hash cho nhân viên trong transaction do caller quản lý. */
-    public function createForEmployee(int $employeeId, string $username, string $passwordHash): void
+    private function supportsStandaloneAdminAccounts(PDO $pdo): bool
     {
-        $statement = Database::getConnection()->prepare(<<<'SQL'
-            INSERT INTO TaiKhoan (MaNV, TenDangNhap, MatKhau)
-            VALUES (:employee_id, :username, :password)
-            SQL);
-        $statement->execute([
-            'employee_id' => $employeeId,
-            'username' => $username,
-            'password' => $passwordHash,
-        ]);
-    }
-
-    /** Cập nhật username và chỉ thay password khi hash mới được truyền vào. */
-    public function updateForEmployee(
-        int $employeeId,
-        string $username,
-        ?string $passwordHash
-    ): void {
-        $sql = 'UPDATE TaiKhoan SET TenDangNhap = :username';
-        $params = ['username' => $username, 'employee_id' => $employeeId];
-        if ($passwordHash !== null) {
-            $sql .= ', MatKhau = :password';
-            $params['password'] = $passwordHash;
+        self::$standaloneAdminSchemaCache ??= new WeakMap();
+        if (self::$standaloneAdminSchemaCache->offsetExists($pdo)) {
+            return self::$standaloneAdminSchemaCache[$pdo];
         }
-        $sql .= ' WHERE MaNV = :employee_id ORDER BY MaTK LIMIT 1';
-        Database::getConnection()->prepare($sql)->execute($params);
+
+        $driver = (string)$pdo->getAttribute(PDO::ATTR_DRIVER_NAME);
+        if ($driver === 'mysql') {
+            $statement = $pdo->prepare(<<<'SQL'
+                SELECT COUNT(*)
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'TaiKhoan'
+                  AND COLUMN_NAME = 'LoaiTaiKhoan'
+                SQL);
+            $statement->execute();
+            $supported = (int)$statement->fetchColumn() === 1;
+        } elseif ($driver === 'sqlite') {
+            $supported = false;
+            foreach ($pdo->query('PRAGMA table_info(`TaiKhoan`)')->fetchAll(PDO::FETCH_ASSOC) as $column) {
+                if (strcasecmp((string)$column['name'], 'LoaiTaiKhoan') === 0) {
+                    $supported = true;
+                    break;
+                }
+            }
+        } else {
+            throw new RuntimeException('Unsupported database driver for Admin account schema inspection.');
+        }
+
+        self::$standaloneAdminSchemaCache[$pdo] = $supported;
+        return $supported;
     }
 
     private function passwordMatches(string $password, string $storedPassword): bool
@@ -189,5 +230,10 @@ PYTHON;
         $exitCode = proc_close($process);
 
         return $exitCode === 0 && hash_equals('1', $output);
+    }
+
+    private function connection(): PDO
+    {
+        return $this->connection ?? Database::getConnection();
     }
 }

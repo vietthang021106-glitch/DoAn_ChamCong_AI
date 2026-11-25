@@ -6,8 +6,6 @@ require_once __DIR__ . '/../Security/CsrfToken.php';
 
 final class AuthController
 {
-    private const ADMIN_ROLE_ID = 1;
-
     private AccountModel $accounts;
 
     public function __construct()
@@ -63,17 +61,14 @@ final class AuthController
         }
 
         $_SESSION['user_id'] = $user['user_id'];
-        $_SESSION['ma_nv'] = $user['ma_nv'];
         $_SESSION['username'] = $user['username'];
-        $_SESSION['ma_vai_tro'] = $user['ma_vai_tro'];
+        $_SESSION['is_admin'] = true;
         $_SESSION['role'] = $user['role'];
         $_SESSION['display_name'] = $user['display_name'];
+        unset($_SESSION['ma_nv'], $_SESSION['ma_vai_tro']);
         CsrfToken::rotate();
 
-        $destination = (int)$user['ma_vai_tro'] === 2
-            ? '/?action=my'
-            : '/?action=dashboard';
-        header('Location: ' . $destination, true, 302);
+        header('Location: /?action=dashboard', true, 302);
         exit;
     }
 
@@ -104,33 +99,50 @@ final class AuthController
         exit;
     }
 
-    /** Chặn request chưa đăng nhập hoặc không có MaVaiTro admin bằng kiểm tra phía server. */
+    /** Require the one database-backed Admin account; no employee identity is used. */
     public static function requireAdmin(): void
     {
-        if (!isset($_SESSION['user_id'])) {
+        $accountId = filter_var(
+            $_SESSION['user_id'] ?? null,
+            FILTER_VALIDATE_INT,
+            ['options' => ['min_range' => 1]]
+        );
+        if (!is_int($accountId)) {
             header('Location: /?action=login', true, 302);
             exit;
         }
 
-        if ((int)($_SESSION['ma_vai_tro'] ?? 0) !== self::ADMIN_ROLE_ID) {
-            http_response_code(403);
-            $authUser = [
-                'display_name' => (string)($_SESSION['display_name'] ?? ''),
-                'role' => (string)($_SESSION['role'] ?? ''),
-            ];
-            $pageTitle = 'Không đủ quyền';
-            require __DIR__ . '/../View/forbidden.php';
-            exit;
+        try {
+            if (!(new AccountModel())->isAdminAccountActive($accountId)) {
+                self::invalidateSession();
+            }
+        } catch (Throwable $exception) {
+            error_log('Admin session status check failed: ' . $exception->getMessage());
+            http_response_code(503);
+            exit('Không thể xác minh phiên đăng nhập lúc này. Vui lòng thử lại.');
         }
+
+        // Upgrade sessions issued by the old role-based login during migration.
+        $_SESSION['is_admin'] = true;
+        $_SESSION['role'] = 'Quản trị viên';
+        $_SESSION['display_name'] = (string)($_SESSION['display_name'] ?? 'Quản trị viên');
+        unset($_SESSION['ma_nv'], $_SESSION['ma_vai_tro']);
     }
 
-    /** Yêu cầu session đã xác thực; nếu chưa có thì chuyển về form đăng nhập. */
+    /** Employees do not have Web accounts; all authenticated Web sessions are Admin. */
     public static function requireAuthenticated(): void
     {
-        if (!isset($_SESSION['user_id'])) {
-            header('Location: /?action=login', true, 302);
-            exit;
+        self::requireAdmin();
+    }
+
+    private static function invalidateSession(): void
+    {
+        $_SESSION = [];
+        if (session_status() === PHP_SESSION_ACTIVE) {
+            session_destroy();
         }
+        header('Location: /?action=login', true, 302);
+        exit;
     }
 
     private function renderLogin(?string $loginError = null, string $loginUsername = ''): void

@@ -14,9 +14,12 @@ final class AttendanceModel
 
     public function findEmployees(): array
     {
-        return Database::getConnection()->query(<<<'SQL'
+        $connection = $this->connection ?? Database::getConnection();
+        $activeEmployee = Database::activeEmployeePredicate('', $connection);
+        return $connection->query(<<<SQL
             SELECT MaNV, HoTen
             FROM NhanVien
+            WHERE {$activeEmployee}
             ORDER BY MaNV
             SQL)->fetchAll();
     }
@@ -25,7 +28,8 @@ final class AttendanceModel
     public function findRecentPunches(int $limit = 6): array
     {
         $connection = $this->connection ?? Database::getConnection();
-        $statement = $connection->prepare(<<<'SQL'
+        $activeEmployee = Database::activeEmployeePredicate('NV', $connection);
+        $statement = $connection->prepare(<<<SQL
             SELECT MaCC, MaNV, HoTen, MaCa, TenCa, EventTime, PunchType
             FROM (
                 SELECT
@@ -39,7 +43,7 @@ final class AttendanceModel
                 FROM ChamCong CC
                 INNER JOIN NhanVien NV ON NV.MaNV = CC.MaNV
                 LEFT JOIN CaLamViec CLV ON CLV.MaCa = CC.MaCa
-                WHERE CC.GioVao IS NOT NULL
+                WHERE CC.GioVao IS NOT NULL AND {$activeEmployee}
 
                 UNION ALL
 
@@ -54,7 +58,7 @@ final class AttendanceModel
                 FROM ChamCong CC
                 INNER JOIN NhanVien NV ON NV.MaNV = CC.MaNV
                 LEFT JOIN CaLamViec CLV ON CLV.MaCa = CC.MaCa
-                WHERE CC.GioRa IS NOT NULL
+                WHERE CC.GioRa IS NOT NULL AND {$activeEmployee}
             ) AS PunchEvents
             ORDER BY EventTime DESC, MaCC DESC, PunchType DESC
             LIMIT :limit
@@ -74,6 +78,8 @@ final class AttendanceModel
         int $offset = 0
     ): array {
         [$filter, $params] = $this->employeeFilters($employeeId, $keyword, 'NV');
+        $activeEmployee = Database::activeEmployeePredicate('NV');
+        $filter .= ' AND ' . $activeEmployee;
         $start = $date . ' 00:00:00';
         $end = (new DateTimeImmutable($date))->modify('+1 day')->format('Y-m-d') . ' 00:00:00';
         $sql = <<<SQL
@@ -116,6 +122,8 @@ final class AttendanceModel
     public function countDaily(string $date, ?int $employeeId = null, ?string $keyword = null): int
     {
         [$filter, $params] = $this->employeeFilters($employeeId, $keyword, 'NV');
+        $activeEmployee = Database::activeEmployeePredicate('NV');
+        $filter .= ' AND ' . $activeEmployee;
         $statement = Database::getConnection()->prepare(
             "SELECT COUNT(*) FROM NhanVien NV WHERE 1 = 1 {$filter}"
         );
@@ -134,6 +142,7 @@ final class AttendanceModel
         int $offset = 0
     ): array {
         [$filter, $params] = $this->attendanceFilters($employeeId, $keyword);
+        $activeEmployee = Database::activeEmployeePredicate('NV');
         $endExclusive = (new DateTimeImmutable($toDate))->modify('+1 day')->format('Y-m-d') . ' 00:00:00';
         $sql = <<<SQL
             SELECT
@@ -154,6 +163,7 @@ final class AttendanceModel
             LEFT JOIN CaLamViec CLV ON CLV.MaCa = CC.MaCa
             WHERE CC.GioVao >= :from_date
                 AND CC.GioVao < :to_date
+                AND {$activeEmployee}
                 {$filter}
             ORDER BY CC.GioVao DESC, CC.MaCC DESC
             SQL;
@@ -172,6 +182,7 @@ final class AttendanceModel
         ?string $keyword = null
     ): int {
         [$filter, $params] = $this->attendanceFilters($employeeId, $keyword);
+        $activeEmployee = Database::activeEmployeePredicate('NV');
         $endExclusive = (new DateTimeImmutable($toDate))->modify('+1 day')->format('Y-m-d') . ' 00:00:00';
         $params += [
             'from_date' => $fromDate . ' 00:00:00',
@@ -183,6 +194,7 @@ final class AttendanceModel
             INNER JOIN NhanVien NV ON NV.MaNV = CC.MaNV
             WHERE CC.GioVao >= :from_date
                 AND CC.GioVao < :to_date
+                AND {$activeEmployee}
                 {$filter}
             SQL);
         $statement->execute($params);
@@ -213,8 +225,11 @@ final class AttendanceModel
 
     public function employeeExists(int $employeeId): bool
     {
-        $statement = Database::getConnection()->prepare(
-            'SELECT 1 FROM NhanVien WHERE MaNV = :employee_id LIMIT 1'
+        $connection = $this->connection ?? Database::getConnection();
+        $lockSuffix = $connection->getAttribute(PDO::ATTR_DRIVER_NAME) === 'mysql' ? ' FOR UPDATE' : '';
+        $activeEmployee = Database::activeEmployeePredicate('', $connection);
+        $statement = $connection->prepare(
+            'SELECT 1 FROM NhanVien WHERE MaNV = :employee_id AND ' . $activeEmployee . ' LIMIT 1' . $lockSuffix
         );
         $statement->execute(['employee_id' => $employeeId]);
 
@@ -223,7 +238,8 @@ final class AttendanceModel
 
     public function findEmployeeShift(int $employeeId, string $date): ?array
     {
-        $statement = Database::getConnection()->prepare(<<<'SQL'
+        $connection = $this->connection ?? Database::getConnection();
+        $statement = $connection->prepare(<<<'SQL'
             SELECT PCN.MaCa, CLV.TenCa, CLV.GioBatDau, CLV.GioKetThuc
             FROM PhanCaNhanVien PCN
             INNER JOIN CaLamViec CLV ON CLV.MaCa = PCN.MaCa

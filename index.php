@@ -29,6 +29,7 @@ require_once __DIR__ . '/Controller/MonitoringController.php';
 require_once __DIR__ . '/Controller/MyController.php';
 require_once __DIR__ . '/Controller/FaceEnrollmentController.php';
 require_once __DIR__ . '/Controller/DeviceController.php';
+require_once __DIR__ . '/Controller/KioskController.php';
 
 $authController = new AuthController();
 $controller = new EmployeeController();
@@ -40,9 +41,28 @@ $monitoringController = new MonitoringController();
 $myController = new MyController();
 $faceEnrollmentController = new FaceEnrollmentController();
 $deviceController = new DeviceController();
-$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$kioskController = new KioskController();
 $action = $_GET['action'] ?? 'index';
-$requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+
+if ($action === 'man-hinh-cham-cong' && $method === 'GET') {
+    $kioskController->index();
+    return;
+}
+
+if ($action === 'kiosk_record_attendance' && $method === 'POST') {
+    $kioskController->recordAttendance();
+    return;
+}
+
+if ($action === 'kiosk_recognition_start' && $method === 'POST') {
+    $kioskController->startRecognition();
+    return;
+}
+
+if ($action === 'kiosk_enrollment_status' && $method === 'GET') {
+    $faceEnrollmentController->deviceStatus();
+    return;
+}
 
 if ($requestPath === '/api/chamcong') {
     if ($method !== 'POST') {
@@ -54,14 +74,18 @@ if ($requestPath === '/api/chamcong') {
     return;
 }
 
-if ($method === 'GET' && !isset($_GET['action'])
-    && isset($_SESSION['user_id']) && (int)($_SESSION['ma_vai_tro'] ?? 0) === 2) {
-    header('Location: /?action=my', true, 302);
+if ($action === 'internal_face_gallery' && $method === 'GET') {
+    $aiController->internalFaceGallery();
     return;
 }
 
-if ($action === 'internal_face_gallery' && $method === 'GET') {
-    $aiController->internalFaceGallery();
+if ($action === 'face_recognition_start' && $method === 'POST') {
+    $aiController->startRecognitionSession();
+    return;
+}
+
+if ($action === 'face_recognition_status' && $method === 'GET') {
+    $aiController->recognitionSessionStatus();
     return;
 }
 
@@ -72,6 +96,11 @@ if ($action === 'face_image' && $method === 'GET') {
 
 if ($action === 'face_camera_frame' && $method === 'GET') {
     $faceEnrollmentController->frame();
+    return;
+}
+
+if ($action === 'face_enrollment_preview' && $method === 'GET') {
+    $faceEnrollmentController->sessionPreview();
     return;
 }
 
@@ -163,6 +192,11 @@ if ($action === 'update' && $method === 'POST') {
     return;
 }
 
+if ($action === 'delete_employee' && $method === 'POST') {
+    $controller->delete();
+    return;
+}
+
 if ($action === 'shifts' && $method === 'GET') {
     $shiftController->index();
     return;
@@ -170,6 +204,16 @@ if ($action === 'shifts' && $method === 'GET') {
 
 if ($action === 'assign_shift' && $method === 'POST') {
     $shiftController->assign();
+    return;
+}
+
+if ($action === 'bulk_assign_shift' && $method === 'POST') {
+    $shiftController->bulkAssign();
+    return;
+}
+
+if ($action === 'copy_week_shifts' && $method === 'POST') {
+    $shiftController->copyWeek();
     return;
 }
 
@@ -262,11 +306,12 @@ if ($action === 'attendance_image_out' && $method === 'GET') {
     return;
 }
 
-if (in_array($action, ['index', 'dashboard', 'create', 'store', 'edit', 'update', 'login', 'logout', 'shifts', 'assign_shift', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift', 'attendance', 'live_attendance_feed', 'devices', 'scan_history_image', 'health', 'alerts', 'monitoring', 'attendance_image_in', 'attendance_image_out', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'internal_face_gallery', 'face_image', 'face_camera_frame', ...array_keys($faceEnrollmentActions)], true)) {
+if (in_array($action, ['index', 'dashboard', 'create', 'store', 'edit', 'update', 'delete_employee', 'login', 'logout', 'shifts', 'assign_shift', 'bulk_assign_shift', 'copy_week_shifts', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift', 'attendance', 'live_attendance_feed', 'devices', 'scan_history_image', 'health', 'alerts', 'monitoring', 'attendance_image_in', 'attendance_image_out', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'internal_face_gallery', 'face_image', 'face_camera_frame', 'face_enrollment_preview', 'face_recognition_start', 'face_recognition_status', 'man-hinh-cham-cong', 'kiosk_record_attendance', 'kiosk_recognition_start', 'kiosk_enrollment_status', ...array_keys($faceEnrollmentActions)], true)) {
     $allowedMethods = match ($action) {
         'login' => 'GET, POST',
-        'store', 'update', 'logout', 'assign_shift', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift' => 'POST',
-        'internal_face_gallery', 'face_image', 'face_camera_frame', 'attendance_image_in', 'attendance_image_out', 'scan_history_image', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'health', 'alerts', 'monitoring' => 'GET',
+        'store', 'update', 'delete_employee', 'logout', 'assign_shift', 'bulk_assign_shift', 'copy_week_shifts', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift', 'kiosk_record_attendance', 'kiosk_recognition_start' => 'POST',
+        'internal_face_gallery', 'face_image', 'face_camera_frame', 'face_enrollment_preview', 'face_recognition_status', 'attendance_image_in', 'attendance_image_out', 'scan_history_image', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'health', 'alerts', 'monitoring', 'live_attendance_feed', 'devices', 'man-hinh-cham-cong', 'kiosk_enrollment_status' => 'GET',
+        'face_recognition_start' => 'POST',
         default => isset($faceEnrollmentActions[$action]) ? 'POST' : 'GET',
     };
     header('Allow: ' . $allowedMethods);

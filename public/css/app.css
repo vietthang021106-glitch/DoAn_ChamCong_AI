@@ -575,6 +575,12 @@ h2 {
     border-color: #abefc6;
 }
 
+.notice--warning {
+    color: #93370d;
+    background: #fffaeb;
+    border-color: #fedf89;
+}
+
 .form-panel {
     padding: 22px;
     background: var(--surface);
@@ -1193,6 +1199,84 @@ h2 {
     grid-template-columns: repeat(2, minmax(200px, 1fr));
 }
 
+.shift-batch-tools {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.shift-batch-details {
+    flex: 1 1 260px;
+    min-width: 0;
+}
+
+.shift-batch-details > summary {
+    display: inline-flex;
+    cursor: pointer;
+    list-style: none;
+}
+
+.shift-batch-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.shift-batch-details[open] > summary {
+    margin-bottom: 12px;
+}
+
+.shift-bulk-form,
+.shift-copy-week-form {
+    padding-top: 4px;
+}
+
+.shift-employee-picker,
+.shift-weekday-picker {
+    min-width: 0;
+    margin: 0 0 16px;
+    padding: 12px;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+}
+
+.shift-employee-picker legend,
+.shift-weekday-picker legend {
+    padding: 0 5px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.shift-employee-options {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+    gap: 8px 16px;
+}
+
+.shift-employee-options label,
+.shift-weekday-options label {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    min-width: 0;
+    color: var(--text);
+    font-size: 13px;
+}
+
+.shift-employee-options input,
+.shift-weekday-options input {
+    flex: 0 0 auto;
+    margin: 0;
+}
+
+.shift-weekday-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 18px;
+}
+
+.shift-copy-week-form .field-hint {
+    margin: 10px 0 0;
+}
+
 .shift-edit-form {
     padding: 14px 0;
     border-bottom: 1px solid var(--border-soft);
@@ -1678,6 +1762,7 @@ h2 {
 }
 
 .face-enrollment-camera-wrap {
+    position: relative;
     min-height: 220px;
     overflow: hidden;
     display: grid;
@@ -1699,6 +1784,28 @@ h2 {
     color: #eaecf0;
     text-align: center;
     font-size: 13px;
+}
+
+.face-enrollment-guide {
+    position: absolute;
+    z-index: 1;
+    left: 50%;
+    top: 50%;
+    width: min(42%, 260px);
+    aspect-ratio: .78;
+    transform: translate(-50%, -50%);
+    border: 3px solid #eab308;
+    border-radius: 50%;
+    box-shadow: 0 0 0 999px rgb(12 18 28 / 28%);
+    pointer-events: none;
+}
+
+.face-enrollment-guide[data-state="ready"] {
+    border-color: #12b76a;
+}
+
+.face-enrollment-guide[data-state="fail"] {
+    border-color: #f04438;
 }
 
 .face-enrollment-progress {
@@ -1739,6 +1846,39 @@ h2 {
     color: #067647;
 }
 
+.face-enrollment-thumbnails {
+    grid-column: 1 / -1;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.face-enrollment-thumbnails figure {
+    margin: 0;
+    overflow: hidden;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: #f9fafb;
+}
+
+.face-enrollment-thumbnails figure.is-complete {
+    border-color: #12b76a;
+}
+
+.face-enrollment-thumbnails img {
+    display: block;
+    width: 100%;
+    aspect-ratio: 4 / 3;
+    object-fit: cover;
+    background: #eef2f6;
+}
+
+.face-enrollment-thumbnails figcaption {
+    padding: 5px 7px;
+    color: #475467;
+    font-size: 12px;
+}
+
 .face-enrollment-actions {
     grid-column: 1 / -1;
     justify-content: flex-end;
@@ -1752,6 +1892,99 @@ h2 {
     color: #344054;
     background: #f2f4f7;
     border-color: #d0d5dd;
+}
+
+.ai1-recognition {
+    display: grid;
+    grid-template-columns: minmax(220px, .85fr) minmax(300px, 1.15fr);
+    gap: 22px;
+    align-items: center;
+    margin: 16px 0 22px;
+    padding: 18px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: #fff;
+}
+
+.ai1-recognition-copy h2 {
+    margin: 4px 0 8px;
+    color: var(--text);
+    font-size: 20px;
+}
+
+.ai1-recognition-copy > p:not(.eyebrow):not(.ai1-recognition-status) {
+    margin: 0 0 16px;
+    color: var(--muted);
+    font-size: 13px;
+    line-height: 1.55;
+}
+
+.ai1-recognition-copy .eyebrow {
+    margin: 0;
+    color: #175cd3;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .06em;
+    text-transform: uppercase;
+}
+
+.ai1-recognition-status {
+    min-height: 22px;
+    margin: 12px 0 0;
+    color: #475467;
+    font-size: 14px;
+    font-weight: 600;
+}
+
+.ai1-recognition-status[data-state="processing"],
+.ai1-recognition-status[data-state="capturing"] {
+    color: #b54708;
+}
+
+.ai1-recognition-status[data-state="match"] {
+    color: #067647;
+}
+
+.ai1-recognition-status[data-state="unknown"],
+.ai1-recognition-status[data-state="retry"] {
+    color: #b42318;
+}
+
+.ai1-recognition-camera-wrap {
+    position: relative;
+    min-height: 220px;
+    overflow: hidden;
+    display: grid;
+    place-items: center;
+    aspect-ratio: 4 / 3;
+    border-radius: 6px;
+    background: #182230;
+}
+
+.ai1-recognition-camera-wrap img,
+.ai1-recognition-camera-wrap canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    object-fit: contain;
+}
+
+.ai1-recognition-camera-wrap [data-ai1-recognition-empty] {
+    padding: 18px;
+    color: #eaecf0;
+    text-align: center;
+    font-size: 13px;
+}
+
+.ai1-recognition-result {
+    margin-top: 10px;
+    color: #344054;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.ai1-recognition-result[hidden] {
+    display: none;
 }
 
 .live-monitor {
@@ -1903,6 +2136,24 @@ h2 {
 }
 
 @media (max-width: 680px) {
+    .ai1-recognition {
+        grid-template-columns: 1fr;
+        padding: 14px;
+    }
+
+    .live-monitor-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .live-monitor-heading {
+        align-items: flex-start;
+        flex-direction: column;
+    }
+
+    .face-enrollment-thumbnails {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+
     .employee-form-grid {
         grid-template-columns: 1fr;
     }

@@ -27,8 +27,8 @@ UNKNOWN_RETRY_INTERVAL_SECONDS = 0.75
 RECOGNITION_THRESHOLD = 0.45
 ENROLLMENT_IDENTITY_THRESHOLD = float(face_matching.ENROLLMENT_IDENTITY_THRESHOLD)
 
-# Standalone enrollment tolerances for solvePnP angles; signs follow the
-# production landmark convention (positive yaw=left, positive pitch=up).
+# Standalone enrollment tolerances for user-facing relative pose angles
+# (positive yaw=turn left, positive pitch=look up).
 POSE_FRONTAL_YAW_MAX_DEG = 18.0
 POSE_FRONTAL_PITCH_MAX_DEG = 18.0
 POSE_SIDE_YAW_MIN_DEG = 15.0
@@ -39,19 +39,31 @@ POSE_VERTICAL_PITCH_MAX_DEG = 40.0
 POSE_VERTICAL_YAW_MAX_DEG = 25.0
 POSE_ENROLLMENT_HYSTERESIS_DEG = 2.0
 
-# Smart Enrollment v2 bootstrap values. These are conservative starting settings,
-# not values calibrated or benchmarked against a particular webcam/user population.
+# Smart Enrollment v2 capture settings. AUTO pose tracking uses SCRFD/landmarks
+# only; ArcFace runs once for the sharpest selected candidate. Five fresh,
+# quality-valid frames may be collected over a bounded 12-second window so a
+# CPU inference rate near 0.5 FPS can still form a stable cluster.
 GUIDED_POSE_REPROJECTION_MAX_PX = 18.0
-GUIDED_POSE_STABLE_FRAMES = 8
-GUIDED_POSE_STABILITY_MAX_DEG = 4.0
-GUIDED_POSE_MAX_STEP_DEG = 12.0
-GUIDED_POSE_STABILITY_WINDOW_SECONDS = 1.0
+GUIDED_POSE_STABLE_FRAMES = 5
+GUIDED_POSE_STABILITY_MAX_DEG = 8.0
+GUIDED_POSE_MAX_STEP_DEG = 18.0
+GUIDED_POSE_STABILITY_WINDOW_SECONDS = 12.0
+GUIDED_POSE_MAX_INTERFRAME_GAP_SECONDS = 12.0
+# Five unique frames need at least (5 - 1) / 12 = 0.333 FPS to fit the
+# configured window. The tracker computes this dynamically.
+GUIDED_POSE_MIN_INFERENCE_FPS = 0.0
+GUIDED_POSE_FPS_DIAGNOSTIC_SECONDS = 1.0
 GUIDED_POSE_UNRELIABLE_FRAME_LIMIT = 3
-GUIDED_POSE_TIMEOUT_SECONDS = 25.0
-GUIDED_POSE_MAX_ROLL_DEG = 20.0
-# Rough front-facing check used only before R_ref exists. Raw pitch is purposely
-# excluded because the current 5-point model has a valid frontal ~180° Euler branch.
-GUIDED_CALIBRATION_MAX_RAW_YAW_DEG = 22.0
+GUIDED_POSE_TIMEOUT_SECONDS = 60.0
+GUIDED_POSE_MAX_ROLL_DEG = 25.0
+# Personalized frontal bootstrap uses a broad solvePnP yaw bound together with
+# SCRFD five-point face geometry. Raw pitch is intentionally excluded: the
+# current 3D model has a valid frontal Euler branch near 180 degrees.
+GUIDED_CALIBRATION_MAX_RAW_YAW_DEG = 35.0
+GUIDED_CALIBRATION_MIN_EYE_SPAN_FACE_HEIGHT = 0.14
+GUIDED_CALIBRATION_MIN_MOUTH_SPAN_FACE_HEIGHT = 0.10
+GUIDED_CALIBRATION_MAX_NOSE_OFFSET_FACE_WIDTH = 0.25
+GUIDED_CALIBRATION_MAX_EYE_LINE_TILT_DEG = 35.0
 GUIDED_FRONTAL_YAW_MAX_DEG = 9.0
 GUIDED_FRONTAL_PITCH_MAX_DEG = 9.0
 GUIDED_SIDE_YAW_MIN_DEG = 15.0

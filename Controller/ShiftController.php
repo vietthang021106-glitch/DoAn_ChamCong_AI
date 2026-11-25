@@ -112,6 +112,105 @@ final class ShiftController
         }
     }
 
+    /** Phân ca cho nhiều nhân viên theo khoảng ngày và các thứ được chọn. */
+    public function bulkAssign(): void
+    {
+        AuthController::requireAdmin();
+        $this->requireCsrf();
+
+        $employeeIds = $_POST['MaNV'] ?? [];
+        $employeeIds = is_array($employeeIds) ? $employeeIds : [];
+        $employeeIds = array_values(array_unique(array_filter(array_map(
+            static fn($id) => filter_var($id, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]),
+            $employeeIds
+        ), 'is_int')));
+        $shiftId = filter_var($_POST['MaCa'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
+        $startDate = trim((string)($_POST['TuNgay'] ?? ''));
+        $endDate = trim((string)($_POST['DenNgay'] ?? ''));
+        $weekdays = $_POST['ThuApDung'] ?? [];
+        $weekdays = is_array($weekdays) ? array_values(array_unique(array_filter(array_map(
+            static fn($day) => filter_var($day, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 7]]),
+            $weekdays
+        ), 'is_int'))) : [];
+
+        if ($employeeIds === []) {
+            $_SESSION['shift_error'] = 'Vui lòng chọn ít nhất một nhân viên.';
+            $this->redirectToShifts();
+        }
+        if (!is_int($shiftId) || !$this->shifts->isActiveShift($shiftId)) {
+            $_SESSION['shift_error'] = 'Vui lòng chọn ca đang sử dụng.';
+            $this->redirectToShifts();
+        }
+        if (!$this->isValidDate($startDate) || !$this->isValidDate($endDate)) {
+            $_SESSION['shift_error'] = 'Vui lòng chọn khoảng ngày hợp lệ.';
+            $this->redirectToShifts();
+        }
+        if ($startDate > $endDate) {
+            $_SESSION['shift_error'] = 'Từ ngày phải trước hoặc bằng đến ngày.';
+            $this->redirectToShifts();
+        }
+        $daysInRange = (int)(new DateTimeImmutable($startDate))->diff(new DateTimeImmutable($endDate))->days;
+        if ($daysInRange > 365) {
+            $_SESSION['shift_error'] = 'Khoảng phân ca không được vượt quá 366 ngày.';
+            $this->redirectToShifts();
+        }
+        if ($weekdays === []) {
+            $_SESSION['shift_error'] = 'Vui lòng chọn ít nhất một thứ trong tuần.';
+            $this->redirectToShifts();
+        }
+        if (!$this->hasApplicableWeekday($startDate, $endDate, $weekdays)) {
+            $_SESSION['shift_error'] = 'Khoảng ngày không có thứ nào được chọn.';
+            $this->redirectToShifts();
+        }
+
+        try {
+            $result = $this->shifts->bulkAssign($employeeIds, $shiftId, $startDate, $endDate, $weekdays);
+            $_SESSION['shift_success'] = $this->assignmentResultMessage($result);
+        } catch (InvalidArgumentException $exception) {
+            $_SESSION['shift_error'] = $exception->getMessage();
+        } catch (Throwable $exception) {
+            error_log('Bulk shift assignment failed: ' . $exception->getMessage());
+            $_SESSION['shift_error'] = 'Không thể phân ca hàng loạt. Toàn bộ thao tác đã được hoàn tác.';
+        }
+        $this->redirectToShifts();
+    }
+
+    /** Sao chép lịch của một tuần sang tuần liền sau, giữ nguyên nguồn. */
+    public function copyWeek(): void
+    {
+        AuthController::requireAdmin();
+        $this->requireCsrf();
+
+        $sourceWeek = trim((string)($_POST['TuanNguon'] ?? ''));
+        $targetWeek = trim((string)($_POST['TuanDich'] ?? ''));
+        if (!$this->isValidDate($sourceWeek) || !$this->isValidDate($targetWeek)) {
+            $_SESSION['shift_error'] = 'Vui lòng chọn ngày bắt đầu tuần hợp lệ.';
+            $this->redirectToShifts();
+        }
+        if ((int)(new DateTimeImmutable($sourceWeek))->format('N') !== 1
+            || (int)(new DateTimeImmutable($targetWeek))->format('N') !== 1) {
+            $_SESSION['shift_error'] = 'Tuần nguồn và tuần đích phải bắt đầu vào thứ Hai.';
+            $this->redirectToShifts();
+        }
+        if ((new DateTimeImmutable($sourceWeek))->modify('+7 days')->format('Y-m-d') !== $targetWeek) {
+            $_SESSION['shift_error'] = 'Tuần đích phải là tuần liền sau tuần nguồn.';
+            $this->redirectToShifts();
+        }
+
+        try {
+            $result = $this->shifts->copyWeek($sourceWeek, $targetWeek);
+            $_SESSION['shift_success'] = $result['processed'] === 0
+                ? 'Tuần nguồn chưa có lịch phân ca.'
+                : $this->assignmentResultMessage($result);
+        } catch (InvalidArgumentException $exception) {
+            $_SESSION['shift_error'] = $exception->getMessage();
+        } catch (Throwable $exception) {
+            error_log('Weekly shift copy failed: ' . $exception->getMessage());
+            $_SESSION['shift_error'] = 'Không thể sao chép lịch tuần. Toàn bộ thao tác đã được hoàn tác.';
+        }
+        $this->redirectToShifts();
+    }
+
     /** Hủy phân ca qua POST/CSRF; không xóa phân công đã có chấm công trong ngày. */
     public function unassign(): void
     {
@@ -392,6 +491,10 @@ final class ShiftController
             http_response_code($responseStatus);
         }
         $csrfToken = CsrfToken::token();
+        $currentWeekStart = (new DateTimeImmutable($today))->modify('monday this week')->format('Y-m-d');
+        $nextWeekStart = (new DateTimeImmutable($currentWeekStart))->modify('+7 days')->format('Y-m-d');
+        $bulkEndDate = (new DateTimeImmutable($selectedDate))->modify('+6 days')->format('Y-m-d');
+        $defaultWeekdays = [1, 2, 3, 4, 5];
         $activeTab = trim((string)($_GET['tab'] ?? $_POST['return_tab'] ?? 'assignments'));
         if (!in_array($activeTab, ['assignments', 'shifts'], true)) {
             $activeTab = 'assignments';
@@ -496,6 +599,31 @@ final class ShiftController
             http_response_code(400);
             exit('Yêu cầu không hợp lệ. Vui lòng tải lại trang và thử lại.');
         }
+    }
+
+    private function hasApplicableWeekday(string $startDate, string $endDate, array $weekdays): bool
+    {
+        $date = new DateTimeImmutable($startDate);
+        $end = new DateTimeImmutable($endDate);
+        while ($date <= $end) {
+            if (in_array((int)$date->format('N'), $weekdays, true)) {
+                return true;
+            }
+            $date = $date->modify('+1 day');
+        }
+
+        return false;
+    }
+
+    private function assignmentResultMessage(array $result): string
+    {
+        return sprintf(
+            'Đã xử lý %d phân ca — tạo mới: %d, cập nhật: %d, bỏ qua: %d (đã đúng ca).',
+            $result['processed'],
+            $result['created'],
+            $result['updated'],
+            $result['skipped']
+        );
     }
 
     private function isValidDate(string $value): bool

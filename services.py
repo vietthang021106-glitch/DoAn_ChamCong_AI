@@ -16,7 +16,6 @@ Quy tắc chấm công (KHÔNG có thời gian ân hạn):
 from datetime import date, datetime, time
 import os
 import database
-from face_matching import aggregate_gallery, identify_embedding, verify_embedding
 from werkzeug.security import generate_password_hash, check_password_hash
 
 try:
@@ -1230,81 +1229,6 @@ def save_face_embeddings(ma_nv, embeddings):
         "errors": [],
     }
 
-
-def _recognition_threshold(override=None):
-    value = override if override is not None else os.getenv("FACE_RECOGNITION_THRESHOLD", "0.45")
-    try:
-        threshold = float(value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError("Threshold must be a number between -1 and 1.") from exc
-    if not -1.0 <= threshold <= 1.0:
-        raise ValueError("Threshold must be a number between -1 and 1.")
-    return threshold
-
-
-def _load_face_gallery():
-    rows = database.get_all_face_embeddings()
-    gallery, invalid_rows = aggregate_gallery(rows)
-    if invalid_rows:
-        print(f"[face_recognition] Ignored {len(invalid_rows)} invalid embedding row(s).")
-    return gallery, invalid_rows
-
-
-def identify_face_embedding(probe_embedding, threshold=None):
-    threshold = _recognition_threshold(threshold)
-    gallery, invalid_rows = _load_face_gallery()
-    result = identify_embedding(probe_embedding, gallery, threshold)
-    result["invalidEmbeddings"] = len(invalid_rows)
-    return result
-
-
-def verify_face_embedding(probe_embedding, ma_nv, threshold=None):
-    threshold = _recognition_threshold(threshold)
-    gallery, invalid_rows = _load_face_gallery()
-    result = verify_embedding(probe_embedding, ma_nv, gallery, threshold)
-    result["invalidEmbeddings"] = len(invalid_rows)
-    return result
-
-
-def _face_bbox_area(face):
-    bbox = face.get("bbox")
-    if bbox is None or len(bbox) != 4:
-        return 0.0
-    width = max(0.0, float(bbox[2]) - float(bbox[0]))
-    height = max(0.0, float(bbox[3]) - float(bbox[1]))
-    return width * height
-
-
-def _extract_largest_face(frame):
-    import face_engine as _fe
-
-    _fe.face_engine.initialize()
-    faces = _fe.face_engine.detect_embeddings(frame)
-    if not faces:
-        return None, {"status": "NO_FACE", "match": False, "MaNV": None,
-                      "HoTen": "UNKNOWN", "similarity": None}
-    largest_face = max(faces, key=_face_bbox_area)
-    return largest_face["embedding"], None
-
-
-def identify_face_frame(frame, threshold=None):
-    """Identify from a BGR frame using the largest face and the cached SQL gallery."""
-    resolved_threshold = _recognition_threshold(threshold)
-    probe, error_result = _extract_largest_face(frame)
-    if error_result:
-        error_result["threshold"] = resolved_threshold
-        return error_result
-    return identify_face_embedding(probe, resolved_threshold)
-
-
-def verify_face_frame(frame, ma_nv, threshold=None):
-    """Verify a BGR frame against one MaNV, selecting the largest detected face."""
-    resolved_threshold = _recognition_threshold(threshold)
-    probe, error_result = _extract_largest_face(frame)
-    if error_result:
-        error_result["threshold"] = resolved_threshold
-        return error_result
-    return verify_face_embedding(probe, ma_nv, resolved_threshold)
 
 def fetch_attendance_history_filtered(tu_ngay=None, den_ngay=None, keyword=None, page=1, limit=20):
     """

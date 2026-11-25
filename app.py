@@ -1,20 +1,20 @@
 """
 app.py — Flask Controller (Tầng Presentation)
 ==============================================
-- Singleton camera VideoCapture (tránh xung đột tài nguyên)
+- Singleton camera source + FramePump (tránh xung đột tài nguyên)
 - Dùng ai_engine.detector để phân tích frame
 - RESTful API endpoints cho Dashboard
 - Login / Logout + phân quyền theo VaiTro
 """
 
-import base64
-import binascii
 import functools
+import json
 import os
 import re
-import secrets
 import threading
 import time
+import urllib.error
+import urllib.request
 
 import cv2
 from flask import (
@@ -24,21 +24,18 @@ from flask import (
 import services
 import ai_engine
 import database as _db
+from camera_source import FramePacket, open_camera as _open_camera_source
 
 app = Flask(__name__)
 app.secret_key = os.getenv("SECRET_KEY", "dev-secret-change-me")
 app.config["SESSION_COOKIE_HTTPONLY"] = True
 app.config["SESSION_COOKIE_SAMESITE"] = "Lax"
 
-_ENROLLMENT_POSES = ("frontal", "left", "right", "up", "down")
-_POSE_LABELS = {
-    "frontal": "Nhìn thẳng",
-    "left": "Quay trái",
-    "right": "Quay phải",
-    "up": "Ngẩng lên",
-    "down": "Cúi xuống",
-}
-_ENROLLMENT_SESSION_TTL = 600
+AI1_SERVICE_URL = os.getenv("AI1_SERVICE_URL", "http://127.0.0.1:5001").rstrip("/")
+PHP_EMPLOYEE_URL = os.getenv(
+    "PHP_EMPLOYEE_URL",
+    "http://127.0.0.1/DoAn_ChamCong_AI/?action=index",
+)
 
 
 # ============================================================
@@ -75,23 +72,27 @@ def admin_required(f):
 
 
 # ============================================================
-# Camera Singleton — tránh xung đột tài nguyên giữa các request
+# Camera Source Singleton — tránh xung đột tài nguyên giữa các request
 # ============================================================
 
 _camera = None
 _camera_lock = threading.Lock()
+_camera_retry_after = 0.0
+_camera_generation = 0
 
 
 def get_camera():
-    """Trả về instance camera toàn cục, khởi tạo nếu chưa có."""
-    global _camera
+    """Return the sole background-pumped camera source shared by all routes."""
+    global _camera, _camera_retry_after, _camera_generation
 
     with _camera_lock:
-        if _camera is None or not _camera.isOpened():
-            _camera = cv2.VideoCapture(0)
-            _camera.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-            _camera.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
-            _camera.set(cv2.CAP_PROP_FPS, 30)
+        should_retry = _camera is not None and not _camera.is_opened() and time.monotonic() >= _camera_retry_after
+        if _camera is None or should_retry:
+            if _camera is not None:
+                _camera.release()
+            _camera = _open_camera_source()
+            _camera_generation += 1
+            _camera_retry_after = time.monotonic() + 5.0
 
         return _camera
 
@@ -105,14 +106,12 @@ def generate_frames():
     Generator cho MJPEG stream.
     Dùng singleton camera + ai_engine.detector để phân tích frame.
     """
-    camera = get_camera()
-
     while True:
-        with _camera_lock:
-            success, frame = camera.read()
-
-        if not success:
-            break
+        packet = _read_camera_packet()
+        if packet is None:
+            time.sleep(0.03)
+            continue
+        frame = packet.frame
 
         # Phân tích frame với AI engine
         annotated_frame, alert = ai_engine.detector.analyze_frame(frame)
@@ -219,7 +218,7 @@ def logout_page():
 @app.route('/')
 @admin_required
 def index():
-    return render_template('index.html')
+    return render_template('index.html', php_employee_url=PHP_EMPLOYEE_URL)
 
 
 @app.route('/employees')
@@ -257,9 +256,10 @@ def internal_camera_frame():
     if request.remote_addr not in {'127.0.0.1', '::1'}:
         return jsonify({"success": False, "message": "Local requests only."}), 403
 
-    ok, frame = _read_camera_frame()
-    if not ok or frame is None:
+    packet = _read_camera_packet()
+    if packet is None:
         return jsonify({"success": False, "message": "Camera không khả dụng."}), 503
+    frame = packet.frame
 
     encoded, image = cv2.imencode('.jpg', frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
     if not encoded:
@@ -268,7 +268,11 @@ def internal_camera_frame():
     return Response(
         image.tobytes(),
         mimetype='image/jpeg',
-        headers={"Cache-Control": "no-store"},
+        headers={
+            "Cache-Control": "no-store",
+            "X-Frame-Sequence": str(packet.sequence),
+            "X-Frame-Monotonic": format(packet.captured_at, ".9f"),
+        },
     )
 
 
@@ -319,12 +323,9 @@ def receive_cham_cong():
     # để camera được khởi tạo ngay cả khi /video_feed chưa được gọi trước.
     image_bytes = None
     try:
-        cam = get_camera()
-        with _camera_lock:
-            if cam is not None and cam.isOpened():
-                ok, frame = cam.read()
-                if ok and frame is not None:
-                    image_bytes = services.encode_frame_to_jpg(frame)
+        ok, frame = _read_camera_frame()
+        if ok and frame is not None:
+            image_bytes = services.encode_frame_to_jpg(frame)
     except Exception as _cap_err:
         # Không được để lỗi camera block chấm công
         print(f"[app] Canh bao: khong the capture frame: {_cap_err}")
@@ -576,242 +577,115 @@ def update_employee(ma_nv):
 
 
 # ============================================================
-# Routes — Face Enrollment (admin)
-# ============================================================
-
-_enrollment_sessions = {}
-_enrollment_sessions_lock = threading.Lock()
+# AI1 routes — PHP/MariaDB owns enrollment; the loopback AI service owns recognition.
 
 
-def _classify_head_pose(yaw, pitch):
-    if abs(yaw) <= 12 and abs(pitch) <= 12:
-        return "frontal"
-    if 15 <= yaw <= 40 and abs(pitch) <= 18:
-        return "left"
-    if -40 <= yaw <= -15 and abs(pitch) <= 18:
-        return "right"
-    if 12 <= pitch <= 35 and abs(yaw) <= 15:
-        return "up"
-    if -35 <= pitch <= -12 and abs(yaw) <= 15:
-        return "down"
-    return "between"
-
-
-def _pose_result(pose, expected_pose):
-    current_pose = pose.get("current_pose", "unknown")
-    yaw, pitch = pose.get("yaw"), pose.get("pitch")
-    if yaw is not None and pitch is not None:
-        current_pose = _classify_head_pose(yaw, pitch)
-
-    pose_ok = current_pose == expected_pose
-    if current_pose == "no_face":
-        instruction = "Đưa khuôn mặt vào giữa khung hình."
-    elif current_pose == "multiple_faces":
-        instruction = "Chỉ để một người trong khung hình."
-    elif current_pose == "unknown":
-        instruction = "Không ước lượng được hướng đầu; nhìn rõ camera."
-    elif pose_ok:
-        instruction = "Đúng hướng, giữ yên."
-    elif expected_pose == "frontal":
-        instruction = "Nhìn thẳng camera và giữ đầu cân bằng."
-    elif current_pose == "frontal":
-        instruction = f"{_POSE_LABELS[expected_pose]} thêm."
-    else:
-        instruction = f"Đang hướng {_POSE_LABELS.get(current_pose, 'chưa đúng')}; {_POSE_LABELS[expected_pose].lower()} thêm."
-
-    return {
-        "current_pose": current_pose,
-        "expected_pose": expected_pose,
-        "pose_ok": pose_ok,
-        "instruction": instruction,
-        "yaw": yaw,
-        "pitch": pitch,
-    }
+def _read_camera_packet():
+    try:
+        packet = get_camera().get_frame()
+        if packet is None:
+            return None
+        return FramePacket(
+            packet.frame,
+            (_camera_generation << 32) | int(packet.sequence),
+            packet.captured_at,
+        )
+    except Exception as exc:
+        app.logger.warning("Camera source unavailable: %s", exc)
+        return None
 
 
 def _read_camera_frame():
-    cam = get_camera()
-    with _camera_lock:
-        return cam.read() if cam is not None and cam.isOpened() else (False, None)
+    packet = _read_camera_packet()
+    return (True, packet.frame) if packet is not None else (False, None)
 
 
-def _decode_face_image(data):
-    if not isinstance(data, str):
-        raise ValueError("Thiếu ảnh base64.")
-    data = re.sub(r"^data:image/[^;]+;base64,", "", data)
+def _request_ai1_json(method, path, payload=None):
+    """Proxy a fixed loopback AI-service route without exposing arbitrary URLs."""
+    body = None if payload is None else json.dumps(payload).encode("utf-8")
+    req = urllib.request.Request(
+        AI1_SERVICE_URL + path,
+        data=body,
+        headers={"Accept": "application/json", "Content-Type": "application/json"},
+        method=method,
+    )
     try:
-        raw = base64.b64decode(data, validate=True)
-    except (binascii.Error, ValueError) as exc:
-        raise ValueError("Ảnh base64 không hợp lệ.") from exc
-    import numpy as np
-    frame = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
-    if frame is None:
-        raise ValueError("Không giải mã được ảnh.")
-    return frame
+        response = urllib.request.urlopen(req, timeout=2.0)
+    except urllib.error.HTTPError as exc:
+        response = exc
+    except Exception as exc:
+        raise RuntimeError("AI service không khả dụng.") from exc
+    with response:
+        raw = response.read(1024 * 1024 + 1)
+        status_code = getattr(response, "status", 200)
+    if len(raw) > 1024 * 1024:
+        raise RuntimeError("Phản hồi AI service vượt giới hạn.")
+    try:
+        result = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("AI service trả phản hồi không hợp lệ.") from exc
+    if not isinstance(result, dict):
+        raise RuntimeError("AI service trả phản hồi không hợp lệ.")
+    return status_code, result
+
 
 @app.route('/api/employees/<int:ma_nv>/face/register', methods=['POST'])
 @admin_required
 def register_face(ma_nv):
-    """
-    POST /api/employees/<ma_nv>/face/register
+    return jsonify({
+        "status": "error",
+        "message": "Đăng ký khuôn mặt dùng luồng quản lý nhân viên PHP/MariaDB.",
+        "enrollment_url": PHP_EMPLOYEE_URL,
+    }), 410
 
-    Dang ky khuon mat cho nhan vien qua InsightFace.
-    Thu 5 frame tu camera singleton (khong tao camera moi).
-    Moi frame phai co dung 1 khuon mat.
-    Luu 5 embedding 512D vao FaceEmbedding.
-
-    Neu da co embedding: tra loi 409, KHONG ghi de am tham.
-    """
-    data = request.get_json(silent=True) or {}
-    action = data.get("action")
-    if action not in ("start", "pose", "capture", "complete", "cancel"):
-        return jsonify({"status": "error", "message": "Enrollment yêu cầu quy trình pose-guided 5 góc."}), 400
-
-    if action == "start":
-        emp = services.fetch_employee(ma_nv)
-        if emp is None:
-            return jsonify({
-                "status":  "error",
-                "message": "Khong tim thay nhan vien",
-            }), 404
-
-        existing = _db.count_face_embeddings(ma_nv)
-        if existing > 0:
-            return jsonify({
-                "status":  "error",
-                "message": f"Nhan vien da dang ky khuon mat ({existing} embedding). "
-                           f"Dung endpoint re-register de dang ky lai.",
-            }), 409
-
-    if action == "start":
-        try:
-            import face_engine as _fe
-            _fe.face_engine.initialize()
-        except Exception as exc:
-            return jsonify({"status": "error", "message": str(exc)}), 503
-        session_id = secrets.token_urlsafe(24)
-        with _enrollment_sessions_lock:
-            _enrollment_sessions[session_id] = {"MaNV": ma_nv, "embeddings": [], "created": time.time()}
-        return jsonify({"status": "success", "session_id": session_id,
-                        "poses": list(_ENROLLMENT_POSES), "captured": 0}), 200
-
-    if action in ("pose", "capture", "complete", "cancel"):
-        session_id = data.get("session_id", "")
-        with _enrollment_sessions_lock:
-            state = _enrollment_sessions.get(session_id)
-            if state and time.time() - state["created"] > _ENROLLMENT_SESSION_TTL:
-                _enrollment_sessions.pop(session_id, None)
-                state = None
-            if state is None or state["MaNV"] != ma_nv:
-                return jsonify({"status": "error", "message": "Session đăng ký không hợp lệ hoặc đã hết hạn."}), 400
-            if action == "cancel":
-                _enrollment_sessions.pop(session_id, None)
-                return jsonify({"status": "success"}), 200
-            expected_pose = _ENROLLMENT_POSES[len(state["embeddings"])] if len(state["embeddings"]) < len(_ENROLLMENT_POSES) else None
-            if action == "pose":
-                if expected_pose is None:
-                    return jsonify({"status": "error", "message": "Đã chụp đủ 5 góc."}), 400
-                ok, frame = _read_camera_frame()
-                if not ok or frame is None:
-                    return jsonify({"status": "error", **_pose_result({"current_pose": "no_frame"}, expected_pose),
-                                    "instruction": "Không đọc được hình từ camera."}), 503
-                try:
-                    import face_engine as _fe
-                    pose = _fe.face_engine.inspect_pose(frame)
-                except Exception as exc:
-                    return jsonify({"status": "error", "message": str(exc),
-                                    **_pose_result({"current_pose": "unknown"}, expected_pose)}), 503
-                return jsonify({"status": "success", **_pose_result(pose, expected_pose)}), 200
-            if action == "capture":
-                index = len(state["embeddings"])
-                if index >= len(_ENROLLMENT_POSES):
-                    return jsonify({"status": "error", "message": "Đã chụp đủ 5 góc."}), 400
-                try:
-                    if data.get("image"):
-                        frame = _decode_face_image(data["image"])
-                    else:
-                        ok, frame = _read_camera_frame()
-                        if not ok or frame is None:
-                            return jsonify({"status": "error", "message": "Camera không khả dụng."}), 503
-                    import face_engine as _fe
-                    faces = _fe.face_engine.detect_embeddings(frame)
-                    if not faces:
-                        pose_result = _pose_result({"current_pose": "no_face"}, expected_pose)
-                        return jsonify({"status": "error", "message": pose_result["instruction"], **pose_result}), 409
-                    if len(faces) != 1:
-                        pose_result = _pose_result({"current_pose": "multiple_faces"}, expected_pose)
-                        return jsonify({"status": "error", "message": pose_result["instruction"], **pose_result}), 409
-                    detected_pose = faces[0].get("head_pose")
-                    if not detected_pose:
-                        pose_result = _pose_result({"current_pose": "unknown"}, expected_pose)
-                        return jsonify({"status": "error", "message": pose_result["instruction"], **pose_result}), 409
-                    pose_result = _pose_result(detected_pose, expected_pose)
-                    if not pose_result["pose_ok"]:
-                        return jsonify({"status": "error", "message": pose_result["instruction"], **pose_result}), 409
-                    vector_bytes = faces[0]["vector_bytes"]
-                except Exception as exc:
-                    return jsonify({"status": "error", "message": str(exc)}), 400
-                state["embeddings"].append(vector_bytes)
-                return jsonify({"status": "success", "captured": len(state["embeddings"]),
-                                **pose_result,
-                                "next_pose": _ENROLLMENT_POSES[len(state["embeddings"])]
-                                if len(state["embeddings"]) < len(_ENROLLMENT_POSES) else None}), 200
-            if len(state["embeddings"]) != len(_ENROLLMENT_POSES):
-                return jsonify({"status": "error", "message": "Cần chụp đủ 5 góc trước khi lưu."}), 400
-            embeddings = list(state["embeddings"])
-        result = services.save_face_embeddings(ma_nv, embeddings)
-        if result.get("success"):
-            with _enrollment_sessions_lock:
-                _enrollment_sessions.pop(session_id, None)
-        code = 200 if result.get("success") else (409 if result.get("conflict") else 500)
-        return jsonify({"status": "success" if result.get("success") else "error", **result}), code
 
 @app.route('/api/face/identify', methods=['POST'])
 @admin_required
 def face_identify():
-    data = request.get_json(silent=True) or {}
-    try:
-        frame = _decode_face_image(data.get("image"))
-        result = services.identify_face_frame(frame, data.get("threshold"))
-    except ValueError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 503
-    return jsonify(result), 200
+    return jsonify({"status": "RETRY", "match": False,
+                    "message": "Nhận diện một ảnh đơn đã tắt; dùng session ba snapshot."}), 409
 
 
 @app.route('/api/face/verify', methods=['POST'])
 @admin_required
 def face_verify():
-    data = request.get_json(silent=True) or {}
-    if data.get("MaNV") is None:
-        return jsonify({"status": "error", "message": "Thiếu MaNV."}), 400
-    try:
-        frame = _decode_face_image(data.get("image"))
-        result = services.verify_face_frame(frame, data["MaNV"], data.get("threshold"))
-    except ValueError as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 400
-    except Exception as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 503
-    return jsonify(result), 200
+    return jsonify({"status": "RETRY", "match": False,
+                    "message": "Xác minh một ảnh đơn đã tắt; dùng session ba snapshot."}), 409
 
 
 @app.route('/api/face/identify/camera', methods=['POST'])
 @admin_required
 def face_identify_camera():
-    cam = get_camera()
-    with _camera_lock:
-        ok, frame = cam.read() if cam is not None and cam.isOpened() else (False, None)
-    if not ok or frame is None:
-        return jsonify({"status": "error", "message": "Camera không khả dụng."}), 503
+    """Compatibility endpoint: start the central three-fresh-snapshot session."""
+    return start_face_recognition_session()
+
+
+@app.route('/api/face/recognition-sessions', methods=['POST'])
+@admin_required
+def start_face_recognition_session():
     try:
-        result = services.identify_face_frame(frame, (request.get_json(silent=True) or {}).get("threshold"))
+        status_code, result = _request_ai1_json(
+            "POST", "/api/ai/recognition-sessions", {}
+        )
     except Exception as exc:
-        return jsonify({"status": "error", "message": str(exc)}), 503
-    return jsonify(result), 200
+        return jsonify({"success": False, "message": str(exc)}), 503
+    return jsonify(result), status_code
 
 
-# ============================================================
+@app.route('/api/face/recognition-sessions/<session_id>', methods=['GET'])
+@admin_required
+def face_recognition_session_status(session_id):
+    if not re.fullmatch(r"[a-f0-9]{32}", session_id):
+        return jsonify({"success": False, "message": "Session ID không hợp lệ."}), 400
+    try:
+        status_code, result = _request_ai1_json(
+            "GET", f"/api/ai/recognition-sessions/{session_id}"
+        )
+    except Exception as exc:
+        return jsonify({"success": False, "message": str(exc)}), 503
+    return jsonify(result), status_code
+
+
 # Routes — Trang cá nhân API
 # ============================================================
 

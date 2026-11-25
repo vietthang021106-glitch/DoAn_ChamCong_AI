@@ -14,5 +14,6 @@ venv/
 *.mdf
 *.ldf
 database_before_cleanup.sql
+/database_backups/
 .DS_Store
 Thumbs.db

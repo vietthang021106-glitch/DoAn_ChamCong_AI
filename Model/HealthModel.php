@@ -5,11 +5,43 @@ require_once __DIR__ . '/Database.php';
 
 final class HealthModel
 {
+    /** Check the employee foreign-key target before accepting a device test reading. */
+    public function employeeExists(int $employeeId): bool
+    {
+        $pdo = Database::getConnection();
+        $activeEmployee = Database::activeEmployeePredicate('', $pdo);
+        $statement = $pdo->prepare(
+            'SELECT 1 FROM NhanVien WHERE MaNV = :employee_id AND ' . $activeEmployee . ' LIMIT 1'
+        );
+        $statement->execute(['employee_id' => $employeeId]);
+
+        return $statement->fetchColumn() !== false;
+    }
+
+    /** Insert one device health test measurement using MariaDB server time. */
+    public function insertDeviceTestReading(int $employeeId, int $heartRate, float $spo2): int
+    {
+        $statement = Database::getConnection()->prepare(<<<'SQL'
+            INSERT INTO LichSuSucKhoe (MaNV, NhipTim, SpO2, ThoiGian)
+            VALUES (:employee_id, :heart_rate, :spo2, CURRENT_TIMESTAMP(3))
+            SQL);
+        $statement->execute([
+            'employee_id' => $employeeId,
+            'heart_rate' => $heartRate,
+            'spo2' => $spo2,
+        ]);
+
+        return (int)Database::getConnection()->lastInsertId();
+    }
+
     public function findEmployees(): array
     {
-        return Database::getConnection()->query(<<<'SQL'
+        $pdo = Database::getConnection();
+        $activeEmployee = Database::activeEmployeePredicate('', $pdo);
+        return $pdo->query(<<<SQL
             SELECT MaNV, HoTen
             FROM NhanVien
+            WHERE {$activeEmployee}
             ORDER BY MaNV
             SQL)->fetchAll();
     }
@@ -69,7 +101,7 @@ final class HealthModel
 
     private function historyFilterSql(array $filters): array
     {
-        $where = [];
+        $where = [Database::activeEmployeePredicate('NV')];
         $params = [];
         if ($filters['from_date'] !== '') {
             $where[] = 'SK.ThoiGian >= :from_date';

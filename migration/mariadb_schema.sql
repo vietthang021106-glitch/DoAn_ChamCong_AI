@@ -50,6 +50,7 @@ CREATE TABLE `NhanVien` (
     `HoTen` VARCHAR(100) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
     `AnhKhuonMat` LONGTEXT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
     `MaVaiTro` INT NULL,
+    `DaXoa` TINYINT(1) NOT NULL DEFAULT 0,
     PRIMARY KEY (`MaNV`),
     CONSTRAINT `FK__NhanVien__MaVaiT__5812160E`
         FOREIGN KEY (`MaVaiTro`) REFERENCES `VaiTro` (`MaVaiTro`)
@@ -58,10 +59,15 @@ CREATE TABLE `NhanVien` (
 CREATE TABLE `TaiKhoan` (
     `MaTK` INT NOT NULL AUTO_INCREMENT,
     `MaNV` INT NULL,
+    `LoaiTaiKhoan` ENUM('ADMIN', 'LEGACY') NOT NULL DEFAULT 'LEGACY',
+    `AdminSingleton` TINYINT GENERATED ALWAYS AS (IF(`LoaiTaiKhoan` = 'ADMIN', 1, NULL)) PERSISTENT,
     `TenDangNhap` VARCHAR(50) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
     `MatKhau` VARCHAR(255) CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci NULL,
     PRIMARY KEY (`MaTK`),
     CONSTRAINT `UQ__TaiKhoan__55F68FC0A7B628E6` UNIQUE KEY (`TenDangNhap`),
+    UNIQUE KEY `UQ_TaiKhoan_AdminSingleton` (`AdminSingleton`),
+    CONSTRAINT `CK_TaiKhoan_AdminDetached`
+        CHECK (`LoaiTaiKhoan` <> 'ADMIN' OR `MaNV` IS NULL),
     CONSTRAINT `FK__TaiKhoan__MaNV__59063A47`
         FOREIGN KEY (`MaNV`) REFERENCES `NhanVien` (`MaNV`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;

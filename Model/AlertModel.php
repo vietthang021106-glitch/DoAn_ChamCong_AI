@@ -17,18 +17,23 @@ final class AlertModel
 
     public function findEmployees(): array
     {
-        return Database::getConnection()->query(<<<'SQL'
+        $pdo = Database::getConnection();
+        $activeEmployee = Database::activeEmployeePredicate('', $pdo);
+        return $pdo->query(<<<SQL
             SELECT MaNV, HoTen
             FROM NhanVien
+            WHERE {$activeEmployee}
             ORDER BY MaNV
             SQL)->fetchAll();
     }
 
     public function findCategories(): array
     {
-        $statement = Database::getConnection()->query(
+        $pdo = Database::getConnection();
+        $activeEmployee = Database::activeEmployeePredicate('NV', $pdo);
+        $statement = $pdo->query(
             'SELECT DISTINCT ' . self::ALERT_TYPE . ' AS LoaiCanhBao ' . self::ALERT_JOINS
-            . ' WHERE ' . self::ALERT_TYPE . ' IS NOT NULL ORDER BY LoaiCanhBao'
+            . ' WHERE ' . self::ALERT_TYPE . ' IS NOT NULL AND ' . $activeEmployee . ' ORDER BY LoaiCanhBao'
         );
 
         return $statement->fetchAll();
@@ -37,7 +42,8 @@ final class AlertModel
     /** Lấy cảnh báo cùng thông tin liên quan theo bộ lọc và trang yêu cầu. */
     public function findAlerts(array $filters, int $page, int $pageSize): array
     {
-        $where = [];
+        $pdo = Database::getConnection();
+        $where = [Database::activeEmployeePredicate('NV', $pdo)];
         $params = [];
 
         if ($filters['from_date'] !== '') {
@@ -69,7 +75,6 @@ final class AlertModel
         }
 
         $whereSql = $where === [] ? '' : ' WHERE ' . implode(' AND ', $where);
-        $pdo = Database::getConnection();
         $count = $pdo->prepare('SELECT COUNT(*) ' . self::ALERT_JOINS . $whereSql);
         $count->execute($params);
         $totalRows = (int)$count->fetchColumn();

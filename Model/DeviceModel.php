@@ -14,4 +14,19 @@ final class DeviceModel
             ORDER BY MaTB
             SQL)->fetchAll();
     }
+
+    /** Find one configured attendance device by its primary key. */
+    public function findById(int $deviceId): ?array
+    {
+        $statement = Database::getConnection()->prepare(<<<'SQL'
+            SELECT MaTB, LoaiTB, TrangThai
+            FROM ThietBi
+            WHERE MaTB = :device_id
+            LIMIT 1
+            SQL);
+        $statement->execute(['device_id' => $deviceId]);
+        $row = $statement->fetch();
+
+        return is_array($row) ? $row : null;
+    }
 }

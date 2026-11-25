@@ -10,8 +10,7 @@
 </head>
 <body>
 <header class="topbar">
-    <?php if (isset($_SESSION['user_id'])): ?>
-        <?php if ((int)($_SESSION['ma_vai_tro'] ?? 0) === 1): ?>
+    <?php if (isset($_SESSION['user_id']) && ($_SESSION['is_admin'] ?? false) === true): ?>
             <?php $activeAction = $_GET['action'] ?? 'index'; ?>
             <nav class="topbar-nav" aria-label="Quản lý">
                 <a href="/?action=dashboard" <?= $activeAction === 'dashboard' ? 'aria-current="page"' : '' ?>>Tổng quan</a>
@@ -21,11 +20,6 @@
                 <a href="/?action=monitoring" <?= $activeAction === 'monitoring' ? 'aria-current="page"' : '' ?>>Sức khỏe &amp; Cảnh báo</a>
                 <a href="/?action=devices" <?= $activeAction === 'devices' ? 'aria-current="page"' : '' ?>>Thiết bị</a>
             </nav>
-        <?php elseif ((int)($_SESSION['ma_vai_tro'] ?? 0) === 2): ?>
-            <nav class="topbar-nav" aria-label="Trang cá nhân">
-                <a href="/?action=my" <?= ($_GET['action'] ?? '') === 'my' ? 'aria-current="page"' : '' ?>>Trang của tôi</a>
-            </nav>
-        <?php endif; ?>
         <div class="topbar-account">
             <div class="account-meta">
                 <span class="account-name"><?= htmlspecialchars((string)($_SESSION['display_name'] ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></span>

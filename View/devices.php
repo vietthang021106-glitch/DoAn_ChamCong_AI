@@ -16,7 +16,7 @@
                 <table class="employee-table data-table">
                     <caption class="visually-hidden">Danh sách thiết bị chấm công</caption>
                     <thead>
-                        <tr><th scope="col">Mã thiết bị</th><th scope="col">Loại thiết bị</th><th scope="col">Trạng thái</th></tr>
+                        <tr><th scope="col">Mã thiết bị</th><th scope="col">Loại thiết bị</th><th scope="col">Trạng thái</th><th scope="col">Màn hình chấm công</th></tr>
                     </thead>
                     <tbody>
                         <?php foreach ($devices as $device): ?>
@@ -24,6 +24,13 @@
                                 <td><span class="employee-code">TB<?= str_pad((string)(int)$device['MaTB'], 3, '0', STR_PAD_LEFT) ?></span></td>
                                 <td><?= $h($device['LoaiTB'] ?? '--') ?></td>
                                 <td><?= $h($device['TrangThai'] ?? '--') ?></td>
+                                <td>
+                                    <?php if ($attendanceCameraDeviceId !== null && (int)$device['MaTB'] === $attendanceCameraDeviceId): ?>
+                                        <a class="button button--secondary button--small" href="/?action=man-hinh-cham-cong&amp;device_id=<?= (int)$device['MaTB'] ?>">Mở màn hình chấm công</a>
+                                    <?php else: ?>
+                                        <span class="employee-meta">Chưa gán camera AI1</span>
+                                    <?php endif; ?>
+                                </td>
                             </tr>
                         <?php endforeach; ?>
                     </tbody>

@@ -2,6 +2,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/../Model/DeviceModel.php';
+require_once __DIR__ . '/../Service/AttendanceCameraBinding.php';
 require_once __DIR__ . '/AuthController.php';
 
 final class DeviceController
@@ -13,8 +14,10 @@ final class DeviceController
 
         $devices = [];
         $error = null;
+        $attendanceCameraDeviceId = null;
         try {
             $devices = (new DeviceModel())->findAll();
+            $attendanceCameraDeviceId = AttendanceCameraBinding::deviceId($devices);
         } catch (Throwable $exception) {
             error_log('Device list read failed: ' . $exception->getMessage());
             http_response_code(500);

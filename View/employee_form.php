@@ -3,10 +3,6 @@ require __DIR__ . '/layout/header.php';
 $isEdit = $mode === 'edit';
 $employeeId = $isEdit ? (int)$employee['MaNV'] : null;
 $employeeName = $values['HoTen'] ?? ($employee['HoTen'] ?? '');
-$username = $values['TenDangNhap'] ?? ($employee['TenDangNhap'] ?? '');
-$selectedRole = $values['MaVaiTro'] ?? ($employee['MaVaiTro'] ?? null);
-$hasAccount = $isEdit && (int)($employee['HasAccount'] ?? 0) === 1;
-$accountOptional = $isEdit && !$hasAccount;
 $formAction = $isEdit ? '/?action=update&amp;id=' . $employeeId : '/?action=store';
 $h = static fn(mixed $value): string => htmlspecialchars((string)($value ?? ''), ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8');
 ?>
@@ -50,56 +46,12 @@ $h = static fn(mixed $value): string => htmlspecialchars((string)($value ?? ''),
                 </div>
 
                 <div class="form-field">
-                    <label for="employee-role">Vai trò <span aria-hidden="true">*</span></label>
-                    <select id="employee-role" name="MaVaiTro" required aria-invalid="<?= isset($errors['MaVaiTro']) ? 'true' : 'false' ?>" <?= isset($errors['MaVaiTro']) ? 'aria-describedby="employee-role-error"' : '' ?>>
-                        <option value="">Chọn vai trò</option>
-                        <?php foreach ($roles as $role): ?>
-                            <?php $roleId = (int)$role['MaVaiTro']; ?>
-                            <option value="<?= $roleId ?>" <?= (string)$selectedRole === (string)$roleId ? 'selected' : '' ?>><?= $h($role['TenVaiTro']) ?></option>
-                        <?php endforeach; ?>
-                    </select>
-                    <?php if (isset($errors['MaVaiTro'])): ?><p class="field-error" id="employee-role-error"><?= $h($errors['MaVaiTro']) ?></p><?php endif; ?>
-                </div>
-            </div>
-        </section>
-
-        <section class="employee-form-section" aria-labelledby="account-details-title">
-            <div class="employee-form-section-heading">
-                <h2 id="account-details-title">Tài khoản đăng nhập</h2>
-            </div>
-            <?php if ($isEdit && !$hasAccount): ?>
-                <p class="form-account-notice">Nhân viên này chưa có tài khoản đăng nhập.</p>
-            <?php endif; ?>
-            <div class="employee-form-grid">
-                <div class="form-field">
-                    <label for="employee-username">Tên đăng nhập<?= $accountOptional ? '' : ' *' ?></label>
-                    <input id="employee-username" name="TenDangNhap" type="text" value="<?= $h($username) ?>" maxlength="50" autocomplete="username" <?= $accountOptional ? '' : 'required' ?> aria-invalid="<?= isset($errors['TenDangNhap']) ? 'true' : 'false' ?>" <?= isset($errors['TenDangNhap']) ? 'aria-describedby="employee-username-error"' : '' ?>>
-                    <?php if (isset($errors['TenDangNhap'])): ?><p class="field-error" id="employee-username-error"><?= $h($errors['TenDangNhap']) ?></p><?php endif; ?>
-                </div>
-
-                <div class="form-field">
-                    <label for="employee-password"><?= $isEdit && $hasAccount ? 'Mật khẩu mới' : 'Mật khẩu' ?><?= $isEdit && $hasAccount ? '' : ($accountOptional ? ' (khi tạo tài khoản)' : ' *') ?></label>
-                    <div class="password-input-wrap">
-                        <input id="employee-password" name="<?= $isEdit ? 'NewPassword' : 'MatKhau' ?>" type="password" autocomplete="new-password" minlength="6" <?= $isEdit && $hasAccount || $accountOptional ? '' : 'required' ?> aria-invalid="<?= isset($errors['Password']) ? 'true' : 'false' ?>" <?= isset($errors['Password']) ? 'aria-describedby="employee-password-error"' : '' ?>>
-                        <button class="password-toggle" type="button" data-password-toggle="employee-password" aria-pressed="false">Hiện</button>
-                    </div>
-                    <?php if (isset($errors['Password'])): ?><p class="field-error" id="employee-password-error"><?= $h($errors['Password']) ?></p><?php endif; ?>
-                </div>
-
-                <div class="form-field">
-                    <label for="employee-password-confirm"><?= $isEdit ? 'Xác nhận mật khẩu mới' : 'Xác nhận mật khẩu' ?><?= $isEdit && $hasAccount ? '' : ($accountOptional ? ' (khi tạo tài khoản)' : ' *') ?></label>
-                    <div class="password-input-wrap">
-                        <input id="employee-password-confirm" name="ConfirmPassword" type="password" autocomplete="new-password" minlength="6" <?= $isEdit && $hasAccount || $accountOptional ? '' : 'required' ?> aria-invalid="<?= isset($errors['ConfirmPassword']) ? 'true' : 'false' ?>" <?= isset($errors['ConfirmPassword']) ? 'aria-describedby="employee-password-confirm-error"' : '' ?>>
-                        <button class="password-toggle" type="button" data-password-toggle="employee-password-confirm" aria-pressed="false">Hiện</button>
-                    </div>
-                    <?php if (isset($errors['ConfirmPassword'])): ?><p class="field-error" id="employee-password-confirm-error"><?= $h($errors['ConfirmPassword']) ?></p><?php endif; ?>
-                </div>
             </div>
         </section>
 
         <div class="form-actions">
             <a class="button button--secondary" href="/">Hủy</a>
-            <button class="button button--primary" type="submit"><?= $isEdit ? 'Lưu thay đổi' : 'Tạo nhân viên và tài khoản' ?></button>
+            <button class="button button--primary" type="submit"><?= $isEdit ? 'Lưu thay đổi' : 'Tạo nhân viên' ?></button>
         </div>
     </form>
 
@@ -114,7 +66,28 @@ $h = static fn(mixed $value): string => htmlspecialchars((string)($value ?? ''),
                     <h2 id="face-management-title">Khuôn mặt <span class="face-count"><?= $faceCount ?> mẫu<?= $faceImageCount > 0 ? ' · ' . $faceImageCount . ' ảnh' : '' ?></span></h2>
                 </div>
                 <div class="face-management-actions">
-                    <button class="button button--primary" type="button" data-face-start>
+                    <label class="form-field">
+                        <span>Thiết bị camera</span>
+                        <select data-face-device <?= $attendanceCameraDeviceId === null ? 'disabled' : '' ?>>
+                            <?php if ($attendanceCameraDeviceId === null): ?>
+                                <option value="">Chưa gán camera AI1</option>
+                            <?php else: ?>
+                                <?php foreach ($attendanceDevices as $attendanceDevice): ?>
+                                    <?php if ((int)$attendanceDevice['MaTB'] === $attendanceCameraDeviceId): ?>
+                                        <option value="<?= $attendanceCameraDeviceId ?>">TB<?= str_pad((string)$attendanceCameraDeviceId, 3, '0', STR_PAD_LEFT) ?> · <?= htmlspecialchars((string)($attendanceDevice['LoaiTB'] ?? 'Thiết bị'), ENT_QUOTES, 'UTF-8') ?></option>
+                                    <?php endif; ?>
+                                <?php endforeach; ?>
+                            <?php endif; ?>
+                        </select>
+                    </label>
+                    <label class="form-field">
+                        <span>Chế độ đăng ký</span>
+                        <select data-face-mode>
+                            <option value="AUTO">AUTO · 5 hướng</option>
+                            <option value="MANUAL">MANUAL · chụp từng hướng</option>
+                        </select>
+                    </label>
+                    <button class="button button--primary" type="button" data-face-start <?= $attendanceCameraDeviceId === null ? 'disabled title="Gán camera bằng AI1_CAMERA_DEVICE_ID hoặc chỉ khai báo một thiết bị."' : '' ?>>
                         <?= $faceCount > 0 ? 'Đăng ký lại' : 'Đăng ký khuôn mặt' ?>
                     </button>
                     <?php if ($faceCount > 0): ?>
@@ -152,14 +125,15 @@ $h = static fn(mixed $value): string => htmlspecialchars((string)($value ?? ''),
                 </div>
             <?php endif; ?>
 
-            <div class="face-enrollment" data-face-enrollment data-employee-id="<?= $employeeId ?>" data-csrf="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>" data-face-count="<?= $faceCount ?>" hidden>
+            <div class="face-enrollment" data-face-enrollment data-employee-id="<?= $employeeId ?>" data-csrf="<?= htmlspecialchars($csrfToken, ENT_QUOTES, 'UTF-8') ?>" data-face-count="<?= $faceCount ?>" data-device-id="<?= $attendanceCameraDeviceId === null ? '' : (int)$attendanceCameraDeviceId ?>" hidden>
                 <div class="face-enrollment-camera-wrap">
                     <img class="face-enrollment-camera" data-face-camera alt="Khung hình camera đăng ký khuôn mặt" hidden>
+                    <div class="face-enrollment-guide" data-face-guide data-state="adjust" aria-hidden="true"></div>
                     <div class="face-enrollment-camera-empty" data-face-camera-empty>Camera sẽ mở từ nguồn camera hiện tại khi bắt đầu đăng ký.</div>
                 </div>
                 <div class="face-enrollment-progress" aria-live="polite">
                     <p class="face-enrollment-step" data-face-step>Bước 1/5 · Chính diện</p>
-                    <p class="face-enrollment-feedback" data-face-feedback>Nhấn “Bắt đầu” để khởi tạo phiên đăng ký.</p>
+                    <p class="face-enrollment-feedback" data-face-feedback>Giữ từng pose theo hướng dẫn; hệ thống tự chụp sau 8 frame hợp lệ liên tiếp.</p>
                     <ol class="face-pose-list" data-face-pose-list>
                         <li data-pose="frontal">Chính diện</li>
                         <li data-pose="left">Nghiêng trái</li>
@@ -168,8 +142,18 @@ $h = static fn(mixed $value): string => htmlspecialchars((string)($value ?? ''),
                         <li data-pose="down">Cúi nhẹ</li>
                     </ol>
                 </div>
+                <div class="face-enrollment-thumbnails" data-face-thumbnails aria-label="Ảnh tạm của năm góc">
+                    <figure data-pose-thumb="frontal"><img alt="Ảnh tạm chính diện"><figcaption>Chính diện</figcaption></figure>
+                    <figure data-pose-thumb="left"><img alt="Ảnh tạm nghiêng trái"><figcaption>Nghiêng trái</figcaption></figure>
+                    <figure data-pose-thumb="right"><img alt="Ảnh tạm nghiêng phải"><figcaption>Nghiêng phải</figcaption></figure>
+                    <figure data-pose-thumb="up"><img alt="Ảnh tạm ngẩng lên"><figcaption>Ngẩng lên</figcaption></figure>
+                    <figure data-pose-thumb="down"><img alt="Ảnh tạm cúi xuống"><figcaption>Cúi xuống</figcaption></figure>
+                </div>
                 <div class="face-enrollment-actions">
                     <button class="button button--secondary" type="button" data-face-cancel hidden>Hủy phiên</button>
+                    <button class="button button--secondary" type="button" data-face-capture hidden>Chụp pose hiện tại</button>
+                    <button class="button button--secondary" type="button" data-face-manual-fallback hidden>Tiếp tục bằng MANUAL</button>
+                    <a class="button button--secondary" data-face-terminal-link target="_blank" rel="noopener" hidden>Mở màn hình chấm công</a>
                     <button class="button button--primary" type="button" data-face-complete disabled hidden>Lưu 5 mẫu</button>
                 </div>
             </div>
@@ -190,5 +174,8 @@ $h = static fn(mixed $value): string => htmlspecialchars((string)($value ?? ''),
     <?php endif; ?>
 </main>
 <script src="/public/js/employee_form.js" defer></script>
-<?php if ($isEdit): ?><script src="/public/js/face_enrollment.js" defer></script><?php endif; ?>
+<?php if ($isEdit): ?>
+    <script src="/public/js/enrollment_ui_helpers.js" defer></script>
+    <script src="/public/js/face_enrollment.js" defer></script>
+<?php endif; ?>
 <?php require __DIR__ . '/layout/footer.php'; ?>
