@@ -103,6 +103,8 @@ class KioskAttendanceService
                     'state' => 'OFFLINE',
                     'code' => 'CAMERA_SOURCE_UNAVAILABLE',
                     'message' => 'Camera offline: không lấy được ảnh bằng chứng nên chưa ghi chấm công.',
+                    'employee_id' => $employeeId,
+                    'employee_name' => (string)($recognized['ho_ten'] ?? ''),
                 ];
                 $this->rememberResult($recognitionSessionId, $outcome, $session);
                 return $outcome;
@@ -110,7 +112,12 @@ class KioskAttendanceService
             $attendanceResult = ($this->recordAttendance)($employeeId, $deviceId, $evidenceJpeg);
         } catch (Throwable $exception) {
             error_log('Kiosk attendance processing failed: ' . $exception->getMessage());
-            $outcome = ['state' => 'RETRY', 'message' => 'Chưa ghi được chấm công. Vui lòng quét lại.'];
+            $outcome = [
+                'state' => 'RETRY',
+                'message' => 'Chưa ghi được chấm công. Vui lòng quét lại.',
+                'employee_id' => $employeeId,
+                'employee_name' => (string)($recognized['ho_ten'] ?? ''),
+            ];
             $this->rememberResult($recognitionSessionId, $outcome, $session);
             return $outcome;
         }
@@ -131,8 +138,7 @@ class KioskAttendanceService
             $outcome = [
                 'state' => 'RETRY',
                 'message' => $this->safeAttendanceError(
-                    (string)($attendanceResult['message'] ?? ''),
-                    $employeeId
+                    (string)($attendanceResult['message'] ?? '')
                 ),
                 'employee_id' => $employeeId,
                 'employee_name' => (string)($recognized['ho_ten'] ?? ''),
@@ -160,13 +166,23 @@ class KioskAttendanceService
         ];
     }
 
-    private function safeAttendanceError(string $message, int $employeeId): string
+    private function safeAttendanceError(string $message): string
     {
-        if (str_contains($message, 'chưa được phân ca')) {
-            $employeeCode = 'NV' . str_pad((string)$employeeId, 3, '0', STR_PAD_LEFT);
-            return "AI1 đã nhận diện {$employeeCode}, nhưng mã này chưa được phân ca hôm nay. Vui lòng báo quản lý.";
+        $normalized = function_exists('mb_strtolower')
+            ? mb_strtolower($message, 'UTF-8')
+            : strtolower($message);
+        if (str_contains($normalized, 'chưa được phân ca')
+            || str_contains($normalized, 'không có ca làm hợp lệ')) {
+            return 'Bạn chưa được phân ca hôm nay. Vui lòng liên hệ quản lý.';
         }
-        return 'Chưa ghi được chấm công. Vui lòng thử lại hoặc báo quản lý.';
+        if (str_contains($normalized, 'chưa đến giờ chấm công')) {
+            return 'Chưa đến giờ chấm công. Vui lòng chờ đến giờ quy định.';
+        }
+        if (str_contains($normalized, 'đã chấm công đủ lượt')
+            || str_contains($normalized, 'đã hoàn tất chấm công')) {
+            return 'Bạn đã chấm công đủ lượt hôm nay.';
+        }
+        return 'Chấm công chưa được ghi nhận. Vui lòng thử lại hoặc liên hệ quản lý.';
     }
 
     private function retryMessage(string $reason): string

@@ -2,7 +2,7 @@
 app.py — Flask Controller (Tầng Presentation)
 ==============================================
 - Singleton camera source + FramePump (tránh xung đột tài nguyên)
-- Dùng ai_engine.detector để phân tích frame
+- Video feed chỉ phân phối frame từ camera singleton
 - RESTful API endpoints cho Dashboard
 - Login / Logout + phân quyền theo VaiTro
 """
@@ -22,7 +22,6 @@ from flask import (
     Response, session, redirect, url_for
 )
 import services
-import ai_engine
 import database as _db
 from camera_source import FramePacket, open_camera as _open_camera_source
 
@@ -104,7 +103,7 @@ def get_camera():
 def generate_frames():
     """
     Generator cho MJPEG stream.
-    Dùng singleton camera + ai_engine.detector để phân tích frame.
+    Dùng singleton camera và giữ nguyên frame nguồn cho các client video.
     """
     while True:
         packet = _read_camera_packet()
@@ -113,13 +112,10 @@ def generate_frames():
             continue
         frame = packet.frame
 
-        # Phân tích frame với AI engine
-        annotated_frame, alert = ai_engine.detector.analyze_frame(frame)
-
         # Encode sang JPEG
         ret, buffer = cv2.imencode(
             '.jpg',
-            annotated_frame,
+            frame,
             [cv2.IMWRITE_JPEG_QUALITY, 85]
         )
 
@@ -332,14 +328,6 @@ def receive_cham_cong():
 
     result = services.process_attendance(ma_nv, ma_tb, image_bytes)
 
-    # Đồng bộ AI Engine
-    if result.get("action") == "checkin" and result.get("status") == "success":
-        ai_engine.detector.set_active_employee(ma_nv)
-
-    elif result.get("action") == "checkout" and result.get("status") == "success":
-        if ai_engine.detector.active_ma_nv == ma_nv:
-            ai_engine.detector.clear_active_employee()
-
     http_code = 200 if result.get("status") == "success" else 400
     return jsonify(result), http_code
 
@@ -491,22 +479,6 @@ def post_assign_shift():
 
 
 # ============================================================
-# Routes — AI Alerts & Status
-# ============================================================
-
-@app.route('/api/get_alerts')
-@admin_required
-def get_alerts():
-    limit = request.args.get('limit', 10, type=int)
-    return jsonify(services.fetch_alert_history(limit=limit))
-
-
-@app.route('/api/ai_status')
-@login_required
-def ai_status():
-    return jsonify(ai_engine.detector.get_current_status())
-
-
 # ============================================================
 # Routes — Vai trò (admin)
 # ============================================================
@@ -716,13 +688,6 @@ def api_me_today():
 def api_me_health():
     ma_nv = session.get('MaNV')
     return jsonify(services.fetch_my_health(ma_nv))
-
-
-@app.route('/api/me/alerts')
-@login_required
-def api_me_alerts():
-    ma_nv = session.get('MaNV')
-    return jsonify(services.fetch_my_alerts(ma_nv))
 
 
 # ============================================================

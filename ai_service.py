@@ -26,7 +26,10 @@ from ai1_standalone_core.config import (
     GUIDED_POSE_TIMEOUT_SECONDS,
     POSES as GUIDED_POSES,
 )
-from ai1_standalone_core.pose_tracking import GuidedPoseTracker
+from ai1_standalone_core.pose_tracking import (
+    GuidedPoseTracker,
+    assess_frontal_camera_alignment,
+)
 from face_matching import (
     ENROLLMENT_IDENTITY_THRESHOLD,
     aggregate_gallery,
@@ -58,6 +61,24 @@ POSE_LABELS = {
 MAX_ENROLLMENT_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_RECOGNITION_IMAGE_BYTES = 2 * 1024 * 1024
 ENROLLMENT_SESSION_TTL_SECONDS = 600
+DEFAULT_RECOGNITION_SESSION_TIMEOUT_SECONDS = 20.0
+MAX_RECOGNITION_SESSION_TIMEOUT_SECONDS = 60.0
+
+
+def _recognition_session_timeout_seconds():
+    """Give the Web/Kiosk worker enough time for three serial CPU embeddings.
+
+    This is a Web service session budget only; standalone AI1 recognition
+    configuration and matching thresholds remain unchanged.
+    """
+    raw = os.getenv("AI1_RECOGNITION_SESSION_TIMEOUT_SECONDS")
+    try:
+        configured = float(raw) if raw is not None else DEFAULT_RECOGNITION_SESSION_TIMEOUT_SECONDS
+    except (TypeError, ValueError):
+        configured = DEFAULT_RECOGNITION_SESSION_TIMEOUT_SECONDS
+    if not np.isfinite(configured):
+        configured = DEFAULT_RECOGNITION_SESSION_TIMEOUT_SECONDS
+    return min(MAX_RECOGNITION_SESSION_TIMEOUT_SECONDS, max(8.5, configured))
 
 
 def _face_bbox_area(face):
@@ -83,39 +104,97 @@ def _face_sharpness(frame, bbox):
     return float(cv2.Laplacian(gray, cv2.CV_64F).var())
 
 
-def _enrollment_face_geometry(frame, outcome, observation_status):
-    """Return display-only face geometry; this never affects pose or capture decisions."""
+def _enrollment_face_geometry(
+        frame, outcome, observation_status, *,
+        frame_sequence=None, frame_timestamp=None, frame_age_ms=None):
+    """Expose only the backend-selected safe primary face to the Kiosk guide."""
+    empty = {
+        "face_bbox": None, "frame_width": 0, "frame_height": 0,
+        "face_count": 0, "total_face_count": 0,
+        "primary_face_safe": False, "detection_score": None,
+        "primary_face_area_ratio": None,
+        "primary_face_area_ratio_required": None,
+        "frame_sequence": frame_sequence,
+        "frame_timestamp": frame_timestamp,
+        "frame_age_ms": frame_age_ms,
+    }
     if not isinstance(frame, np.ndarray) or frame.ndim < 2 or frame.size == 0:
-        return {"face_bbox": None, "frame_width": 0, "frame_height": 0}
+        return empty
     height, width = frame.shape[:2]
-    if str(observation_status).upper() == "STALE_FRAME":
-        return {"face_bbox": None, "frame_width": width, "frame_height": height}
-
     outcome = outcome if isinstance(outcome, dict) else {}
     faces = outcome.get("faces")
-    face_count = outcome.get("face_count")
-    if face_count is None:
-        face_count = len(faces) if isinstance(faces, (list, tuple)) else int(isinstance(outcome.get("face"), dict))
-    if face_count != 1:
-        return {"face_bbox": None, "frame_width": width, "frame_height": height}
-
-    face = outcome.get("face")
+    candidates = [face for face in faces if isinstance(face, dict)] \
+        if isinstance(faces, (list, tuple)) else []
+    try:
+        reported_count = int(outcome.get("total_face_count", outcome.get("face_count", len(candidates))))
+    except (TypeError, ValueError):
+        reported_count = len(candidates)
+    face_count = max(0, reported_count, len(candidates))
+    result = {
+        "face_bbox": None, "frame_width": width, "frame_height": height,
+        "face_count": face_count,
+        "total_face_count": face_count,
+        "primary_face_safe": False,
+        "detection_score": None,
+        "primary_face_area_ratio": None,
+        "primary_face_area_ratio_required": None,
+        "frame_sequence": frame_sequence,
+        "frame_timestamp": frame_timestamp,
+        "frame_age_ms": frame_age_ms,
+    }
+    ratio = outcome.get("primary_face_area_ratio")
+    try:
+        ratio = float(ratio)
+        result["primary_face_area_ratio"] = ratio if np.isfinite(ratio) else None
+    except (TypeError, ValueError):
+        pass
+    required_ratio = outcome.get("primary_face_area_ratio_required")
+    try:
+        required_ratio = float(required_ratio)
+        result["primary_face_area_ratio_required"] = (
+            required_ratio if np.isfinite(required_ratio) and required_ratio >= 1.0 else None
+        )
+    except (TypeError, ValueError):
+        pass
+    # On an ambiguous frame this is diagnostic confidence only. No bbox or
+    # confirmation ring is exposed until the tracker accepts the primary face.
+    diagnostic_face = outcome.get("selected_primary_face") or outcome.get("face")
+    if isinstance(diagnostic_face, dict):
+        try:
+            score = float(diagnostic_face.get("detection_score"))
+            if np.isfinite(score):
+                result["detection_score"] = score
+        except (TypeError, ValueError):
+            pass
+    if (str(observation_status).upper() in {
+            "STALE_FRAME", "IDENTITY_MISMATCH", "PRIMARY_FACE_CHANGED"
+        }
+            or outcome.get("primary_face_safe") is not True):
+        return result
+    face = outcome.get("selected_primary_face")
+    if not isinstance(face, dict):
+        return result
     try:
         box = np.asarray(face.get("bbox"), dtype=np.float64).reshape(-1)
     except (AttributeError, TypeError, ValueError):
         box = np.empty(0, dtype=np.float64)
     if box.size != 4 or not np.all(np.isfinite(box)):
-        return {"face_bbox": None, "frame_width": width, "frame_height": height}
+        return result
     x1, y1, x2, y2 = box.tolist()
     x1, x2 = max(0.0, min(float(width), x1)), max(0.0, min(float(width), x2))
     y1, y2 = max(0.0, min(float(height), y1)), max(0.0, min(float(height), y2))
     if x2 <= x1 or y2 <= y1:
-        return {"face_bbox": None, "frame_width": width, "frame_height": height}
-    return {
-        "face_bbox": [x1, y1, x2, y2],
-        "frame_width": width,
-        "frame_height": height,
-    }
+        return result
+    try:
+        score = float(face.get("detection_score"))
+        if not np.isfinite(score):
+            score = None
+    except (TypeError, ValueError):
+        score = None
+    result["face_bbox"] = [x1, y1, x2, y2]
+    result["detection_score"] = score
+    result["primary_face_safe"] = True
+    return result
 
 
 def _temporal_consistency_threshold():
@@ -321,11 +400,14 @@ class AIRuntime:
             if not self.engine._initialized:
                 raise RuntimeError("Face recognition model is unavailable.")
             session_id = uuid.uuid4().hex
+            timeout_seconds = _recognition_session_timeout_seconds()
             record = {
                 "session_id": session_id,
                 "state": "CAPTURING",
                 "captured_frames": 0,
                 "total_frames": 3,
+                "timeout_seconds": timeout_seconds,
+                "deadline_monotonic": time.monotonic() + timeout_seconds,
                 "created_at": time.time(),
                 "updated_at": time.time(),
                 "result": None,
@@ -336,11 +418,16 @@ class AIRuntime:
             self._active_recognition_session = session_id
             self._prune_recognition_sessions_locked()
             record["future"] = self._recognition_pool.submit(self._run_recognition_session, session_id)
-            watchdog = threading.Timer(8.5, self._expire_recognition_session, args=(session_id,))
+            # Allow one second after the capture budget for the worker to publish
+            # a terminal result before the watchdog marks a still-running inference.
+            watchdog = threading.Timer(timeout_seconds + 1.0, self._expire_recognition_session,
+                                       args=(session_id,))
             watchdog.daemon = True
             record["watchdog"] = watchdog
             watchdog.start()
-            return {key: record[key] for key in ("session_id", "state", "captured_frames", "total_frames")}
+            return {key: record[key] for key in (
+                "session_id", "state", "captured_frames", "total_frames", "timeout_seconds"
+            )}
 
     def start_enrollment_session(self):
         """Start one camera-owned Smart Enrollment v2 session without database access."""
@@ -376,6 +463,11 @@ class AIRuntime:
                 "face_bbox": None,
                 "frame_width": 0,
                 "frame_height": 0,
+                "face_count": 0,
+                "detection_score": None,
+                "frame_sequence": None,
+                "frame_timestamp": None,
+                "frame_age_ms": None,
                 "reason": "Đang khởi động Smart Enrollment.",
                 "created_at": time.time(),
                 "updated_at": time.time(),
@@ -422,6 +514,11 @@ class AIRuntime:
                 "face_bbox": None,
                 "frame_width": 0,
                 "frame_height": 0,
+                "face_count": 0,
+                "detection_score": None,
+                "frame_sequence": None,
+                "frame_timestamp": None,
+                "frame_age_ms": None,
                 "reason": "Đang đăng ký MANUAL. Camera được khóa cho phiên này.",
                 "created_at": time.time(),
                 "updated_at": time.time(),
@@ -501,6 +598,15 @@ class AIRuntime:
             "face_bbox": record.get("face_bbox"),
             "frame_width": int(record.get("frame_width", 0)),
             "frame_height": int(record.get("frame_height", 0)),
+            "face_count": int(record.get("face_count", 0)),
+            "total_face_count": int(record.get("total_face_count", record.get("face_count", 0))),
+            "primary_face_safe": record.get("primary_face_safe") is True,
+            "primary_face_area_ratio": record.get("primary_face_area_ratio"),
+            "primary_face_area_ratio_required": record.get("primary_face_area_ratio_required"),
+            "detection_score": record.get("detection_score"),
+            "frame_sequence": record.get("frame_sequence"),
+            "frame_timestamp": record.get("frame_timestamp"),
+            "frame_age_ms": record.get("frame_age_ms"),
             "reason": str(record.get("reason", "")),
             "updated_at": float(record.get("updated_at", 0)),
         }
@@ -556,6 +662,9 @@ class AIRuntime:
                             observation_status=missing.get("status", "STALE_FRAME"),
                             feedback_code="NO_FRAME", quality_code="",
                             face_bbox=None, frame_width=0, frame_height=0,
+                            face_count=0, total_face_count=0, primary_face_safe=False,
+                            detection_score=None,
+                            frame_sequence=None, frame_timestamp=None, frame_age_ms=None,
                         )
                         with self._session_lock:
                             if self._active_enrollment_session == session_id:
@@ -569,18 +678,117 @@ class AIRuntime:
                         observation_status=missing.get("status", "STALE_FRAME"),
                         feedback_code="NO_FRAME", quality_code="",
                         face_bbox=None, frame_width=0, frame_height=0,
+                        face_count=0, total_face_count=0, primary_face_safe=False,
+                        detection_score=None,
+                        frame_sequence=None, frame_timestamp=None, frame_age_ms=None,
                     )
                     time.sleep(0.2)
                     continue
 
                 outcome = validate_enrollment_pose_frame(self.engine, frame, expected_pose)
+                # Establish an ArcFace identity anchor from the first genuinely
+                # camera-facing frontal observation. Subsequent pose-only frames
+                # stay light; the selected sharp sample is checked against this
+                # reference immediately before it can be appended to the batch.
+                if (outcome.get("status") == "OK"
+                        and outcome.get("primary_face_safe") is True
+                        and expected_pose == "frontal"
+                        and tracker.primary_identity_reference is None
+                        and tracker.identity_reference is None):
+                    face = outcome.get("selected_primary_face")
+                    pose_data = face.get("head_pose") if isinstance(face, dict) else None
+                    try:
+                        reliable = (isinstance(pose_data, dict)
+                                    and bool(pose_data.get("positive_depth", False))
+                                    and float(pose_data.get("reprojection_error_px", float("inf")))
+                                    <= tracker.max_reprojection_px)
+                    except (TypeError, ValueError):
+                        reliable = False
+                    frontal_ok = False
+                    if reliable:
+                        frontal_ok, _frontal_reason, _frontal_metrics = \
+                            assess_frontal_camera_alignment(face, pose_data)
+                    if frontal_ok:
+                        probe = validate_enrollment_frame(
+                            self.engine, frame, expected_pose, enforce_pose=False,
+                            selected_primary_face=face,
+                        )
+                        if probe.get("status") == "OK":
+                            try:
+                                tracker.set_primary_identity_reference(probe["embedding"])
+                            except (TypeError, ValueError) as exc:
+                                outcome = {**outcome, "status": "RETRY",
+                                           "code": "INVALID EMBEDDING", "reason": str(exc),
+                                           "primary_face_safe": False}
+                            else:
+                                outcome = {
+                                    **outcome,
+                                    "face": probe.get("face", face),
+                                    "faces": probe.get("faces", outcome.get("faces", [])),
+                                    "face_count": probe.get("face_count", outcome.get("face_count")),
+                                    "total_face_count": probe.get("total_face_count", outcome.get("total_face_count")),
+                                    "selected_primary_face": probe.get("selected_primary_face", face),
+                                    "primary_face_safe": True,
+                                    "embedding": probe["embedding"],
+                                    "quality": probe.get("quality", outcome.get("quality")),
+                                }
+                        else:
+                            outcome = {**outcome, "status": "RETRY",
+                                       "code": probe.get("code", "QUALITY CHECK"),
+                                       "reason": probe.get("reason", "Không thể xác minh danh tính khuôn mặt chính."),
+                                       "primary_face_safe": False}
+                elif (outcome.get("status") == "OK"
+                        and outcome.get("primary_face_safe") is True
+                        and int(outcome.get("total_face_count", outcome.get("face_count", 0)) or 0) > 1
+                        and (tracker.primary_identity_reference is not None
+                             or tracker.identity_reference is not None)):
+                    # A secondary person is present: verify the selected primary
+                    # against the pinned ArcFace identity before this frame can
+                    # contribute stability. Single-face tracking stays SCRFD-only.
+                    selected_primary = outcome.get("selected_primary_face")
+                    identity_check = validate_enrollment_frame(
+                        self.engine, frame, expected_pose, enforce_pose=False,
+                        selected_primary_face=selected_primary,
+                    )
+                    if identity_check.get("status") == "OK":
+                        outcome = {
+                            **outcome,
+                            "face": identity_check.get("face", selected_primary),
+                            "faces": identity_check.get("faces", outcome.get("faces", [])),
+                            "face_count": identity_check.get("face_count", outcome.get("face_count")),
+                            "total_face_count": identity_check.get("total_face_count", outcome.get("total_face_count")),
+                            "selected_primary_face": identity_check.get("selected_primary_face", selected_primary),
+                            "primary_face_safe": True,
+                            "embedding": identity_check["embedding"],
+                            "quality": identity_check.get("quality", outcome.get("quality")),
+                        }
+                    else:
+                        outcome = {**outcome, "status": "RETRY",
+                                   "code": identity_check.get("code", "SAME PERSON"),
+                                   "reason": identity_check.get("reason", "Không xác minh được cùng người."),
+                                   "primary_face_safe": False}
                 now = time.monotonic()
                 observed = tracker.observe(
                     expected_pose, outcome, frame, sequence, captured_at,
                     now=now, received_at=received_at,
                 )
                 status = observed.get("status")
-                geometry = _enrollment_face_geometry(frame, outcome, status)
+                try:
+                    frame_timestamp = float(captured_at)
+                    if not np.isfinite(frame_timestamp):
+                        frame_timestamp = None
+                except (TypeError, ValueError):
+                    frame_timestamp = None
+                frame_age_ms = (max(0.0, (received_at - frame_timestamp) * 1000.0)
+                                if frame_timestamp is not None else None)
+                geometry = _enrollment_face_geometry(
+                    frame,
+                    ({**outcome, "primary_face_safe": False}
+                     if observed.get("primary_face_safe") is False else outcome),
+                    status,
+                    frame_sequence=sequence, frame_timestamp=frame_timestamp,
+                    frame_age_ms=frame_age_ms,
+                )
                 diagnostics = outcome.get("diagnostics") if isinstance(outcome, dict) else None
                 quality_code = str((diagnostics or {}).get("quality_code") or "")
                 feedback_code = str(observed.get("rejected_code") or status or "")
@@ -605,7 +813,8 @@ class AIRuntime:
                     candidate = observed.get("candidate") or {}
                     selected_frame = candidate.get("frame")
                     selected = validate_enrollment_frame(
-                        self.engine, selected_frame, expected_pose, enforce_pose=False
+                        self.engine, selected_frame, expected_pose, enforce_pose=False,
+                        selected_primary_face=candidate.get("selected_primary_face"),
                     )
                     checked = tracker.validate_selected_candidate(candidate, selected, expected_pose)
                     if checked.get("status") != "OK":
@@ -707,6 +916,11 @@ class AIRuntime:
                     record["face_bbox"] = None
                     record["frame_width"] = 0
                     record["frame_height"] = 0
+                    record["face_count"] = 0
+                    record["detection_score"] = None
+                    record["frame_sequence"] = None
+                    record["frame_timestamp"] = None
+                    record["frame_age_ms"] = None
                     record["updated_at"] = time.time()
                 if self._active_enrollment_session == session_id:
                     self._active_enrollment_session = None
@@ -718,7 +932,8 @@ class AIRuntime:
             record = self._recognition_sessions.get(session_id)
             if record is None:
                 return None
-            return {key: value for key, value in record.items() if key not in {"future", "watchdog"}}
+            return {key: value for key, value in record.items()
+                    if key not in {"future", "watchdog", "deadline_monotonic"}}
 
     def _prune_recognition_sessions_locked(self):
         cutoff = time.time() - 300
@@ -762,7 +977,10 @@ class AIRuntime:
         captured = []
         last_sequence = -1
         last_capture_time = 0.0
-        deadline = time.monotonic() + 8.0
+        with self._session_lock:
+            session_record = self._recognition_sessions.get(session_id)
+            deadline = (float(session_record["deadline_monotonic"])
+                        if session_record is not None else time.monotonic())
         failure = None
         try:
             if not self.engine._initialized:

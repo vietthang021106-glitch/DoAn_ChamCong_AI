@@ -62,7 +62,7 @@ final class MyController
 
         $profile = null;
         $today = ['shift' => null, 'attendance' => null];
-        $attendanceRows = $healthRows = $alertRows = [];
+        $attendanceRows = $healthRows = [];
         $totalRows = 0;
         $error = null;
         $todayDate = (new DateTimeImmutable('now', new DateTimeZone('Asia/Ho_Chi_Minh')))->format('Y-m-d');
@@ -83,7 +83,6 @@ final class MyController
                 ($page - 1) * self::PAGE_SIZE
             );
             $healthRows = $this->my->findHealth($employeeId);
-            $alertRows = $this->my->findAlerts($employeeId);
         } catch (Throwable $exception) {
             error_log('Self-service read failed: ' . $exception->getMessage());
             http_response_code(500);

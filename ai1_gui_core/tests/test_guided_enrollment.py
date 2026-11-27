@@ -14,10 +14,12 @@ from unittest.mock import patch
 
 import face_engine
 from ai1_gui_core.enrollment_state import EnrollmentCaptureState
-from ai1_gui_core.gui import AI1Gui, _draw_unicode_runs
-from ai1_standalone_core.config import POSES
+from ai1_gui_core.gui import AI1Gui, POSE_LABELS, _draw_unicode_runs
+from ai1_standalone_core.ai1_adapter import validate_enrollment_pose_frame
+from ai1_standalone_core.config import GUIDED_POSE_STABILITY_WINDOW_SECONDS, POSES
 from ai1_standalone_core.pose_tracking import (
     GuidedPoseTracker,
+    assess_frontal_camera_alignment,
     angular_delta_degrees,
     average_rotation_matrices,
     classify_relative_pose,
@@ -34,12 +36,32 @@ def axis_rotation(axis, radians):
 
 
 FRONTAL_ROTATION = axis_rotation(0, np.pi)
+GESTURE_ANGLE = np.deg2rad(24.0)
+
+
+def observed_webcam_pose_rotation(pose, angle=GESTURE_ANGLE):
+    """Build solvePnP fixtures for the inverse sectors reported by webcam.
+
+    These synthetic rotations encode the user's reported runtime behavior:
+    before the central label map, physical LEFT arrives in the RIGHT sector,
+    physical UP in the DOWN sector, and vice versa. They test the mapping; they
+    are not a substitute for a new physical webcam check.
+    """
+    relative_sector_rotation = {
+        "frontal": np.eye(3, dtype=np.float64),
+        "left": axis_rotation(1, -angle),
+        "right": axis_rotation(1, angle),
+        "up": axis_rotation(0, angle),
+        "down": axis_rotation(0, -angle),
+    }.get(pose)
+    if relative_sector_rotation is None:
+        raise ValueError(f"Unknown user pose: {pose}")
+    return FRONTAL_ROTATION @ relative_sector_rotation
+
+
 POSE_ROTATIONS = {
-    "frontal": FRONTAL_ROTATION,
-    "left": FRONTAL_ROTATION @ axis_rotation(1, np.deg2rad(24.0)),
-    "right": FRONTAL_ROTATION @ axis_rotation(1, np.deg2rad(-24.0)),
-    "up": FRONTAL_ROTATION @ axis_rotation(0, np.deg2rad(-24.0)),
-    "down": FRONTAL_ROTATION @ axis_rotation(0, np.deg2rad(24.0)),
+    pose: observed_webcam_pose_rotation(pose) for pose in
+    ("frontal", "left", "right", "up", "down")
 }
 
 
@@ -55,6 +77,18 @@ def projected_head_pose(rotation):
     return face_engine.estimate_head_pose(points.reshape(-1, 2), (480, 640, 3))
 
 
+def projected_points(rotation):
+    camera = np.asarray([[640.0, 0.0, 320.0], [0.0, 640.0, 240.0],
+                         [0.0, 0.0, 1.0]], dtype=np.float64)
+    translation = np.asarray([[0.0], [0.0], [600.0]], dtype=np.float64)
+    rotation_vector, _ = cv2.Rodrigues(rotation)
+    points, _ = cv2.projectPoints(
+        face_engine._POSE_MODEL_POINTS, rotation_vector, translation,
+        camera, np.zeros((4, 1), dtype=np.float64),
+    )
+    return points.reshape(-1, 2)
+
+
 def valid_outcome(rotation, sharpness=10.0, embedding=None):
     vector = np.zeros(512, dtype=np.float32)
     vector[0] = 1.0
@@ -64,6 +98,8 @@ def valid_outcome(rotation, sharpness=10.0, embedding=None):
         "quality": {"ready": True, "sharpness": float(sharpness)},
         "face": {
             "bbox": [200.0, 100.0, 440.0, 380.0],
+            "keypoints": [[270.0, 180.0], [370.0, 180.0], [320.0, 230.0],
+                          [285.0, 290.0], [355.0, 290.0]],
             "detection_score": 0.99,
             "head_pose": {
                 "rotation_matrix": np.asarray(rotation).tolist(),
@@ -81,6 +117,18 @@ def valid_outcome(rotation, sharpness=10.0, embedding=None):
             "raw_yaw": 0.0, "raw_pitch": 180.0,
         },
     }
+
+
+def pose_only_outcome(rotation, sharpness=10.0, face_count=1):
+    """SCRFD/quality result intentionally contains no ArcFace embedding."""
+    outcome = valid_outcome(rotation, sharpness=sharpness)
+    outcome.pop("embedding", None)
+    outcome["face_count"] = face_count
+    if face_count != 1:
+        outcome["status"] = "RETRY"
+        outcome["code"] = "MULTIPLE FACES" if face_count > 1 else "NO FACE"
+        outcome["reason"] = outcome["code"]
+    return outcome
 
 
 class _Var:
@@ -103,6 +151,120 @@ class GuidedEnrollmentTests(unittest.TestCase):
         self.assertAlmostEqual(calibrated["yaw"], 0.0, places=6)
         self.assertAlmostEqual(calibrated["pitch"], 0.0, places=6)
 
+    def test_face_engine_preserves_scrfd_keypoints_for_frontal_camera_check(self):
+        embedding = np.zeros(512, dtype=np.float32)
+        embedding[0] = 1.0
+        fake_face = SimpleNamespace(
+            det_score=0.99,
+            bbox=np.asarray([200.0, 100.0, 440.0, 380.0]),
+            normed_embedding=embedding,
+            kps=projected_points(FRONTAL_ROTATION),
+        )
+
+        class FakeFaceAnalysis:
+            def __init__(self):
+                self.det_model = SimpleNamespace(det_thresh=0.5)
+
+            def get(self, _frame):
+                return [fake_face]
+
+        engine = face_engine.FaceRecognitionEngine()
+        engine._app = FakeFaceAnalysis()
+        engine._initialized = True
+        result = engine.detect_embeddings(np.zeros((480, 640, 3), dtype=np.uint8))
+        self.assertEqual(np.asarray(result[0]["keypoints"]).shape, (5, 2))
+        self.assertEqual(len(result[0]["head_pose"]["rotation_matrix"]), 3)
+
+    def test_face_engine_pose_only_path_uses_scrfd_and_never_calls_faceanalysis_get(self):
+        points = projected_points(FRONTAL_ROTATION)
+
+        class Detector:
+            det_thresh = 0.5
+
+            def detect(self, _frame, max_num=0, metric="default", det_thresh=None):
+                self.requested_threshold = det_thresh
+                return (np.asarray([[200, 100, 440, 380, 0.84],
+                                    [24, 30, 100, 110, 0.28]], dtype=np.float32),
+                        np.stack([points, points]).astype(np.float32))
+
+        detector = Detector()
+
+        class FakeFaceAnalysis:
+            det_model = detector
+
+            @staticmethod
+            def get(_frame):
+                raise AssertionError("AUTO tracking must not invoke ArcFace recognition")
+
+        engine = face_engine.FaceRecognitionEngine()
+        engine._app = FakeFaceAnalysis()
+        engine._initialized = True
+        faces = engine.detect_pose_faces(np.zeros((480, 640, 3), dtype=np.uint8))
+        self.assertEqual(len(faces), 2, "low-confidence secondary face must count")
+        self.assertEqual(detector.requested_threshold, face_engine.ENROLLMENT_DETECTION_FLOOR)
+        self.assertNotIn("embedding", faces[0])
+        self.assertEqual(np.asarray(faces[0]["keypoints"]).shape, (5, 2))
+        self.assertTrue(faces[0]["head_pose"]["positive_depth"])
+
+    def test_face_engine_pose_only_restores_detector_threshold_on_legacy_scrfd_api(self):
+        points = projected_points(FRONTAL_ROTATION)
+
+        class LegacyDetector:
+            det_thresh = 0.5
+
+            def detect(self, _frame, max_num=0, metric="default"):
+                self.threshold_during_detect = self.det_thresh
+                return (np.asarray([[200, 100, 440, 380, 0.84]], dtype=np.float32),
+                        np.asarray([points], dtype=np.float32))
+
+        detector = LegacyDetector()
+        engine = face_engine.FaceRecognitionEngine()
+        engine._app = SimpleNamespace(det_model=detector)
+        engine._initialized = True
+        result = engine.detect_pose_faces(np.zeros((480, 640, 3), dtype=np.uint8))
+        self.assertEqual(detector.threshold_during_detect,
+                         face_engine.ENROLLMENT_DETECTION_FLOOR)
+        self.assertEqual(detector.det_thresh, face_engine.DETECTION_MIN_SCORE)
+        self.assertEqual(len(result), 1)
+
+    def test_pose_only_adapter_preserves_quality_gates_and_has_no_embedding(self):
+        face = valid_outcome(FRONTAL_ROTATION)["face"]
+
+        class FakeEngine:
+            @staticmethod
+            def detect_pose_faces(_frame, detection_threshold):
+                self_threshold[0] = detection_threshold
+                return [face]
+
+        self_threshold = [None]
+        frame = np.full((480, 640, 3), 127, dtype=np.uint8)
+        with patch("ai1_standalone_core.ai1_adapter.production_face_engine.assess_capture_quality",
+                   return_value={"ready": True, "instruction": "OK", "sharpness": 42.0,
+                                 "brightness": 127.0}):
+            result = validate_enrollment_pose_frame(FakeEngine(), frame, "frontal")
+        self.assertEqual(result["status"], "OK")
+        self.assertIsNone(result["embedding"])
+        self.assertEqual(result["face_count"], 1)
+        self.assertEqual(self_threshold[0], face_engine.ENROLLMENT_DETECTION_FLOOR)
+
+    def test_pose_only_adapter_rejects_no_face_and_multiple_faces(self):
+        one_face = valid_outcome(FRONTAL_ROTATION)["face"]
+
+        class FakeEngine:
+            def __init__(self, detections):
+                self.detections = detections
+
+            def detect_pose_faces(self, _frame, detection_threshold):
+                return self.detections
+
+        frame = np.full((480, 640, 3), 127, dtype=np.uint8)
+        self.assertEqual(validate_enrollment_pose_frame(
+            FakeEngine([]), frame, "frontal")["code"], "NO FACE")
+        multiple = validate_enrollment_pose_frame(
+            FakeEngine([one_face, one_face]), frame, "frontal")
+        self.assertEqual(multiple["code"], "MULTIPLE FACES")
+        self.assertEqual(multiple["face_count"], 2)
+
     def test_synthetic_relative_rotations_classify_all_five_pose_directions(self):
         reference = POSE_ROTATIONS["frontal"]
         for target in POSES:
@@ -113,9 +275,25 @@ class GuidedEnrollmentTests(unittest.TestCase):
                     target,
                 )
 
+    def test_empirical_webcam_mapping_swaps_four_sectors_and_preserves_frontal(self):
+        cases = (
+            (0.0, 0.0, "frontal"),
+            (24.0, 0.0, "right"),
+            (-24.0, 0.0, "left"),
+            (0.0, 24.0, "down"),
+            (0.0, -24.0, "up"),
+        )
+        for yaw, pitch, expected in cases:
+            with self.subTest(yaw=yaw, pitch=pitch):
+                self.assertEqual(classify_relative_pose(yaw, pitch), expected)
+
     def test_solvepnp_projected_landmarks_recover_all_relative_pose_directions(self):
         estimates = {pose: projected_head_pose(POSE_ROTATIONS[pose]) for pose in POSES}
         reference = estimates["frontal"]["rotation_matrix"]
+        expected_angles = {
+            "left": (-1, 0), "right": (1, 0),
+            "up": (0, -1), "down": (0, 1),
+        }
         for pose in POSES:
             estimated = estimates[pose]
             angles = relative_pose_angles(reference, estimated["rotation_matrix"])
@@ -125,6 +303,12 @@ class GuidedEnrollmentTests(unittest.TestCase):
                     classify_relative_pose(angles["yaw"], angles["pitch"], angles["roll"]),
                     pose,
                 )
+                if pose in expected_angles:
+                    yaw_sign, pitch_sign = expected_angles[pose]
+                    if yaw_sign:
+                        self.assertEqual(np.sign(angles["yaw"]), yaw_sign)
+                    if pitch_sign:
+                        self.assertEqual(np.sign(angles["pitch"]), pitch_sign)
 
     def test_relative_yaw_pitch_are_euler_decomposition_not_rodrigues_components(self):
         yaw, pitch, roll = np.deg2rad([27.0, 18.0, -9.0])
@@ -137,6 +321,72 @@ class GuidedEnrollmentTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "gimbal lock"):
             relative_pose_angles(np.eye(3), axis_rotation(0, -np.pi / 2))
 
+    def test_left_with_slight_down_tilt_keeps_yaw_and_pitch_on_separate_axes(self):
+        frontal = POSE_ROTATIONS["frontal"]
+        relative = (axis_rotation(1, -np.deg2rad(24.0))
+                    @ axis_rotation(0, -np.deg2rad(8.0)))
+        current = frontal @ relative
+        angles = relative_pose_angles(frontal, current)
+        self.assertLess(angles["yaw"], 0.0)
+        self.assertGreater(angles["pitch"], 0.0)
+        self.assertEqual(
+            classify_relative_pose(angles["yaw"], angles["pitch"], angles["roll"]),
+            "left",
+        )
+
+    def test_pose_labels_and_saved_thumbnail_slot_follow_five_pose_order(self):
+        self.assertEqual(tuple(POSES), ("frontal", "left", "right", "up", "down"))
+        self.assertEqual(
+            POSE_LABELS,
+            {"frontal": "Nhìn thẳng", "left": "Xoay trái", "right": "Xoay phải",
+             "up": "Ngẩng lên", "down": "Cúi xuống"},
+        )
+
+        class FakeWidget:
+            def __init__(self):
+                self.values = {}
+
+            def configure(self, **values):
+                self.values.update(values)
+
+        class FakeVar:
+            def __init__(self):
+                self.value = None
+
+            def set(self, value):
+                self.value = value
+
+        gui = AI1Gui.__new__(AI1Gui)
+        gui.capture_feedback = None
+        gui.thumbnail_photos = [None] * len(POSES)
+        gui.thumb_labels = [FakeWidget() for _ in POSES]
+        gui.thumb_status_labels = [FakeWidget() for _ in POSES]
+        gui.thumb_cells = [FakeWidget() for _ in POSES]
+        gui.captured_pose_order = []
+        gui.progress = FakeWidget()
+        gui.progress_var = FakeVar()
+        gui.enrollment_progress_var = FakeVar()
+        gui.pose_var = FakeVar()
+        gui.capture_hint_var = FakeVar()
+        gui.auto_status_var = FakeVar()
+        gui.state_var = FakeVar()
+        gui.preview_hint = FakeVar()
+        gui.enrollment = {"mode": "AUTO"}
+        gui._update_pose_ring = lambda *_args: None
+
+        frame = np.zeros((48, 64, 3), dtype=np.uint8)
+        fake_photo = object()
+        with patch("ai1_gui_core.gui.ImageTk.PhotoImage", return_value=fake_photo):
+            gui._show_captured_pose({
+                "pose": "up", "frame": frame, "captured": 4,
+                "current_pose": "down", "mode": "AUTO",
+            })
+
+        self.assertIs(gui.thumbnail_photos[3], fake_photo)
+        self.assertEqual(gui.thumb_labels[3].values["image"], fake_photo)
+        self.assertEqual(gui.thumb_status_labels[3].values["text"], "✓")
+        self.assertEqual(gui.preview_hint.value, "✓ Ngẩng lên · tiếp theo: Cúi xuống")
+
     def test_frontal_calibration_ignores_raw_180_pitch_and_displays_no_fake_angles(self):
         tracker = GuidedPoseTracker(stable_frames=3)
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
@@ -144,8 +394,9 @@ class GuidedEnrollmentTests(unittest.TestCase):
         for sequence in range(1, 4):
             outcome = valid_outcome(FRONTAL_ROTATION)
             outcome["face"]["head_pose"].update(yaw=16.22, pitch=171.42)
+            timestamp = 50.0 + (sequence - 1) * 0.2
             outputs.append(tracker.observe(
-                "frontal", outcome, frame, sequence, 50.0, now=50.0
+                "frontal", outcome, frame, sequence, timestamp, now=timestamp
             ))
         self.assertEqual(outputs[0]["status"], "STABILIZING")
         self.assertIsNone(outputs[0]["yaw"])
@@ -154,17 +405,117 @@ class GuidedEnrollmentTests(unittest.TestCase):
         self.assertAlmostEqual(outputs[-1]["yaw"], 0.0, places=4)
         self.assertAlmostEqual(outputs[-1]["pitch"], 0.0, places=4)
 
-    def test_frontal_calibration_rejects_large_raw_yaw_but_never_gates_on_raw_pitch(self):
+    def test_personalized_frontal_accepts_moderate_raw_yaw_and_ignores_pitch_branch(self):
         tracker = GuidedPoseTracker(stable_frames=2)
         outcome = valid_outcome(FRONTAL_ROTATION)
         outcome["face"]["head_pose"].update(yaw=23.0, pitch=179.0)
         result = tracker.observe("frontal", outcome, np.zeros((480, 640, 3), dtype=np.uint8),
                                  1, 10.0, now=10.0)
+        self.assertEqual(result["status"], "STABILIZING")
+        self.assertEqual(result["stable_count"], 1)
+        self.assertLessEqual(result["frontal_view"]["raw_yaw"], 35.0)
+
+    def test_clear_side_view_cannot_be_used_as_personal_frontal_reference(self):
+        tracker = GuidedPoseTracker(stable_frames=2)
+        side_rotation = FRONTAL_ROTATION @ axis_rotation(1, np.deg2rad(60.0))
+        outcome = valid_outcome(side_rotation)
+        outcome["face"]["keypoints"] = projected_points(side_rotation).tolist()
+        # Even if raw yaw is biased back to zero, the visible landmark spread
+        # rejects a clear profile rather than learning it as the user baseline.
+        outcome["face"]["head_pose"].update(yaw=0.0, raw_yaw=0.0, pitch=180.0)
+        result = tracker.observe(
+            "frontal", outcome, np.zeros((480, 640, 3), dtype=np.uint8),
+            1, 10.0, now=10.0,
+        )
         self.assertEqual(result["status"], "POSE_NOT_READY")
         self.assertEqual(result["stable_count"], 0)
-        self.assertIn("Raw pitch chỉ là thông tin debug", result["reason"])
+        self.assertIn("hướng về camera", result["reason"])
+        self.assertIn("tâm mắt quá hẹp", result["reason"])
 
-    def test_timeout_falls_back_with_reason_and_reset_restarts_tracker(self):
+    def test_asymmetric_eye_centers_and_strabismus_metadata_do_not_block_frontal(self):
+        outcome = valid_outcome(FRONTAL_ROTATION)
+        outcome["face"]["keypoints"] = [
+            [268.0, 184.0], [374.0, 193.0], [329.0, 239.0],
+            [284.0, 294.0], [360.0, 288.0],
+        ]
+        outcome["face"]["eye_gaze"] = {"left": [-1.0, 0.0], "right": [1.0, 0.0]}
+        outcome["face"]["head_pose"].update(yaw=27.0, raw_yaw=27.0, pitch=171.0)
+        accepted, reason, metrics = assess_frontal_camera_alignment(
+            outcome["face"], outcome["face"]["head_pose"]
+        )
+        self.assertTrue(accepted, reason)
+        self.assertGreater(metrics["eye_line_tilt_deg"], 0.0)
+        self.assertLess(metrics["eye_line_tilt_deg"], 30.0)
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = None
+        for sequence in range(1, 6):
+            timestamp = 15.0 + (sequence - 1) * 0.2
+            result = tracker.observe(
+                "frontal", outcome, frame, sequence, timestamp, now=timestamp,
+            )
+        self.assertEqual(result["status"], "CAPTURE_READY")
+        self.assertEqual(result["stable_count"], 5)
+
+    def test_mild_natural_head_tilt_calibrates_then_relative_left_pose_is_detected(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        tilted_frontal = FRONTAL_ROTATION @ axis_rotation(2, np.deg2rad(12.0))
+        result = None
+        for sequence in range(1, 6):
+            outcome = valid_outcome(tilted_frontal, sharpness=sequence)
+            points = projected_points(tilted_frontal)
+            outcome["face"]["keypoints"] = points.tolist()
+            pose = projected_head_pose(tilted_frontal)
+            outcome["face"]["head_pose"].update(
+                yaw=pose["yaw"], raw_yaw=pose["raw_yaw"],
+                pitch=pose["pitch"], raw_pitch=pose["raw_pitch"],
+            )
+            timestamp = 10.0 + (sequence - 1) * 0.2
+            result = tracker.observe("frontal", outcome, frame, sequence, timestamp, now=timestamp)
+        self.assertEqual(result["status"], "CAPTURE_READY")
+        self.assertLess(result["frontal_view"]["eye_line_tilt_deg"], 30.0)
+        tracker.capture_result(True, "left", now=11.0)
+
+        left_rotation = tilted_frontal @ axis_rotation(1, np.deg2rad(-24.0))
+        result = None
+        for sequence in range(6, 11):
+            timestamp = 11.2 + (sequence - 6) * 0.2
+            result = tracker.observe(
+                "left", valid_outcome(left_rotation, sharpness=sequence), frame,
+                sequence, timestamp, now=timestamp,
+            )
+        self.assertEqual(result["status"], "CAPTURE_READY")
+        self.assertEqual(result["detected_pose"], "left")
+
+    def test_five_frames_at_1_33_fps_fit_inside_twelve_second_window(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = None
+        for sequence in range(1, 6):
+            timestamp = (sequence - 1) * 0.75
+            result = tracker.observe(
+                "frontal", valid_outcome(FRONTAL_ROTATION, sharpness=sequence),
+                frame, sequence, timestamp, now=timestamp,
+            )
+        self.assertEqual(result["status"], "CAPTURE_READY")
+        self.assertEqual(result["stable_count"], 5)
+        self.assertAlmostEqual(result["candidate"]["captured_at"], 3.0, places=6)
+        self.assertGreaterEqual(result["inference_fps"], 1.33)
+        self.assertEqual(tracker.max_stability_deg, 8.0)
+        self.assertEqual(tracker.max_step_deg, 18.0)
+
+    def test_missing_frontal_landmarks_is_explicit_and_never_calibrates(self):
+        tracker = GuidedPoseTracker(stable_frames=2)
+        outcome = valid_outcome(FRONTAL_ROTATION)
+        outcome["face"].pop("keypoints")
+        result = tracker.observe("frontal", outcome, np.zeros((480, 640, 3), dtype=np.uint8),
+                                 1, 10.0, now=10.0)
+        self.assertEqual(result["status"], "POSE_NOT_READY")
+        self.assertEqual(result["stable_count"], 0)
+        self.assertIn("landmark", result["reason"].lower())
+
+    def test_timeout_pauses_auto_with_reason_and_reset_restarts_tracker(self):
         tracker = GuidedPoseTracker(stable_frames=2, pose_timeout_seconds=2.0)
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         first = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION),
@@ -172,8 +523,8 @@ class GuidedEnrollmentTests(unittest.TestCase):
         self.assertEqual(first["status"], "STABILIZING")
         timed_out = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION),
                                     frame, 2, 12.1, now=12.1)
-        self.assertEqual(timed_out["status"], "FALLBACK_MANUAL")
-        self.assertIn("did not stabilize", timed_out["reason"])
+        self.assertEqual(timed_out["status"], "AUTO_PAUSED")
+        self.assertIn("chưa đạt quality/hướng", timed_out["reason"])
         tracker.reset()
         restarted = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION),
                                     frame, 3, 13.0, now=13.0)
@@ -196,27 +547,28 @@ class GuidedEnrollmentTests(unittest.TestCase):
         self.assertAlmostEqual(np.linalg.det(average), 1.0, places=6)
         self.assertLess(np.linalg.norm(average.T @ average - np.eye(3)), 1e-6)
 
-    def test_tracker_uses_eight_fresh_stable_frames_and_selects_sharpest(self):
-        tracker = GuidedPoseTracker(stable_frames=8)
+    def test_tracker_uses_five_fresh_frames_within_three_seconds_and_selects_sharpest(self):
+        tracker = GuidedPoseTracker()
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         now = 100.0
         results = []
-        for sequence in range(1, 9):
-            captured_at = now + (sequence - 1) * 0.1
+        for sequence in range(1, 6):
+            captured_at = now + (sequence - 1) * 0.5  # 2 inference FPS, natural pauses.
             results.append(tracker.observe(
                 "frontal", valid_outcome(FRONTAL_ROTATION, sharpness=sequence),
                 frame, sequence, captured_at, now=captured_at,
             ))
-        self.assertEqual([item["status"] for item in results[:-1]], ["STABILIZING"] * 7)
+        self.assertEqual([item["status"] for item in results[:-1]], ["STABILIZING"] * 4)
         self.assertEqual(results[-1]["status"], "CAPTURE_READY")
-        self.assertEqual(results[-1]["candidate"]["sequence"], 8)
-        self.assertLessEqual(results[-1]["candidate"]["captured_at"] - 100.0, 1.0)
+        self.assertEqual(results[-1]["candidate"]["sequence"], 5)
+        self.assertLessEqual(results[-1]["candidate"]["captured_at"] - 100.0, 3.0)
         duplicate = tracker.observe(
             "frontal", valid_outcome(FRONTAL_ROTATION, sharpness=20),
-            frame, 9, 100.8, now=100.8,
+            frame, 5, 102.1, now=102.1,
         )
-        self.assertEqual(duplicate["status"], "CAPTURE_PENDING")
-        tracker.capture_result(True, "left", now=100.8)
+        self.assertEqual(duplicate["status"], "STALE_FRAME")
+        self.assertEqual(duplicate["stable_count"], 5)
+        tracker.capture_result(True, "left", now=102.1)
         self.assertEqual(tracker.stable_count, 0)
         self.assertEqual(tracker.expected_pose, "left")
 
@@ -248,27 +600,407 @@ class GuidedEnrollmentTests(unittest.TestCase):
         self.assertFalse(tracker.manual_fallback)
         self.assertEqual(tracker.expected_pose, "up")
 
-    def test_low_fps_does_not_relax_one_second_window_and_falls_back_with_reason(self):
-        tracker = GuidedPoseTracker(stable_frames=8, stability_window_seconds=1.0,
-                                    pose_timeout_seconds=25.0)
+    def test_low_fps_is_measured_and_reported_without_false_capture(self):
+        tracker = GuidedPoseTracker(pose_timeout_seconds=20.0)
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         results = []
-        for sequence in range(1, 128):
-            timestamp = 100.0 + (sequence - 1) * 0.2  # 5 fresh frames/s
+        for sequence in range(1, 16):
+            timestamp = (sequence - 1) * 4.0  # 0.25 FPS cannot fit 5 frames in 12s.
             result = tracker.observe(
-                "frontal", valid_outcome(FRONTAL_ROTATION, sharpness=sequence),
+                "frontal", pose_only_outcome(FRONTAL_ROTATION, sharpness=sequence),
                 frame, sequence, timestamp, now=timestamp,
             )
             results.append(result)
-            if result["status"] == "FALLBACK_MANUAL":
+            if result["status"] in {"AUTO_PAUSED", "CAPTURE_READY"}:
                 break
 
         self.assertFalse(any(item["status"] == "CAPTURE_READY" for item in results))
-        self.assertEqual(results[-1]["status"], "FALLBACK_MANUAL")
-        self.assertIn("window expired", results[-1]["reason"])
-        self.assertIn("7.0 fresh frames/s", results[-1]["reason"])
-        self.assertEqual(tracker.stable_frames, 8)
-        self.assertEqual(tracker.stability_window_seconds, 1.0)
+        self.assertTrue(any(item["status"] == "LOW_FPS" for item in results))
+        self.assertEqual(results[-1]["status"], "AUTO_PAUSED")
+        self.assertIn("FPS inference thấp", results[-1]["reason"])
+        self.assertAlmostEqual(results[-1]["inference_fps"], 0.25, places=2)
+        self.assertEqual(tracker.stable_frames, 5)
+        self.assertEqual(tracker.stability_window_seconds, 12.0)
+
+    def test_rate_below_five_in_custom_three_second_window_reports_required_fps(self):
+        tracker = GuidedPoseTracker(pose_timeout_seconds=20.0,
+                                    stability_window_seconds=3.0,
+                                    max_interframe_gap_seconds=3.0)
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        statuses = []
+        for sequence in range(1, 6):
+            timestamp = (sequence - 1) / 1.2
+            result = tracker.observe(
+                "frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                sequence, timestamp, now=timestamp,
+            )
+            statuses.append(result["status"])
+        self.assertIn("LOW_FPS", statuses)
+        self.assertNotIn("CAPTURE_READY", statuses)
+        self.assertAlmostEqual(tracker.inference_fps, 1.2, places=1)
+        reason = tracker._low_fps_reason(now=4.0)
+        self.assertIn("cần tối thiểu 1.3 FPS", reason)
+
+    def test_pose_only_tracking_finishes_at_cpu_fps_from_half_to_over_five(self):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        for fps in (0.5, 0.6, 0.8, 1.0, 1.5, 2.5, 6.0):
+            with self.subTest(fps=fps):
+                tracker = GuidedPoseTracker()
+                final = None
+                for sequence in range(1, 6):
+                    timestamp = (sequence - 1) / fps
+                    final = tracker.observe(
+                        "frontal", pose_only_outcome(FRONTAL_ROTATION, sequence),
+                        frame, sequence, timestamp, now=timestamp,
+                    )
+                self.assertEqual(final["status"], "CAPTURE_READY", final)
+                self.assertEqual(final["valid_frames"], 5)
+                self.assertEqual(final["candidate"]["sequence"], 5)
+                self.assertIsNone(final["candidate"]["embedding"])
+                self.assertLessEqual(
+                    final["candidate"]["captured_at"],
+                    GUIDED_POSE_STABILITY_WINDOW_SECONDS,
+                )
+                self.assertAlmostEqual(final["inference_fps"], fps, places=3)
+                self.assertGreater(final["time_remaining_seconds"], 0)
+
+    def test_six_tenths_fps_inference_does_not_make_fresh_observations_stale(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        results = []
+        start = 100.0
+        inference_seconds = 1.0 / 0.6
+        for sequence in range(1, 6):
+            captured_at = start + (sequence - 1) * inference_seconds
+            received_at = captured_at + 0.02
+            inference_finished_at = received_at + inference_seconds - 0.02
+            results.append(tracker.observe(
+                "frontal", pose_only_outcome(FRONTAL_ROTATION, sharpness=sequence),
+                frame, sequence, captured_at, now=inference_finished_at,
+                received_at=received_at,
+            ))
+
+        final = results[-1]
+        candidate = final["candidate"]
+        self.assertEqual(final["status"], "CAPTURE_READY", final)
+        self.assertAlmostEqual(final["inference_fps"], 0.6, places=2)
+        self.assertGreater(final["candidate"]["sequence"], 0)
+        self.assertGreater(
+            final["candidate"]["received_at"] - final["candidate"]["captured_at"], -0.1
+        )
+        # The selected camera frame is over the recognition stale limit by the
+        # time inference finishes, but was fresh when the worker received it.
+        self.assertGreater(
+            results[-1]["candidate"]["received_at"] + inference_seconds
+            - results[-1]["candidate"]["captured_at"],
+            tracker.stale_seconds,
+        )
+        self.assertTrue(tracker.candidate_is_fresh(candidate))
+        selected_embedding = np.eye(1, 512, 0, dtype=np.float32).reshape(-1)
+        selected = valid_outcome(FRONTAL_ROTATION, embedding=selected_embedding)
+        self.assertEqual(
+            tracker.validate_selected_candidate(candidate, selected, "frontal")["status"],
+            "OK",
+        )
+
+    def test_packet_already_stale_at_worker_intake_is_not_counted(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = tracker.observe(
+            "frontal", pose_only_outcome(FRONTAL_ROTATION), frame, 1,
+            captured_at=10.0, received_at=10.0 + tracker.stale_seconds + 0.01,
+            now=12.0,
+        )
+        self.assertEqual(result["status"], "STALE_FRAME")
+        self.assertEqual(result["stable_count"], 0)
+
+    def test_pose_only_five_pose_run_extracts_and_keeps_exactly_five_embeddings(self):
+        tracker = GuidedPoseTracker()
+        state = EnrollmentCaptureState(same_person_threshold=0.45)
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        vector = np.eye(1, 512, 0, dtype=np.float32).reshape(-1)
+        sequence = 0
+        now = 0.0
+        selected_sequences = []
+        for pose in POSES:
+            result = None
+            for index in range(5):
+                sequence += 1
+                now += 0.4
+                result = tracker.observe(
+                    pose, pose_only_outcome(POSE_ROTATIONS[pose], 20 + index),
+                    frame, sequence, now, now=now,
+                )
+            self.assertEqual(result["status"], "CAPTURE_READY", (pose, result))
+            candidate = result["candidate"]
+            selected_sequences.append(candidate["sequence"])
+            selected = valid_outcome(POSE_ROTATIONS[pose], 20 + sequence, embedding=vector)
+            verification = tracker.validate_selected_candidate(candidate, selected, pose)
+            self.assertEqual(verification["status"], "OK", verification)
+            selected = {**selected, "embedding": verification["embedding"]}
+            state.capture(selected)
+            tracker.capture_result(True, state.current_pose, now=now,
+                                   embedding=state.embeddings[pose])
+        self.assertTrue(state.complete)
+        self.assertTrue(state.validate_complete()["valid"])
+        self.assertEqual(len(state.embeddings), 5)
+        self.assertEqual(len(set(selected_sequences)), 5)
+
+    def test_selected_embedding_recheck_rejects_wrong_pose_and_other_person(self):
+        tracker = GuidedPoseTracker(stable_frames=2)
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = None
+        for sequence in range(1, 3):
+            timestamp = sequence * 0.2
+            result = tracker.observe(
+                "frontal", pose_only_outcome(FRONTAL_ROTATION), frame,
+                sequence, timestamp, now=timestamp,
+            )
+        candidate = result["candidate"]
+        wrong = valid_outcome(POSE_ROTATIONS["left"])
+        rejected = tracker.validate_selected_candidate(candidate, wrong, "frontal")
+        self.assertEqual(rejected["code"], "POSE CHANGED")
+        correct = valid_outcome(FRONTAL_ROTATION)
+        checked = tracker.validate_selected_candidate(candidate, correct, "frontal")
+        self.assertEqual(checked["status"], "OK")
+        tracker.capture_result(True, "left", now=1.0, embedding=checked["embedding"])
+        other = np.eye(1, 512, 1, dtype=np.float32).reshape(-1)
+        right_result = None
+        for sequence in range(3, 5):
+            timestamp = sequence * 0.2
+            right_result = tracker.observe(
+                "left", pose_only_outcome(POSE_ROTATIONS["left"]), frame,
+                sequence, timestamp, now=timestamp,
+            )
+        self.assertEqual(right_result["status"], "CAPTURE_READY")
+        impostor = valid_outcome(POSE_ROTATIONS["left"], embedding=other)
+        rejected = tracker.validate_selected_candidate(
+            right_result["candidate"], impostor, "left"
+        )
+        self.assertEqual(rejected["code"], "SAME PERSON")
+
+    def test_small_pose_jitter_within_eight_degrees_captures_five_frames(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        results = []
+        for sequence, offset in enumerate((-3.5, -1.75, 0.0, 1.75, 3.5), start=1):
+            rotation = FRONTAL_ROTATION @ axis_rotation(1, np.deg2rad(offset))
+            results.append(tracker.observe(
+                "frontal", valid_outcome(rotation, sharpness=sequence), frame,
+                sequence, 20.0 + (sequence - 1) * 0.5,
+                now=20.0 + (sequence - 1) * 0.5,
+            ))
+        self.assertEqual(results[-1]["status"], "CAPTURE_READY")
+        spread = max(rotation_distance_degrees(a["rotation"], b["rotation"])
+                     for i, a in enumerate(tracker.window)
+                     for b in tracker.window[i + 1:])
+        self.assertLessEqual(spread, 8.0)
+
+    def test_jitter_over_eight_degrees_trims_old_cluster_without_full_reset(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = None
+        for sequence, offset in enumerate((-4.5, -2.0, 0.0, 2.0, 4.5), start=1):
+            rotation = FRONTAL_ROTATION @ axis_rotation(1, np.deg2rad(offset))
+            result = tracker.observe(
+                "frontal", valid_outcome(rotation, sharpness=sequence), frame,
+                sequence, 30.0 + (sequence - 1) * 0.4,
+                now=30.0 + (sequence - 1) * 0.4,
+            )
+        self.assertEqual(result["status"], "STABILIZING")
+        self.assertGreater(result["stable_count"], 1)
+        self.assertIn("bỏ frame", result["reason"])
+
+    def test_single_angular_step_over_eighteen_degrees_reseeds_candidate_window(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                        1, 35.0, now=35.0)
+        moved = FRONTAL_ROTATION @ axis_rotation(1, np.deg2rad(19.0))
+        result = tracker.observe("frontal", valid_outcome(moved), frame,
+                                 2, 35.2, now=35.2)
+        self.assertEqual(result["status"], "STABILIZING")
+        self.assertEqual(result["stable_count"], 1)
+        self.assertIn("18.0°", result["reason"])
+
+    def test_short_blur_and_stale_gaps_do_not_count_or_clear_good_candidates(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        first = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                                1, 40.0, now=40.0)
+        self.assertEqual(first["stable_count"], 1)
+        blur = tracker.observe("frontal", {"status": "RETRY", "code": "TOO BLURRY",
+                                            "reason": "Ảnh bị mờ"}, frame,
+                              2, 40.25, now=40.25)
+        self.assertEqual(blur["status"], "QUALITY_REJECTED")
+        self.assertEqual(blur["stable_count"], 1)
+        stale = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                                3, 39.0, now=40.5)
+        self.assertEqual(stale["status"], "STALE_FRAME")
+        self.assertEqual(stale["stable_count"], 1)
+        result = None
+        for sequence, timestamp in ((4, 40.75), (5, 41.25), (6, 41.75), (7, 42.25)):
+            result = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                                     sequence, timestamp, now=timestamp)
+        self.assertEqual(result["status"], "CAPTURE_READY")
+
+    def test_duplicate_sequence_is_ignored_and_does_not_advance_stability(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        first = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                                1, 50.0, now=50.0)
+        duplicate = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                                    1, 50.1, now=50.1)
+        self.assertEqual(first["stable_count"], 1)
+        self.assertEqual(duplicate["status"], "STALE_FRAME")
+        self.assertEqual(duplicate["stable_count"], 1)
+
+    def test_nonincreasing_capture_timestamp_is_rejected_as_duplicate(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                        1, 55.0, now=55.0)
+        duplicate = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                                    2, 55.0, now=55.2)
+        self.assertEqual(duplicate["status"], "STALE_FRAME")
+        self.assertIn("frame trùng", duplicate["reason"])
+        self.assertEqual(duplicate["stable_count"], 1)
+
+    def test_multiple_faces_clear_window_and_never_count_as_sample(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                        1, 60.0, now=60.0)
+        multiple = valid_outcome(FRONTAL_ROTATION)
+        multiple["face_count"] = None
+        multiple["faces"] = [{"bbox": [20, 20, 80, 90]}, {"bbox": [100, 20, 160, 90]}]
+        result = tracker.observe("frontal", multiple, frame, 2, 60.2, now=60.2)
+        self.assertEqual(result["status"], "QUALITY_REJECTED")
+        self.assertEqual(result["rejected_code"], "MULTIPLE FACES")
+        self.assertEqual(result["stable_count"], 0)
+
+    def test_wrong_pose_is_reported_and_correct_next_pose_is_captured(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = None
+        for sequence in range(1, 6):
+            timestamp = 70.0 + (sequence - 1) * 0.2
+            result = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                                     sequence, timestamp, now=timestamp)
+        self.assertEqual(result["status"], "CAPTURE_READY")
+        tracker.capture_result(True, "left", now=70.9)
+        wrong = tracker.observe("left", valid_outcome(POSE_ROTATIONS["right"]), frame,
+                                6, 71.0, now=71.0)
+        self.assertEqual(wrong["status"], "WRONG_POSE")
+        self.assertEqual(wrong["detected_pose"], "right")
+        self.assertIn("Sai hướng", wrong["reason"])
+        result = None
+        for sequence in range(7, 12):
+            timestamp = 71.2 + (sequence - 7) * 0.2
+            result = tracker.observe("left", valid_outcome(POSE_ROTATIONS["left"]), frame,
+                                     sequence, timestamp, now=timestamp)
+        self.assertEqual(result["status"], "CAPTURE_READY")
+
+    def test_different_person_embedding_is_rejected_after_frontal_reference(self):
+        tracker = GuidedPoseTracker()
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        result = None
+        for sequence in range(1, 6):
+            timestamp = 80.0 + (sequence - 1) * 0.2
+            result = tracker.observe("frontal", valid_outcome(FRONTAL_ROTATION), frame,
+                                     sequence, timestamp, now=timestamp)
+        tracker.capture_result(True, "left", now=80.9)
+        other = np.zeros(512, dtype=np.float32)
+        other[1] = 1.0
+        result = tracker.observe("left", valid_outcome(POSE_ROTATIONS["left"],
+                                                        embedding=other), frame,
+                                 6, 81.0, now=81.0)
+        self.assertEqual(result["status"], "IDENTITY_MISMATCH")
+        self.assertEqual(result["stable_count"], 0)
+
+    def test_gui_shows_wrong_direction_and_low_fps_reasons(self):
+        gui = AI1Gui.__new__(AI1Gui)
+        gui.enrollment = {"mode": "AUTO", "state": EnrollmentCaptureState(),
+                          "fallback_reason": None}
+        gui.pose_var = _Var()
+        gui.detected_pose_var = _Var()
+        gui.enrollment_mode_var = _Var()
+        gui.quality_var = _Var()
+        gui.auto_status_var = _Var()
+        gui.capture_hint_var = _Var()
+        gui.capture_feedback = None
+        gui.state_var = _Var()
+        gui.preview_hint = _Var()
+        gui.sharpness_var = _Var()
+        gui.progress_var = _Var()
+        gui.enrollment_progress_var = _Var()
+        gui.latest_analysis = {}
+        gui._update_pose_ring = lambda *_args: None
+        common = {
+            "mode": "AUTO", "current_pose": "left", "captured": 0,
+            "detected_pose": "right", "expected_pose": "left", "code": "OK",
+            "quality_status": "PASS", "stable_count": 2,
+            "diagnostics": {"quality_result": "PASS", "quality_code": "PASS"},
+        }
+        gui._show_enrollment_progress({
+            **common, "auto_status": "WRONG_POSE",
+            "reason": "Sai hướng: yêu cầu left, hiện phát hiện right.",
+        })
+        self.assertIn("Sai hướng", gui.capture_hint_var.get())
+        self.assertIn("SAI HƯỚNG", gui.state_var.get())
+        gui._show_enrollment_progress({
+            **common, "auto_status": "LOW_FPS", "inference_fps": 0.8,
+            "reason": "FPS inference thấp: 0.8 FPS; cần tối thiểu 1.1 FPS.",
+        })
+        self.assertIn("FPS inference thấp", gui.capture_hint_var.get())
+        self.assertIn("0.8 FPS", gui.auto_status_var.get())
+
+    def test_auto_timeout_requires_an_explicit_manual_mode_selection(self):
+        class _Widget:
+            def configure(self, **values):
+                self.values = values
+
+        gui = AI1Gui.__new__(AI1Gui)
+        gui.active_operation = "enrollment"
+        gui.enrollment = {"mode": "AUTO", "auto_paused": True,
+                          "fallback_reason": "per-pose timeout", "requests": queue.Queue()}
+        gui.enrollment_mode_var = _Var()
+        gui.enrollment_mode_var.value = "AUTO"
+        gui.register_button = _Widget()
+        gui.retake_button = _Widget()
+        gui._sync_enrollment_start_button()
+        self.assertEqual(gui.enrollment["mode"], "AUTO")
+        self.assertTrue(gui.enrollment["requests"].empty())
+
+        gui.enrollment_mode_var.value = "MANUAL"
+        gui._sync_enrollment_start_button()
+        self.assertEqual(gui.enrollment["mode"], "MANUAL")
+        self.assertEqual(gui.enrollment["requests"].get_nowait(), {"action": "select_manual"})
+
+    def test_full_five_pose_auto_run_keeps_one_512d_embedding_per_pose(self):
+        tracker = GuidedPoseTracker(stable_frames=3)
+        enrollment = EnrollmentCaptureState(same_person_threshold=0.45)
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        sequence = 0
+        now = 90.0
+        for expected in POSES:
+            for index in range(3):
+                sequence += 1
+                timestamp = now + index * 0.2
+                result = tracker.observe(
+                    expected, valid_outcome(POSE_ROTATIONS[expected], sharpness=20 + index),
+                    frame, sequence, timestamp, now=timestamp,
+                )
+            self.assertEqual(result["status"], "CAPTURE_READY")
+            enrollment.capture(result["candidate"]["outcome"])
+            tracker.capture_result(True, enrollment.current_pose, now=timestamp)
+            now = timestamp + 0.2
+        self.assertEqual(set(enrollment.embeddings), set(POSES))
+        self.assertEqual(len(enrollment.embeddings), 5)
+        for vector in enrollment.embeddings.values():
+            self.assertEqual(vector.shape, (512,))
+            self.assertTrue(np.all(np.isfinite(vector)))
+            self.assertAlmostEqual(float(np.linalg.norm(vector)), 1.0, places=5)
 
     def test_bad_quality_stale_and_unreliable_pose_do_not_auto_capture(self):
         tracker = GuidedPoseTracker(stable_frames=2, unreliable_frame_limit=3)
@@ -284,14 +1016,15 @@ class GuidedEnrollmentTests(unittest.TestCase):
             now - 2.0, now=now,
         )
         self.assertEqual(stale["status"], "STALE_FRAME")
-        missing_pose = {"status": "OK", "face": {"head_pose": None},
-                        "quality": {"sharpness": 40.0}}
+        missing_pose = {"status": "OK", "face": {"bbox": [200, 100, 440, 380], "head_pose": None},
+                        "embedding": np.eye(1, 512, 0, dtype=np.float32).reshape(-1),
+                        "face_count": 1, "quality": {"sharpness": 40.0}}
         self.assertEqual(tracker.observe("frontal", missing_pose, frame, 3, now,
                                          now=now)["status"], "POSE_UNRELIABLE")
         self.assertEqual(tracker.observe("frontal", missing_pose, frame, 4, now,
                                          now=now)["status"], "POSE_UNRELIABLE")
         fallback = tracker.observe("frontal", missing_pose, frame, 5, now, now=now)
-        self.assertEqual(fallback["status"], "FALLBACK_MANUAL")
+        self.assertEqual(fallback["status"], "AUTO_PAUSED")
 
     def test_complete_auto_sequence_captures_exactly_five_compatible_samples(self):
         tracker = GuidedPoseTracker(stable_frames=3)
@@ -400,19 +1133,27 @@ class GuidedEnrollmentTests(unittest.TestCase):
         self.assertEqual(rendered.shape, frame.shape)
         self.assertTrue(np.any(rendered != frame))
 
-    def test_auto_gui_worker_captures_five_poses_without_space_requests(self):
+    def test_auto_gui_worker_captures_five_poses_without_space_at_point_six_fps(self):
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        clock = [100.0]
+        start_time = clock[0]
+        inference_seconds = 1.0 / 0.6
+        stop_event = __import__("threading").Event()
 
         class FakeController:
             engine = object()
 
             def __init__(self):
                 self.sequence = 0
+                self.last_capture_at = 0.0
 
             def get_packet(self):
                 self.sequence += 1
+                if self.sequence > 100:
+                    stop_event.set()
+                self.last_capture_at = max(clock[0], self.last_capture_at + 1e-6)
                 return SimpleNamespace(sequence=self.sequence,
-                                       captured_at=time.monotonic(), frame=frame)
+                                       captured_at=self.last_capture_at, frame=frame)
 
             @staticmethod
             def find_duplicate_employee(*_args, **_kwargs):
@@ -439,17 +1180,28 @@ class GuidedEnrollmentTests(unittest.TestCase):
             gui.enrollment = session
 
             def fake_validate(_engine, _frame, pose, **_kwargs):
+                clock[0] += inference_seconds
                 return valid_outcome(POSE_ROTATIONS[pose], sharpness=20 + POSES.index(pose),
                                      embedding=vector)
 
-            with patch("ai1_gui_core.gui.validate_enrollment_frame", side_effect=fake_validate), \
-                    patch("ai1_gui_core.gui._atomic_write_jpeg"):
-                result = gui._enrollment_worker("test", __import__("threading").Event())
+            def fake_pose_validate(_engine, _frame, pose):
+                clock[0] += inference_seconds
+                return pose_only_outcome(POSE_ROTATIONS[pose],
+                                         sharpness=20 + POSES.index(pose))
+
+            with patch("ai1_gui_core.gui.time.monotonic", side_effect=lambda: clock[0]), \
+                    patch("ai1_gui_core.gui.validate_enrollment_frame", side_effect=fake_validate), \
+                    patch("ai1_gui_core.gui.validate_enrollment_pose_frame",
+                          side_effect=fake_pose_validate), \
+                    patch("ai1_gui_core.gui._atomic_write_jpeg") as write_jpeg:
+                result = gui._enrollment_worker("test", stop_event)
 
         self.assertEqual(result["status"], "READY_TO_SAVE")
         self.assertTrue(result["state"].complete)
         self.assertEqual(set(result["state"].embeddings), set(POSES))
-        self.assertEqual(gui.controller.sequence, len(POSES) * 8)
+        self.assertEqual(set(session["frames"]), set(POSES))
+        self.assertEqual(write_jpeg.call_count, 5)
+        self.assertEqual(gui.controller.sequence, len(POSES) * 5)
         captured_events = []
         reset_events = 0
         progress_counts = []
@@ -468,6 +1220,7 @@ class GuidedEnrollmentTests(unittest.TestCase):
         self.assertEqual(captured_events, list(POSES))
         self.assertEqual(reset_events, 1)
         self.assertEqual(progress_counts[-1], 4)
+        self.assertGreater(clock[0] - start_time, 25.0)
 
 
 if __name__ == "__main__":

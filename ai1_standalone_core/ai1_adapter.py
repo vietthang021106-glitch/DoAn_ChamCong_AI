@@ -13,6 +13,7 @@ from .config import (
     ENROLLMENT_CENTER_TOLERANCE,
     ENROLLMENT_EDGE_MARGIN_RATIO,
     ENROLLMENT_MAX_SIZE_RATIO,
+    ENROLLMENT_PRIMARY_FACE_MIN_AREA_RATIO,
     POSE_FRONTAL_PITCH_MAX_DEG,
     POSE_FRONTAL_YAW_MAX_DEG,
     POSE_ENROLLMENT_HYSTERESIS_DEG,
@@ -207,7 +208,66 @@ def enrollment_debug_metrics(frame, face, expected_pose, quality=None, face_coun
     return diagnostics
 
 
-def extract_single_face_embedding(engine, frame, *, include_low_confidence=False):
+def _face_bbox_area(face):
+    try:
+        box = np.asarray(face.get("bbox"), dtype=np.float64).reshape(-1)
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+    if box.size != 4 or not np.all(np.isfinite(box)):
+        return 0.0
+    width, height = box[2] - box[0], box[3] - box[1]
+    return float(width * height) if width > 0 and height > 0 else 0.0
+
+
+def _bbox_iou(first, second):
+    try:
+        a = np.asarray(first.get("bbox"), dtype=np.float64).reshape(-1)
+        b = np.asarray(second.get("bbox"), dtype=np.float64).reshape(-1)
+    except (AttributeError, TypeError, ValueError):
+        return 0.0
+    if (a.size != 4 or b.size != 4 or not np.all(np.isfinite(a))
+            or not np.all(np.isfinite(b))):
+        return 0.0
+    intersection = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(
+        0.0, min(a[3], b[3]) - max(a[1], b[1])
+    )
+    area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+    area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+    union = area_a + area_b - intersection
+    return float(intersection / union) if union > 0 else 0.0
+
+
+def select_primary_face(faces, *, min_area_ratio=ENROLLMENT_PRIMARY_FACE_MIN_AREA_RATIO):
+    """Select only an unambiguous, area-dominant candidate from SCRFD results.
+
+    This selects a candidate, not an enrollment approval: the caller must still
+    apply the existing detection, size, position, brightness, sharpness and pose
+    checks before marking it safe for tracking/capture.
+    """
+    candidates = [face for face in (faces or []) if isinstance(face, dict)]
+    if not candidates:
+        return None, 0.0, False, "NO FACE"
+    ranked = sorted(candidates, key=_face_bbox_area, reverse=True)
+    largest_area = _face_bbox_area(ranked[0])
+    if largest_area <= 0.0:
+        return None, 0.0, False, "INVALID FACE BBOX"
+    if len(ranked) == 1:
+        return ranked[0], float("inf"), True, "OK"
+    second_area = _face_bbox_area(ranked[1])
+    ratio = largest_area / second_area if second_area > 0 else float("inf")
+    try:
+        required_ratio = float(min_area_ratio)
+    except (TypeError, ValueError):
+        required_ratio = ENROLLMENT_PRIMARY_FACE_MIN_AREA_RATIO
+    if not np.isfinite(required_ratio) or required_ratio < 1.0:
+        required_ratio = ENROLLMENT_PRIMARY_FACE_MIN_AREA_RATIO
+    if ratio < required_ratio:
+        return ranked[0], ratio, False, "MULTIPLE FACES"
+    return ranked[0], ratio, True, "OK"
+
+
+def extract_single_face_embedding(engine, frame, *, include_low_confidence=False,
+                                  selected_primary_face=None):
     """Extract one validated, L2-normalized 512D production ArcFace vector."""
     started = time.perf_counter()
     try:
@@ -225,11 +285,35 @@ def extract_single_face_embedding(engine, frame, *, include_low_confidence=False
         return {"status": "RETRY", "code": "NO FACE", "reason": "NO FACE",
                 "embedding": None, "face": None, "faces": [], "face_count": 0,
                 "latency_ms": latency}
-    if len(faces) != 1:
-        return {"status": "RETRY", "code": "MULTIPLE FACES", "reason": "MULTIPLE FACES",
-                "embedding": None, "face": faces[0], "faces": faces,
-                "face_count": len(faces), "latency_ms": latency}
-    face = faces[0]
+    total_face_count = len(faces)
+    if selected_primary_face is not None:
+        face, area_ratio, dominant, selection_code = select_primary_face(faces)
+        if face is None or not dominant:
+            return {"status": "RETRY", "code": selection_code,
+                    "reason": ("Có nhiều khuôn mặt gần bằng kích thước; vui lòng đứng một mình."
+                               if selection_code == "MULTIPLE FACES" else selection_code),
+                    "embedding": None, "face": face, "faces": faces,
+                    "face_count": total_face_count, "total_face_count": total_face_count,
+                    "primary_face_safe": False, "latency_ms": latency}
+        if _bbox_iou(face, selected_primary_face) < 0.50:
+            return {"status": "RETRY", "code": "PRIMARY_FACE_CHANGED",
+                    "reason": "Khuôn mặt chính đã thay đổi trong lúc kiểm tra mẫu.",
+                    "embedding": None, "face": face, "faces": faces,
+                    "face_count": total_face_count, "total_face_count": total_face_count,
+                    "primary_face_safe": False, "latency_ms": latency}
+    elif total_face_count != 1:
+        face, area_ratio, dominant, selection_code = select_primary_face(faces)
+        return {"status": "RETRY", "code": "MULTIPLE FACES",
+                "reason": "AUTO chưa gắn được khuôn mặt này với ứng viên đã theo dõi.",
+                "embedding": None, "face": face, "faces": faces,
+                "face_count": total_face_count, "total_face_count": total_face_count,
+                "primary_face_safe": False, "latency_ms": latency}
+    else:
+        face, area_ratio, dominant, selection_code = select_primary_face(faces)
+    if face is None:
+        return {"status": "RETRY", "code": "NO FACE", "reason": "NO FACE",
+                "embedding": None, "face": None, "faces": [],
+                "face_count": 0, "total_face_count": 0, "latency_ms": latency}
     try:
         detection_score = float(face.get("detection_score"))
         if not np.isfinite(detection_score) or detection_score < production_face_engine.DETECTION_MIN_SCORE:
@@ -237,30 +321,42 @@ def extract_single_face_embedding(engine, frame, *, include_low_confidence=False
                     "reason": (f"Detection confidence {detection_score:.3f} is below "
                               f"{production_face_engine.DETECTION_MIN_SCORE:.2f}."),
                     "embedding": None, "face": face, "faces": faces,
-                    "face_count": 1, "latency_ms": latency}
+                    "face_count": total_face_count, "total_face_count": total_face_count,
+                    "selected_primary_face": face, "primary_face_safe": total_face_count == 1 or selected_primary_face is not None,
+                    "primary_face_area_ratio": area_ratio, "latency_ms": latency}
         embedding = face_matching.normalize_embedding(face.get("embedding"), EMBEDDING_DIMENSIONS)
     except (TypeError, ValueError) as exc:
         return {"status": "RETRY", "code": "INVALID EMBEDDING", "reason": str(exc),
                 "embedding": None, "face": face, "faces": faces,
-                "face_count": 1, "latency_ms": latency}
+                "face_count": total_face_count, "total_face_count": total_face_count,
+                "selected_primary_face": face, "primary_face_safe": total_face_count == 1 or selected_primary_face is not None,
+                "primary_face_area_ratio": area_ratio, "latency_ms": latency}
     return {"status": "OK", "code": "OK", "reason": "Valid ArcFace embedding.",
             "embedding": embedding, "face": face, "faces": faces,
-            "face_count": 1, "latency_ms": latency}
+            "face_count": total_face_count, "total_face_count": total_face_count,
+            "selected_primary_face": face, "primary_face_safe": total_face_count == 1 or selected_primary_face is not None,
+            "primary_face_area_ratio": area_ratio, "latency_ms": latency}
 
 
-def validate_enrollment_frame(engine, frame, expected_pose, *, enforce_pose=True):
+def validate_enrollment_frame(engine, frame, expected_pose, *, enforce_pose=True,
+                              selected_primary_face=None):
     """Validate enrollment image quality while keeping pose data diagnostic-only.
 
     The desktop GUI can disable the pose gate for manual capture because
     solvePnP can be noisy on ordinary webcams. The default keeps the legacy
     pose check for other standalone callers.
     """
-    extracted = extract_single_face_embedding(engine, frame, include_low_confidence=True)
+    extracted = extract_single_face_embedding(
+        engine, frame, include_low_confidence=True,
+        selected_primary_face=selected_primary_face,
+    )
     if extracted["status"] != "OK":
+        extracted = {**extracted, "primary_face_safe": False}
         face = extracted.get("face")
         quality = {"ready": False, "instruction": extracted.get("reason", extracted.get("code"))}
         diagnostics = enrollment_debug_metrics(
-            frame, face, expected_pose, quality=quality, face_count=extracted.get("face_count")
+            frame, face, expected_pose, quality=quality,
+            face_count=extracted.get("total_face_count", extracted.get("face_count"))
         )
         diagnostics["quality_code"] = extracted.get("code", "QUALITY CHECK")
         return {**extracted, "expected_pose": expected_pose,
@@ -274,8 +370,9 @@ def validate_enrollment_frame(engine, frame, expected_pose, *, enforce_pose=True
     )
     raw_pose = classify_pose(face)
     detected_pose = classify_enrollment_pose(face, expected_pose)
+    total_face_count = int(extracted.get("total_face_count", extracted.get("face_count", 1)))
     diagnostics = enrollment_debug_metrics(
-        frame, face, expected_pose, quality=quality, face_count=1
+        frame, face, expected_pose, quality=quality, face_count=total_face_count
     )
     diagnostics["raw_pose_classification"] = raw_pose
     diagnostics["detected_pose"] = detected_pose
@@ -284,7 +381,7 @@ def validate_enrollment_frame(engine, frame, expected_pose, *, enforce_pose=True
         code = _quality_failure_code(quality, face)
         diagnostics["quality_code"] = code
         return {**extracted, "status": "RETRY", "code": code, "reason": message,
-                "quality": quality, "detected_pose": detected_pose,
+                "primary_face_safe": False, "quality": quality, "detected_pose": detected_pose,
                 "expected_pose": expected_pose, "diagnostics": diagnostics}
     if enforce_pose and detected_pose != expected_pose:
         pose = face.get("head_pose") or {}
@@ -330,23 +427,39 @@ def validate_enrollment_pose_frame(engine, frame, expected_pose):
                 "expected_pose": expected_pose, "latency_ms": latency,
                 "diagnostics": {"face_count": 0, "quality_result": "FAIL",
                                 "quality_code": "NO FACE"}}
-    if len(faces) != 1:
-        return {"status": "RETRY", "code": "MULTIPLE FACES",
-                "reason": "Chỉ được có đúng một khuôn mặt trong khung.",
-                "embedding": None, "face": faces[0], "faces": faces,
-                "face_count": len(faces), "expected_pose": expected_pose,
-                "latency_ms": latency,
-                "diagnostics": {"face_count": len(faces), "quality_result": "FAIL",
-                                "quality_code": "MULTIPLE FACES"}}
-
-    face = faces[0]
+    total_face_count = len(faces)
+    face, area_ratio, dominant, selection_code = select_primary_face(faces)
+    if face is None:
+        return {"status": "RETRY", "code": "NO FACE", "reason": "NO FACE",
+                "embedding": None, "face": None, "faces": [], "face_count": 0,
+                "total_face_count": 0, "primary_face_safe": False,
+                "expected_pose": expected_pose, "latency_ms": latency,
+                "diagnostics": {"face_count": 0, "total_face_count": 0,
+                                "quality_result": "FAIL", "quality_code": "NO FACE"}}
+    if not dominant:
+        ratio_text = (f" Tỉ lệ diện tích mặt lớn nhất/mặt thứ hai là {area_ratio:.2f}; "
+                      f"cần tối thiểu {ENROLLMENT_PRIMARY_FACE_MIN_AREA_RATIO:.2f}."
+                      if np.isfinite(area_ratio) else "")
+        reason = ("AI phát hiện nhiều khuôn mặt và chưa xác định được mặt chính an toàn."
+                  + ratio_text + " Vui lòng điều chỉnh khung hình để chỉ còn một người rõ ràng.")
+        return {"status": "RETRY", "code": "MULTIPLE FACES", "reason": reason,
+                "embedding": None, "face": face, "faces": faces,
+                "face_count": total_face_count, "total_face_count": total_face_count,
+                "primary_face_safe": False, "primary_face_area_ratio": area_ratio,
+                "primary_face_area_ratio_required": ENROLLMENT_PRIMARY_FACE_MIN_AREA_RATIO,
+                "expected_pose": expected_pose, "latency_ms": latency,
+                "diagnostics": {"face_count": total_face_count,
+                                "total_face_count": total_face_count,
+                                "primary_face_area_ratio": area_ratio,
+                                "primary_face_area_ratio_required": ENROLLMENT_PRIMARY_FACE_MIN_AREA_RATIO,
+                                "quality_result": "FAIL", "quality_code": "MULTIPLE FACES"}}
     quality = production_face_engine.assess_capture_quality(
         frame, face, center_tolerance=ENROLLMENT_CENTER_TOLERANCE,
         max_size_ratio=ENROLLMENT_MAX_SIZE_RATIO,
         edge_margin_ratio=ENROLLMENT_EDGE_MARGIN_RATIO,
     )
     diagnostics = enrollment_debug_metrics(frame, face, expected_pose,
-                                           quality=quality, face_count=1)
+                                           quality=quality, face_count=total_face_count)
     diagnostics["quality_code"] = "PASS" if quality.get("ready") else _quality_failure_code(quality, face)
     diagnostics["detected_pose"] = classify_enrollment_pose(face, expected_pose)
     code = "OK" if quality.get("ready") else diagnostics["quality_code"]
@@ -358,7 +471,15 @@ def validate_enrollment_pose_frame(engine, frame, expected_pose):
         "embedding": None,
         "face": face,
         "faces": faces,
-        "face_count": 1,
+        "face_count": total_face_count,
+        "total_face_count": total_face_count,
+        # Selection safety describes whether SCRFD can track one unambiguous
+        # primary candidate. Capture readiness remains exclusively in status/
+        # quality, so a neutral guidance outline never implies a valid sample.
+        "selected_primary_face": face,
+        "primary_face_safe": True,
+        "primary_face_area_ratio": area_ratio,
+        "primary_face_area_ratio_required": ENROLLMENT_PRIMARY_FACE_MIN_AREA_RATIO,
         "quality": quality,
         "diagnostics": diagnostics,
         "detected_pose": diagnostics["detected_pose"],

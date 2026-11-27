@@ -76,3 +76,6 @@ GUIDED_VERTICAL_CROSS_AXIS_MAX_DEG = 14.0
 ENROLLMENT_CENTER_TOLERANCE = (0.60, 0.55)
 ENROLLMENT_MAX_SIZE_RATIO = (1.35, 1.20)
 ENROLLMENT_EDGE_MARGIN_RATIO = 0.04
+# Multiple-face AUTO frames are usable only when the largest face is clearly
+# dominant. Quality, pose, freshness and identity checks remain mandatory.
+ENROLLMENT_PRIMARY_FACE_MIN_AREA_RATIO = 2.0

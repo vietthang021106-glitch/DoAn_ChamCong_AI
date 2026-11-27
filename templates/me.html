@@ -124,8 +124,8 @@
     </div>
   </div>
 
-  <!-- TWO-COL: Health + Alerts -->
-  <div style="display:grid; grid-template-columns:1fr 1fr; gap:20px;" class="me-bottom">
+  <!-- Health history -->
+  <div style="display:grid; grid-template-columns:1fr; gap:20px;" class="me-bottom">
 
     <!-- Sức khỏe gần đây -->
     <div class="panel">
@@ -143,28 +143,6 @@
             </tr>
           </thead>
           <tbody id="health-tbody">
-            <tr><td colspan="3" class="td-empty">Đang tải...</td></tr>
-          </tbody>
-        </table>
-      </div>
-    </div>
-
-    <!-- Cảnh báo của tôi -->
-    <div class="panel">
-      <div class="panel-header">
-        <span class="panel-title">Cảnh báo của tôi</span>
-        <span class="panel-badge">Gần nhất</span>
-      </div>
-      <div style="max-height:240px; overflow-y:auto;">
-        <table class="data-table" id="alert-table">
-          <thead>
-            <tr>
-              <th>Loại</th>
-              <th>Mô tả</th>
-              <th>Thời gian</th>
-            </tr>
-          </thead>
-          <tbody id="alert-tbody">
             <tr><td colspan="3" class="td-empty">Đang tải...</td></tr>
           </tbody>
         </table>
@@ -362,36 +340,6 @@ async function loadHealth() {
 }
 
 /* ============================================================
-   FETCH: Alerts (personal)
-============================================================ */
-async function loadAlerts() {
-  try {
-    const res  = await fetch('/api/me/alerts');
-    if (!res.ok) return;
-    const data = await res.json();
-    const tbody = document.getElementById('alert-tbody');
-
-    if (!data.length) {
-      tbody.innerHTML = '<tr><td colspan="3" class="td-empty">Không có cảnh báo</td></tr>';
-      return;
-    }
-    tbody.innerHTML = data.map(r => {
-      const loai = (r.LoaiCanhBao || '').toLowerCase();
-      const cls  = loai.includes('ngu') || loai.includes('buồn') ? 'badge-red'
-        : loai.includes('guc') || loai.includes('tilt') ? 'badge-orange' : 'badge-gray';
-      return `
-      <tr>
-        <td><span class="badge ${cls}">${r.LoaiCanhBao || '--'}</span></td>
-        <td class="text-xs text-muted">${r.MoTa || '--'}</td>
-        <td class="text-xs text-muted tabular">${r.ThoiGian}</td>
-      </tr>`;
-    }).join('');
-  } catch(e) {
-    console.error('[me/alerts]', e);
-  }
-}
-
-/* ============================================================
    LOAD ALL DATA
 ============================================================ */
 async function loadData() {
@@ -400,7 +348,6 @@ async function loadData() {
     loadToday(),
     loadAttendanceHistory(),
     loadHealth(),
-    loadAlerts(),
   ]);
 }
 

@@ -9,6 +9,11 @@
     const date = root.querySelector('[data-terminal-date]');
     const status = root.querySelector('[data-terminal-status]');
     const result = root.querySelector('[data-terminal-result]');
+    const resultOverlay = root.querySelector('[data-terminal-result-overlay]');
+    const resultCard = resultOverlay?.querySelector('.terminal-result-card');
+    const resultTitle = root.querySelector('[data-terminal-result-title]');
+    const resultGreeting = root.querySelector('[data-terminal-result-greeting]');
+    const resultMessage = root.querySelector('[data-terminal-result-message]');
     const hint = root.querySelector('[data-terminal-hint]');
     const defaultHint = hint.textContent;
     const cameraWrap = root.querySelector('[data-terminal-camera-wrap]');
@@ -17,11 +22,8 @@
     const cameraEmpty = root.querySelector('[data-terminal-camera-empty]');
     const scanRing = root.querySelector('[data-terminal-scan-ring]');
     const enrollmentPanel = root.querySelector('[data-terminal-enrollment]');
-    const enrollmentEmployee = root.querySelector('[data-terminal-enrollment-employee]');
     const enrollmentProgress = root.querySelector('[data-terminal-enrollment-progress]');
-    const enrollmentPose = root.querySelector('[data-terminal-enrollment-pose]');
     const enrollmentMessage = root.querySelector('[data-terminal-enrollment-message]');
-    const enrollmentSteps = [...root.querySelectorAll('[data-terminal-enrollment-steps] [data-pose]')];
     const fullscreenButton = root.querySelector('[data-terminal-fullscreen]');
     const enrollmentUi = window.AI1EnrollmentUI;
 
@@ -33,12 +35,33 @@
     let previewTimer = null;
     let previewRequest = null;
     let previewObjectUrl = null;
-    let resetTimer = null;
     let enrollmentTimer = null;
     let enrollmentBusy = false;
     let enrollmentState = 'IDLE';
     let enrollmentScanLock = false;
     let lastEnrollmentNotice = '';
+
+    const resultUi = resultOverlay && resultCard && resultTitle && resultGreeting && resultMessage
+        && window.KioskResultOverlay
+        ? window.KioskResultOverlay.mount({
+            overlay: resultOverlay,
+            card: resultCard,
+            title: resultTitle,
+            greeting: resultGreeting,
+            message: resultMessage,
+            onHidden: () => {
+                scanLocked = false;
+                if (enrollmentScanLock) return;
+                if (deviceReady && cameraAvailable) {
+                    setStatus('Vui lòng nhìn vào camera.', 'idle');
+                    hint.hidden = false;
+                } else if (deviceReady) {
+                    setStatus('CAMERA OFFLINE · CHƯA NHẬN ĐƯỢC FRAME', 'offline');
+                    hint.hidden = false;
+                }
+            },
+        })
+        : null;
 
     const setStatus = (message, state) => {
         status.textContent = message;
@@ -65,19 +88,13 @@
         }
     });
 
-    const poseLabels = {
-        frontal: 'Nhìn thẳng vào camera',
-        left: 'Quay đầu sang trái',
-        right: 'Quay đầu sang phải',
-        up: 'Ngước đầu lên',
-        down: 'Cúi đầu xuống',
-    };
-
     const updateEnrollmentRing = (payload, state) => {
         if (!scanRing) return;
         const active = payload.mode === 'AUTO'
             && (state === 'ENROLLING' || state === 'AWAITING_CONFIRMATION');
-        const model = active && enrollmentUi ? enrollmentUi.buildRingModel(payload) : { visible: false };
+        const model = active && enrollmentUi
+            ? enrollmentUi.buildRingModel(payload, { mirrorX: true })
+            : { visible: false };
         if (!model.visible) {
             scanRing.replaceChildren();
             scanRing.hidden = true;
@@ -146,29 +163,15 @@
             const captured = Math.max(0, Math.min(5, Number(payload.captured) || 0));
             updateEnrollmentRing(payload, state);
             enrollmentProgress.textContent = `${captured}/5`;
-            enrollmentEmployee.textContent = payload.employee_name
-                ? `${payload.employee_name} · Mã nhân viên ${payload.employee_id}`
-                : (payload.employee_id ? `Mã nhân viên ${payload.employee_id}` : '');
-            enrollmentSteps.forEach((step, index) => {
-                step.classList.toggle('is-complete', index < captured);
-                step.classList.toggle('is-active', index === captured && captured < 5);
-            });
-            enrollmentPose.textContent = poseLabels[payload.expected_pose] || (
-                state === 'AWAITING_CONFIRMATION' ? 'Đã thu đủ năm góc' : 'Đang chuẩn bị'
-            );
             enrollmentMessage.textContent = enrollmentUi
                 ? enrollmentUi.guidanceFor({ ...payload, state })
                 : 'Hãy làm theo hướng dẫn trên màn hình.';
-
             if (state === 'ENROLLING') {
                 enrollmentScanLock = true;
                 setStatus('ĐANG ĐĂNG KÝ KHUÔN MẶT', 'processing');
             } else if (state === 'AWAITING_CONFIRMATION') {
                 enrollmentScanLock = true;
-                enrollmentPose.textContent = 'Đã thu đủ năm góc';
-                enrollmentMessage.textContent = enrollmentUi
-                    ? enrollmentUi.guidanceFor({ ...payload, state })
-                    : 'Đã đủ năm góc. Chờ quản lý kiểm tra và xác nhận lưu.';
+                enrollmentMessage.textContent = 'Đã đủ 5 góc · Chờ quản lý xác nhận lưu.';
                 setStatus('ĐĂNG KÝ HOÀN TẤT · CHỜ XÁC NHẬN', 'processing');
             } else if (state === 'MANUAL_FALLBACK') {
                 updateEnrollmentRing({}, state);
@@ -190,7 +193,8 @@
                 enrollmentPanel.hidden = true;
                 if (lastEnrollmentNotice !== state) {
                     lastEnrollmentNotice = state;
-                    finish('success', 'ĐĂNG KÝ KHUÔN MẶT THÀNH CÔNG', payload.employee_name || '', null);
+                    finish('success', 'ĐĂNG KÝ KHUÔN MẶT THÀNH CÔNG', 'Đã thu đủ 5 góc.',
+                        payload.employee_name ? `Đăng ký hoàn tất: ${payload.employee_name}` : '');
                 }
             } else if (state === 'CANCELLED') {
                 updateEnrollmentRing({}, state);
@@ -320,72 +324,37 @@
         if (previewRequest) previewRequest.abort();
     };
 
-    const drawBestFrame = (payload) => {
-        if (!payload || typeof payload.best_frame_jpeg !== 'string') return;
-        const image = new Image();
-        image.onload = () => {
-            const width = Number(payload.frame_width) || image.naturalWidth;
-            const height = Number(payload.frame_height) || image.naturalHeight;
-            resultFrame.width = width;
-            resultFrame.height = height;
-            resultFrame.style.width = '100%';
-            resultFrame.style.height = '100%';
-            resultFrame.getContext('2d').drawImage(image, 0, 0, width, height);
-            if (Array.isArray(payload.bbox) && payload.bbox.length === 4) {
-                const box = payload.bbox.map(Number);
-                if (box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1]) {
-                    const context = resultFrame.getContext('2d');
-                    context.strokeStyle = '#27834a';
-                    context.lineWidth = Math.max(2, width / 500);
-                    context.strokeRect(box[0], box[1], box[2] - box[0], box[3] - box[1]);
-                }
-            }
-            camera.hidden = true;
-            resultFrame.hidden = false;
-            cameraEmpty.hidden = true;
-            cameraWrap.style.setProperty('--frame-ratio', String(width / height));
-        };
-        image.src = `data:image/jpeg;base64,${payload.best_frame_jpeg}`;
-    };
-
-    const finish = (state, title, details = '', recognitionResult = null) => {
-        if (recognitionResult) drawBestFrame(recognitionResult);
+    const finish = (state, title, details = '', greeting = '') => {
+        window.clearTimeout(enrollmentTimer);
         setStatus(title, state);
-        result.textContent = details;
-        result.hidden = !details;
+        result.textContent = '';
+        result.hidden = true;
         hint.hidden = true;
         scanLocked = true;
-        stopPreview();
-        window.clearTimeout(resetTimer);
-        resetTimer = window.setTimeout(() => {
-            camera.hidden = false;
-            resultFrame.hidden = true;
-            result.hidden = true;
-            cameraEmpty.hidden = !deviceReady;
-            if (deviceReady) {
-                cameraEmpty.textContent = 'Đang kết nối camera...';
-                setStatus('Vui lòng nhìn vào camera.', 'idle');
-                hint.hidden = false;
-                scanLocked = false;
-                startPreview();
-            }
-        }, 4000);
+        resultUi?.show({ state, titleText: title, greetingText: greeting, messageText: details });
     };
 
     const readJson = async (response) => {
         const contentType = response.headers.get('content-type') || '';
-        if (response.redirected || !contentType.includes('application/json')) {
+        if (response.redirected) {
             throw new Error('AUTH_REQUIRED');
         }
-        const payload = await response.json();
-        if (!response.ok && response.status >= 500) throw new Error('OFFLINE');
-        return payload;
+        if (!contentType.includes('application/json')) {
+            throw new Error(response.status >= 500 ? 'SERVER_OFFLINE' : 'INVALID_RESPONSE');
+        }
+        // Keep structured 4xx/5xx payloads so callers can distinguish camera,
+        // AI1 model, and gallery failures instead of collapsing them to OFFLINE.
+        return response.json();
     };
 
     const wait = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
-    const pollRecognition = async (sessionId) => {
-        const deadline = Date.now() + 12000;
+    const pollRecognition = async (sessionId, timeoutSeconds) => {
+        const configuredTimeout = Number(timeoutSeconds);
+        const sessionTimeout = Number.isFinite(configuredTimeout)
+            ? Math.min(60, Math.max(8.5, configuredTimeout)) : 20;
+        // Give the backend watchdog and the final status request time to settle.
+        const deadline = Date.now() + (sessionTimeout + 3) * 1000;
         while (Date.now() < deadline) {
             const response = await fetch(`/?action=face_recognition_status&session_id=${encodeURIComponent(sessionId)}`, {
                 credentials: 'same-origin', cache: 'no-store',
@@ -414,33 +383,44 @@
         return { response, payload: await readJson(response) };
     };
 
-    const presentAttendance = (payload, recognitionResult) => {
+    const presentAttendance = (payload) => {
+        const employeeName = typeof payload.employee_name === 'string' && payload.employee_name.trim()
+            ? payload.employee_name.trim()
+            : '';
         switch (payload.state) {
             case 'SUCCESS': {
                 const isCheckin = payload.action === 'checkin';
-                const title = isCheckin ? 'CHẤM CÔNG VÀO THÀNH CÔNG' : 'CHẤM CÔNG RA THÀNH CÔNG';
-                const details = `${payload.employee_name || ''}\nMã nhân viên: ${payload.employee_id}\n${payload.time || ''}`;
-                finish('success', title, details, recognitionResult);
+                const actionText = isCheckin ? 'giờ vào' : 'giờ ra';
+                const details = `Chấm công thành công. Đã ghi nhận ${actionText}${payload.time ? ` lúc ${payload.time}` : ''}.`;
+                finish('success', 'CHẤM CÔNG THÀNH CÔNG', details,
+                    employeeName ? `Chào mừng, ${employeeName}!` : '');
                 break;
             }
             case 'ALREADY_COMPLETED':
-                finish('idle', 'Đã hoàn tất chấm công hôm nay.', '', recognitionResult);
+                finish('idle', 'ĐÃ HOÀN TẤT CHẤM CÔNG', 'Bạn đã chấm công đủ lượt hôm nay.',
+                    employeeName ? `Xin chào, ${employeeName}!` : '');
                 break;
             case 'UNKNOWN':
-                finish('unknown', 'Không nhận diện được. Vui lòng thử lại.', '', recognitionResult);
+                finish('unknown', 'KHÔNG NHẬN DIỆN ĐƯỢC', 'Vui lòng đứng trước camera và thử lại.');
                 break;
             case 'OFFLINE':
-                finish('offline', payload.code === 'CAMERA_SOURCE_UNAVAILABLE' ? 'CAMERA OFFLINE' : 'Không kết nối được máy chủ.', payload.message || '', recognitionResult);
+                finish('offline', payload.code === 'CAMERA_SOURCE_UNAVAILABLE' ? 'CAMERA OFFLINE' : 'KHÔNG KẾT NỐI ĐƯỢC MÁY CHỦ.',
+                    payload.message || 'Chưa ghi nhận chấm công. Vui lòng thử lại.',
+                    employeeName ? `Xin chào, ${employeeName}!` : '');
                 break;
-            default:
-                finish('error', 'CẦN QUÉT LẠI', payload.message || 'Chưa ghi được chấm công. Vui lòng thử lại.', recognitionResult);
+            default: {
+                const identified = Boolean(employeeName);
+                finish('error', identified ? 'CHƯA THỂ CHẤM CÔNG' : 'CẦN QUÉT LẠI',
+                    payload.message || 'Chưa ghi được chấm công. Vui lòng thử lại.',
+                    identified ? `Xin chào, ${employeeName}!` : '');
+            }
         }
     };
 
     const presentRecognitionFailure = (recognition) => {
         const payload = recognition.result || {};
         if ((payload.reason || '') === 'UNKNOWN') {
-            finish('unknown', 'Không nhận diện được. Vui lòng thử lại.', '');
+            finish('unknown', 'KHÔNG NHẬN DIỆN ĐƯỢC', 'Vui lòng đứng trước camera và thử lại.');
             return;
         }
         const messages = {
@@ -467,8 +447,7 @@
             return;
         }
         scanLocked = true;
-        window.clearTimeout(resetTimer);
-        stopPreview();
+        resultUi?.hide();
         camera.hidden = false;
         resultFrame.hidden = true;
         result.hidden = true;
@@ -493,7 +472,7 @@
                 throw new Error(start.message || 'START_FAILED');
             }
 
-            const recognition = await pollRecognition(start.session_id);
+            const recognition = await pollRecognition(start.session_id, start.timeout_seconds);
             const recognitionResult = recognition.result || {};
             if (recognition.state !== 'COMPLETED' || recognitionResult.recognized !== true) {
                 presentRecognitionFailure(recognition);
@@ -502,14 +481,17 @@
 
             // MATCH is provisional: keep a processing state until PHP confirms
             // check-in/check-out in the attendance service and database.
-            drawBestFrame(recognitionResult);
             setStatus('Đang xác nhận chấm công...', 'processing');
             const { response, payload } = await recordAttendance(start.session_id);
             if (!response.ok && response.status >= 500) {
-                presentAttendance({ state: 'OFFLINE', message: 'Không kết nối được máy chủ.' }, recognitionResult);
+                presentAttendance({
+                    state: 'OFFLINE',
+                    code: payload.code || null,
+                    message: payload.message || 'Không kết nối được máy chủ.',
+                }, recognitionResult);
                 return;
             }
-            presentAttendance(payload, recognitionResult);
+            presentAttendance(payload);
         } catch (error) {
             const authExpired = error.message === 'AUTH_REQUIRED';
             const cameraOffline = error.message === 'CAMERA_SOURCE_UNAVAILABLE';
@@ -555,6 +537,7 @@
     });
     window.addEventListener('pagehide', () => {
         stopPreview();
+        resultUi?.hide();
         window.clearTimeout(enrollmentTimer);
         enrollmentTimer = null;
     });

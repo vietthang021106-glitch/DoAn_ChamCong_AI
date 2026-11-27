@@ -16,11 +16,15 @@ import tkinter as tk
 from PIL import Image, ImageDraw, ImageFont, ImageOps, ImageTk
 
 import face_matching
-from ai1_standalone_core.ai1_adapter import validate_enrollment_frame
+from ai1_standalone_core.ai1_adapter import (
+    validate_enrollment_frame,
+    validate_enrollment_pose_frame,
+)
 from ai1_standalone_core.config import (
     EMBEDDING_DIMENSIONS,
     FRAME_CONSISTENCY_THRESHOLD,
     GUIDED_POSE_STABLE_FRAMES,
+    GUIDED_POSE_STABILITY_WINDOW_SECONDS,
     GUIDED_POSE_TIMEOUT_SECONDS,
     POSES,
     RECOGNITION_THRESHOLD,
@@ -58,7 +62,7 @@ MESSAGE_LABELS = {
     "FACE CROPPED": "Khuôn mặt bị cắt ở mép khung hình",
     "FACE TOO CLOSE TO EDGE": "Đưa khuôn mặt xa mép khung hình hơn",
     "BAD LIGHTING": "Ánh sáng chưa phù hợp",
-    "TOO BLURRY": "Ảnh bị mờ — giữ yên và kiểm tra camera",
+    "TOO BLURRY": "Ảnh bị mờ — kiểm tra nét và chuyển động của camera",
     "WRONG POSE": "Điều chỉnh theo pose yêu cầu",
     "SAME PERSON": "Khuôn mặt khác mẫu nhìn thẳng",
     "STALE_FRAME": "Đang chờ khung hình mới",
@@ -153,8 +157,8 @@ class AI1Gui:
         self.capture_feedback = None
 
         self.root.title("AI1 Standalone | Nhận diện khuôn mặt")
-        self.root.geometry("1480x900")
-        self.root.minsize(1160, 720)
+        self.root.geometry("1480x1024")
+        self.root.minsize(820, 640)
         self.root.configure(bg=BG)
         self.root.protocol("WM_DELETE_WINDOW", self._on_close)
         self.root.bind_all("<KeyPress-space>", self._on_space_press)
@@ -230,16 +234,242 @@ class AI1Gui:
         body.columnconfigure(0, weight=1)
         body.rowconfigure(0, weight=1)
 
-        left = tk.Frame(body, bg=BG)
-        left.grid(row=0, column=0, sticky="nsew")
-        left.columnconfigure(0, weight=1)
-        left.rowconfigure(0, weight=1)
-        self.preview = tk.Label(left, bg="#05070a", fg=DIM,
-                                text="Đang khởi tạo AI1 và camera…", font=("Segoe UI", 14))
-        self.preview.grid(row=0, column=0, sticky="nsew")
+        self.content_canvas = tk.Canvas(body, bg=BG, highlightthickness=0, borderwidth=0)
+        self.content_canvas.grid(row=0, column=0, sticky="nsew")
+        self.content_scrollbar = ttk.Scrollbar(body, orient="vertical",
+                                               command=self.content_canvas.yview)
+        self.content_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.content_canvas.configure(yscrollcommand=self.content_scrollbar.set)
+        self.scroll_content = tk.Frame(self.content_canvas, bg=BG)
+        self.scroll_content.columnconfigure(0, weight=1)
+        self.content_window = self.content_canvas.create_window(
+            (0, 0), window=self.scroll_content, anchor="nw"
+        )
+        self.scroll_content.bind("<Configure>", self._refresh_scroll_region)
+        self.content_canvas.bind("<Configure>", self._resize_scroll_content)
+        self.root.bind_all("<MouseWheel>", self._on_content_mousewheel, add="+")
+        self.root.bind_all("<Button-4>", self._on_content_mousewheel, add="+")
+        self.root.bind_all("<Button-5>", self._on_content_mousewheel, add="+")
+
+        camera_section = tk.Frame(self.scroll_content, bg=BG)
+        camera_section.grid(row=0, column=0, sticky="ew", pady=(0, 12))
+        camera_section.columnconfigure(0, weight=1)
+        tk.Label(camera_section, text="CAMERA PREVIEW", bg=BG, fg=DIM,
+                 font=("Segoe UI", 9, "bold")).grid(row=0, column=0, sticky="w", padx=8, pady=(0, 5))
+        self.camera_stage = tk.Frame(camera_section, bg=BG)
+        self.camera_stage.grid(row=1, column=0, sticky="ew")
+        self.camera_stage.columnconfigure(0, weight=1)
+        self.preview_host = tk.Frame(self.camera_stage, bg="#05070a",
+                                     highlightthickness=1, highlightbackground="#30363d")
+        self.preview_host.grid(row=0, column=0, pady=3)
+        self.preview_host.grid_propagate(False)
+        self.preview = tk.Label(self.preview_host, bg="#05070a", fg=DIM,
+                                text="Đang khởi tạo AI1 và camera…", font=("Segoe UI", 14),
+                                bd=0, compound="center")
+        self.preview.pack(fill="both", expand=True)
         self.preview_hint = tk.StringVar(value="Camera preview sẽ xuất hiện tại đây.")
-        tk.Label(left, textvariable=self.preview_hint, bg=BG, fg=DIM,
-                 anchor="w", font=("Segoe UI", 9)).grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.preview_hint_label = tk.Label(
+            camera_section, textvariable=self.preview_hint, bg=BG, fg=DIM,
+            anchor="center", justify="center", font=("Segoe UI", 9), wraplength=1000,
+        )
+        self.preview_hint_label.grid(row=2, column=0, sticky="ew", pady=(6, 0))
+        self.camera_stage.bind("<Configure>", self._resize_preview)
+        self.preview_host.bind("<Configure>", self._resize_result_overlay)
+
+        self.controls_frame = tk.Frame(self.scroll_content, bg=BG)
+        self.controls_frame.grid(row=1, column=0, sticky="ew", pady=(0, 10))
+
+        # Group 1 — camera source controls.
+        self.camera_card = self._card(self.controls_frame, "NGUỒN CAMERA")
+        camera_form = tk.Frame(self.camera_card, bg=CARD)
+        camera_form.pack(fill="x", padx=12, pady=(1, 9))
+        self.camera_type_var = tk.StringVar(value="WEBCAM")
+        self.camera_combo = ttk.Combobox(
+            camera_form, textvariable=self.camera_type_var,
+            values=("WEBCAM", "ESP32-CAM"), state="readonly", width=13,
+        )
+        self.camera_combo.grid(row=0, column=0, sticky="ew")
+        self.stream_url_var = tk.StringVar(
+            value=os.getenv("AI1_ESP32_STREAM_URL", "http://esp32cam.local:81/stream")
+        )
+        self.stream_entry = ttk.Entry(camera_form, textvariable=self.stream_url_var)
+        self.stream_entry.grid(row=0, column=1, sticky="ew", padx=(8, 0))
+        camera_form.columnconfigure(0, weight=0)
+        camera_form.columnconfigure(1, weight=1)
+        self.camera_button = self._button(
+            self.camera_card, "Chọn nguồn camera", self._change_camera, BLUE
+        )
+        self.camera_button.pack(fill="x", padx=12, pady=(0, 11))
+
+        # Group 2 — employee actions and standalone identity form.
+        self.employee_card = self._card(self.controls_frame, "NHÂN VIÊN LOCAL")
+        form = tk.Frame(self.employee_card, bg=CARD)
+        form.pack(fill="x", padx=12, pady=(0, 8))
+        tk.Label(form, text="Employee ID", bg=CARD, fg=DIM,
+                 font=("Segoe UI", 9)).grid(row=0, column=0, sticky="w")
+        tk.Label(form, text="Employee Name", bg=CARD, fg=DIM,
+                 font=("Segoe UI", 9)).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        self.id_var = tk.StringVar()
+        self.name_var = tk.StringVar()
+        self.id_entry = ttk.Entry(form, textvariable=self.id_var, width=14)
+        self.name_entry = ttk.Entry(form, textvariable=self.name_var, width=22)
+        self.id_entry.grid(row=1, column=0, sticky="ew", pady=(3, 0))
+        self.name_entry.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(3, 0))
+        form.columnconfigure(0, weight=1)
+        form.columnconfigure(1, weight=2)
+        self.register_button = self._button(
+            self.employee_card, "BẮT ĐẦU QUÉT AUTO", self._begin_registration, GREEN
+        )
+        self.register_button.pack(fill="x", padx=12, pady=(0, 6))
+        self.recognize_button = self._button(
+            self.employee_card, "QUÉT THỬ / NHẬN DIỆN", self._recognize, BLUE
+        )
+        self.recognize_button.pack(fill="x", padx=12, pady=(0, 6))
+        quick = tk.Frame(self.employee_card, bg=CARD)
+        quick.pack(fill="x", padx=12, pady=(0, 10))
+        self.refresh_button = self._button(quick, "Làm mới danh sách", self._refresh, "#30363d")
+        self.refresh_button.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.delete_button = self._button(quick, "Xóa nhân viên", self._delete_selected, "#30363d")
+        self.delete_button.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.gallery_status_var = tk.StringVar(value="Gallery: đang tải dữ liệu local…")
+        tk.Label(self.employee_card, textvariable=self.gallery_status_var, bg=CARD, fg=DIM,
+                 font=("Segoe UI", 9, "bold"), anchor="w", justify="left",
+                 wraplength=430).pack(fill="x", padx=12, pady=(0, 10))
+
+        # Group 3 — Smart Enrollment v2 controls and five-pose progress.
+        self.capture_card = self._card(self.controls_frame, "SMART ENROLLMENT · QUÉT 5 GÓC")
+        mode_row = tk.Frame(self.capture_card, bg=CARD)
+        mode_row.pack(fill="x", padx=12, pady=(0, 5))
+        tk.Label(mode_row, text="Chế độ", bg=CARD, fg=DIM,
+                 font=("Segoe UI", 9)).pack(side="left")
+        self.enrollment_mode_var = tk.StringVar(value="AUTO")
+        self.enrollment_mode_combo = ttk.Combobox(
+            mode_row, textvariable=self.enrollment_mode_var,
+            values=("AUTO", "MANUAL"), state="readonly", width=10,
+        )
+        self.enrollment_mode_combo.pack(side="left", padx=(8, 0))
+        self.enrollment_mode_combo.bind("<<ComboboxSelected>>", self._sync_enrollment_start_button)
+        tk.Label(mode_row, text="AUTO · hướng dẫn   |   MANUAL · SPACE",
+                 bg=CARD, fg=DIM, font=("Segoe UI", 8)).pack(side="left", padx=(8, 0))
+        self.pose_var = tk.StringVar(value="Pose yêu cầu: —")
+        self.detected_pose_var = tk.StringVar(value="Pose phát hiện: —")
+        self.quality_var = tk.StringVar(value="Quality: chờ enrollment")
+        self.auto_status_var = tk.StringVar(value="AUTO: chờ bắt đầu")
+        self.capture_hint_var = tk.StringVar(value="Chọn Đăng ký khuôn mặt để bắt đầu.")
+        self.enrollment_info_labels = []
+        for variable in (self.pose_var, self.detected_pose_var, self.quality_var,
+                         self.auto_status_var, self.capture_hint_var):
+            label = tk.Label(self.capture_card, textvariable=variable, bg=CARD, fg=TEXT,
+                             font=("Segoe UI", 9), anchor="w", justify="left",
+                             wraplength=500)
+            label.pack(fill="x", padx=12, pady=1)
+            self.enrollment_info_labels.append(label)
+        progress_row = tk.Frame(self.capture_card, bg=CARD)
+        progress_row.pack(fill="x", padx=12, pady=(6, 8))
+        self.pose_ring = tk.Canvas(progress_row, width=78, height=78, bg=CARD,
+                                   highlightthickness=0, borderwidth=0)
+        self.pose_ring.pack(side="left", padx=(0, 10))
+        progress_column = tk.Frame(progress_row, bg=CARD)
+        progress_column.pack(side="left", fill="x", expand=True)
+        self.progress = ttk.Progressbar(progress_column, maximum=5)
+        self.progress.pack(fill="x", pady=(16, 4))
+        self.enrollment_progress_var = tk.StringVar(value="Tiến độ: 0/5")
+        tk.Label(progress_column, textvariable=self.enrollment_progress_var, bg=CARD, fg=DIM,
+                 font=("Segoe UI", 9), anchor="w").pack(fill="x")
+        thumbs = tk.Frame(self.capture_card, bg=CARD)
+        thumbs.pack(fill="x", padx=8, pady=(0, 8))
+        self.thumb_labels = []
+        self.thumb_status_labels = []
+        self.thumb_cells = []
+        for pose in POSES:
+            cell = tk.Frame(thumbs, bg=PANEL, padx=2, pady=3)
+            cell.pack(side="left", fill="both", expand=True, padx=2)
+            image_label = tk.Label(cell, text="—", width=7, height=3, bg=PANEL, fg=DIM,
+                                   font=("Segoe UI", 9, "bold"))
+            image_label.pack(fill="both", expand=True)
+            status_label = tk.Label(cell, text="•", bg=PANEL, fg=DIM,
+                                    font=("Segoe UI", 9, "bold"))
+            status_label.pack(pady=(2, 0))
+            tk.Label(cell, text=POSE_LABELS[pose], bg=PANEL, fg=DIM,
+                     font=("Segoe UI", 7)).pack(pady=(0, 2))
+            self.thumb_labels.append(image_label)
+            self.thumb_status_labels.append(status_label)
+            self.thumb_cells.append(cell)
+        capture_actions = tk.Frame(self.capture_card, bg=CARD)
+        capture_actions.pack(fill="x", padx=12, pady=(0, 10))
+        self.retake_button = self._button(
+            capture_actions, "Quét lại 5 góc", self._retake_pose, "#30363d"
+        )
+        self.retake_button.pack(side="left", fill="x", expand=True, padx=(0, 4))
+        self.cancel_button = self._button(
+            capture_actions, "Hủy", self._cancel_enrollment, "#30363d"
+        )
+        self.cancel_button.pack(side="left", fill="x", expand=True, padx=(4, 0))
+        self.save_button = self._button(
+            self.capture_card, "Lưu lại 5 mẫu local", self._retry_save, BLUE
+        )
+        self.save_button.pack(fill="x", padx=12, pady=(0, 10))
+
+        # Group 4 — local employee gallery.
+        self.list_card = self._card(self.controls_frame, "DANH SÁCH NHÂN VIÊN STANDALONE")
+        table_wrap = tk.Frame(self.list_card, bg=CARD)
+        table_wrap.pack(fill="both", expand=True, padx=9, pady=(0, 9))
+        table_wrap.columnconfigure(0, weight=1)
+        table_wrap.rowconfigure(0, weight=1)
+        self.employee_table = ttk.Treeview(
+            table_wrap, columns=("id", "name", "samples"), show="headings",
+            height=7, selectmode="browse",
+        )
+        for column, title in (("id", "Employee ID"), ("name", "Họ tên"), ("samples", "Embedding")):
+            self.employee_table.heading(column, text=title)
+        self.employee_table.column("id", width=105, stretch=False)
+        self.employee_table.column("name", width=220, stretch=True)
+        self.employee_table.column("samples", width=82, stretch=False, anchor="center")
+        table_scrollbar = ttk.Scrollbar(table_wrap, orient="vertical",
+                                        command=self.employee_table.yview)
+        self.employee_table.configure(yscrollcommand=table_scrollbar.set)
+        self.employee_table.grid(row=0, column=0, sticky="nsew")
+        table_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.employee_table.bind("<<TreeviewSelect>>", self._select_employee)
+
+        # Group 5 — persistent recognition metrics and session status.
+        self.result_summary_card = self._card(self.controls_frame, "NHẬN DIỆN VÀ KẾT QUẢ")
+        self.state_var = tk.StringVar(value="TRẠNG THÁI: ĐANG TẢI AI1")
+        self.prediction_var = tk.StringVar(value="KẾT QUẢ: —")
+        status = tk.Frame(self.result_summary_card, bg=CARD)
+        status.pack(fill="x", padx=12, pady=(0, 8))
+        tk.Label(status, textvariable=self.state_var, bg=CARD, fg=YELLOW,
+                 font=("Segoe UI", 10, "bold"), anchor="w", justify="left",
+                 wraplength=500).pack(fill="x", pady=(0, 4))
+        tk.Label(status, textvariable=self.prediction_var, bg=CARD, fg=TEXT,
+                 font=("Segoe UI", 10, "bold"), anchor="w", justify="left",
+                 wraplength=500).pack(fill="x")
+        metrics = tk.Frame(self.result_summary_card, bg=CARD)
+        metrics.pack(fill="x", padx=12, pady=(0, 8))
+        self.progress_var = tk.StringVar(value="Tiến độ: 0/5")
+        self.sharpness_var = tk.StringVar(value="Sharpness: —")
+        self.latency_var = tk.StringVar(value="Latency: —")
+        self.score_var = tk.StringVar(value="Similarity: —")
+        self.threshold_var = tk.StringVar(value=f"Threshold: {RECOGNITION_THRESHOLD:.3f}")
+        self.consistency_var = tk.StringVar(value=f"Temporal: {FRAME_CONSISTENCY_THRESHOLD:.2f}")
+        self.result_metric_labels = []
+        for index, variable in enumerate((self.progress_var, self.sharpness_var, self.latency_var,
+                                          self.score_var, self.threshold_var, self.consistency_var)):
+            label = tk.Label(metrics, textvariable=variable, bg=CARD, fg=DIM,
+                             font=("Segoe UI", 9), anchor="w", justify="left", wraplength=240)
+            label.grid(row=index // 3, column=index % 3, sticky="ew", padx=(0, 8), pady=3)
+            self.result_metric_labels.append(label)
+        for column in range(3):
+            metrics.columnconfigure(column, weight=1)
+        actions = tk.Frame(self.result_summary_card, bg=CARD)
+        actions.pack(fill="x", padx=12, pady=(0, 10))
+        self.exit_button = self._button(actions, "Thoát", self._on_close, "#30363d")
+        self.exit_button.pack(side="right")
+
+        self.control_cards = [self.camera_card, self.employee_card, self.capture_card,
+                              self.list_card, self.result_summary_card]
+        self._control_columns = None
+        self._relayout_control_cards(self.content_canvas.winfo_width())
 
         self.result_title_var = tk.StringVar(value="")
         self.result_detail_var = tk.StringVar(value="")
@@ -258,185 +488,95 @@ class AI1Gui:
         self.result_detail_label.pack(fill="x", padx=16, pady=(0, 12))
         self.result_card.place_forget()
 
-        side = tk.Frame(body, bg=BG, width=410)
-        side.grid(row=0, column=1, sticky="ns", padx=(14, 0))
-        side.grid_propagate(False)
-        side.rowconfigure(0, weight=1)
-        side.columnconfigure(0, weight=1)
-        side_canvas = tk.Canvas(side, bg=BG, highlightthickness=0, borderwidth=0)
-        side_canvas.grid(row=0, column=0, sticky="nsew")
-        side_scrollbar = ttk.Scrollbar(side, orient="vertical", command=side_canvas.yview)
-        side_scrollbar.grid(row=0, column=1, sticky="ns")
-        side_canvas.configure(yscrollcommand=side_scrollbar.set)
-        side_content = tk.Frame(side_canvas, bg=BG)
-        side_content.columnconfigure(0, weight=1)
-        side_window = side_canvas.create_window((0, 0), window=side_content, anchor="nw")
-        side_content.bind(
-            "<Configure>",
-            lambda _event: side_canvas.configure(scrollregion=side_canvas.bbox("all")),
-        )
-        side_canvas.bind(
-            "<Configure>",
-            lambda event: side_canvas.itemconfigure(side_window, width=event.width),
-        )
-
-        camera_card = self._card(side_content, "NGUỒN CAMERA")
-        camera_card.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        camera_form = tk.Frame(camera_card, bg=CARD)
-        camera_form.pack(fill="x", padx=12, pady=(1, 9))
-        self.camera_type_var = tk.StringVar(value="WEBCAM")
-        self.camera_combo = ttk.Combobox(camera_form, textvariable=self.camera_type_var,
-                                         values=("WEBCAM", "ESP32-CAM"), state="readonly", width=13)
-        self.camera_combo.grid(row=0, column=0, sticky="w")
-        self.stream_url_var = tk.StringVar(
-            value=os.getenv("AI1_ESP32_STREAM_URL", "http://esp32cam.local:81/stream")
-        )
-        self.stream_entry = ttk.Entry(camera_form, textvariable=self.stream_url_var, width=27)
-        self.stream_entry.grid(row=0, column=1, sticky="ew", padx=(8, 0))
-        camera_form.columnconfigure(1, weight=1)
-        self.camera_button = self._button(camera_card, "Chọn nguồn camera", self._change_camera, BLUE)
-        self.camera_button.pack(fill="x", padx=12, pady=(0, 11))
-
-        employee_card = self._card(side_content, "NHÂN VIÊN LOCAL")
-        employee_card.grid(row=1, column=0, sticky="ew", pady=(0, 8))
-        form = tk.Frame(employee_card, bg=CARD)
-        form.pack(fill="x", padx=12, pady=(0, 8))
-        tk.Label(form, text="Employee ID", bg=CARD, fg=DIM, font=("Segoe UI", 9)).grid(
-            row=0, column=0, sticky="w")
-        tk.Label(form, text="Employee Name", bg=CARD, fg=DIM, font=("Segoe UI", 9)).grid(
-            row=0, column=1, sticky="w", padx=(8, 0))
-        self.id_var = tk.StringVar()
-        self.name_var = tk.StringVar()
-        self.id_entry = ttk.Entry(form, textvariable=self.id_var, width=14)
-        self.name_entry = ttk.Entry(form, textvariable=self.name_var, width=22)
-        self.id_entry.grid(row=1, column=0, sticky="ew", pady=(3, 0))
-        self.name_entry.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=(3, 0))
-        form.columnconfigure(1, weight=1)
-        self.register_button = self._button(
-            employee_card, "BẮT ĐẦU QUÉT AUTO", self._begin_registration, GREEN
-        )
-        self.register_button.pack(fill="x", padx=12, pady=(0, 6))
-        self.recognize_button = self._button(
-            employee_card, "QUÉT THỬ / NHẬN DIỆN", self._recognize, BLUE
-        )
-        self.recognize_button.pack(fill="x", padx=12, pady=(0, 6))
-        quick = tk.Frame(employee_card, bg=CARD)
-        quick.pack(fill="x", padx=12, pady=(0, 10))
-        self.refresh_button = self._button(quick, "Làm mới danh sách", self._refresh, "#30363d")
-        self.refresh_button.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        self.delete_button = self._button(quick, "Xóa nhân viên", self._delete_selected, "#30363d")
-        self.delete_button.pack(side="left", fill="x", expand=True, padx=(4, 0))
-        self.gallery_status_var = tk.StringVar(value="Gallery: đang tải dữ liệu local…")
-        tk.Label(employee_card, textvariable=self.gallery_status_var, bg=CARD, fg=DIM,
-                 font=("Segoe UI", 9, "bold"), anchor="w").pack(fill="x", padx=12, pady=(0, 10))
-
-        list_card = self._card(side_content, "DANH SÁCH NHÂN VIÊN STANDALONE")
-        list_card.grid(row=2, column=0, sticky="ew", pady=(0, 8))
-        table_wrap = tk.Frame(list_card, bg=CARD)
-        table_wrap.pack(fill="both", expand=True, padx=9, pady=(0, 9))
-        self.employee_table = ttk.Treeview(table_wrap, columns=("id", "name", "samples"),
-                                           show="headings", height=5, selectmode="browse")
-        for column, title in (("id", "Employee ID"), ("name", "Họ tên"), ("samples", "Mẫu")):
-            self.employee_table.heading(column, text=title)
-        self.employee_table.column("id", width=90, stretch=False)
-        self.employee_table.column("name", width=205)
-        self.employee_table.column("samples", width=48, stretch=False, anchor="center")
-        self.employee_table.pack(fill="both", expand=True)
-        self.employee_table.bind("<<TreeviewSelect>>", self._select_employee)
-
-        capture_card = self._card(side_content, "SMART ENROLLMENT · QUÉT 5 GÓC")
-        capture_card.grid(row=3, column=0, sticky="ew", pady=(0, 8))
-        mode_row = tk.Frame(capture_card, bg=CARD)
-        mode_row.pack(fill="x", padx=12, pady=(0, 5))
-        tk.Label(mode_row, text="Chế độ", bg=CARD, fg=DIM,
-                 font=("Segoe UI", 9)).pack(side="left")
-        self.enrollment_mode_var = tk.StringVar(value="AUTO")
-        self.enrollment_mode_combo = ttk.Combobox(
-            mode_row, textvariable=self.enrollment_mode_var,
-            values=("AUTO", "MANUAL"), state="readonly", width=10,
-        )
-        self.enrollment_mode_combo.pack(side="left", padx=(8, 0))
-        self.enrollment_mode_combo.bind("<<ComboboxSelected>>", self._sync_enrollment_start_button)
-        tk.Label(mode_row, text="AUTO · hướng dẫn   |   MANUAL · SPACE",
-                 bg=CARD, fg=DIM, font=("Segoe UI", 8)).pack(side="left", padx=(8, 0))
-        self.pose_var = tk.StringVar(value="Pose yêu cầu: —")
-        self.detected_pose_var = tk.StringVar(value="Pose phát hiện: —")
-        self.quality_var = tk.StringVar(value="Quality: chờ enrollment")
-        self.auto_status_var = tk.StringVar(value="AUTO: chờ bắt đầu")
-        self.capture_hint_var = tk.StringVar(value="Chọn Đăng ký khuôn mặt để bắt đầu.")
-        for variable in (self.pose_var, self.detected_pose_var, self.quality_var,
-                         self.auto_status_var, self.capture_hint_var):
-            tk.Label(capture_card, textvariable=variable, bg=CARD, fg=TEXT,
-                     font=("Segoe UI", 9), anchor="w", justify="left",
-                     wraplength=350).pack(fill="x", padx=12, pady=1)
-        progress_row = tk.Frame(capture_card, bg=CARD)
-        progress_row.pack(fill="x", padx=12, pady=(6, 8))
-        self.pose_ring = tk.Canvas(progress_row, width=78, height=78, bg=CARD,
-                                  highlightthickness=0, borderwidth=0)
-        self.pose_ring.pack(side="left", padx=(0, 10))
-        progress_column = tk.Frame(progress_row, bg=CARD)
-        progress_column.pack(side="left", fill="x", expand=True)
-        self.progress = ttk.Progressbar(progress_column, maximum=5)
-        self.progress.pack(fill="x", pady=(16, 4))
-        self.enrollment_progress_var = tk.StringVar(value="Tiến độ: 0/5")
-        tk.Label(progress_column, textvariable=self.enrollment_progress_var, bg=CARD, fg=DIM,
-                 font=("Segoe UI", 9), anchor="w").pack(fill="x")
-        thumbs = tk.Frame(capture_card, bg=CARD)
-        thumbs.pack(fill="x", padx=8, pady=(0, 8))
-        self.thumb_labels = []
-        self.thumb_status_labels = []
-        self.thumb_cells = []
-        for pose in POSES:
-            cell = tk.Frame(thumbs, bg=PANEL, padx=2, pady=3)
-            cell.pack(side="left", fill="both", expand=True, padx=2)
-            image_label = tk.Label(cell, text="—", width=7, height=3, bg=PANEL, fg=DIM,
-                                   font=("Segoe UI", 9, "bold"))
-            image_label.pack(fill="both", expand=True)
-            status_label = tk.Label(cell, text="•", bg=PANEL, fg=DIM, font=("Segoe UI", 9, "bold"))
-            status_label.pack(pady=(2, 0))
-            tk.Label(cell, text=POSE_LABELS[pose], bg=PANEL, fg=DIM,
-                     font=("Segoe UI", 7)).pack(pady=(0, 2))
-            self.thumb_labels.append(image_label)
-            self.thumb_status_labels.append(status_label)
-            self.thumb_cells.append(cell)
-        capture_actions = tk.Frame(capture_card, bg=CARD)
-        capture_actions.pack(fill="x", padx=12, pady=(0, 10))
-        self.retake_button = self._button(capture_actions, "Quét lại 5 góc", self._retake_pose, "#30363d")
-        self.retake_button.pack(side="left", fill="x", expand=True, padx=(0, 4))
-        self.cancel_button = self._button(capture_actions, "Hủy", self._cancel_enrollment, "#30363d")
-        self.cancel_button.pack(side="left", fill="x", expand=True, padx=(4, 0))
-        self.save_button = self._button(capture_card, "Lưu lại 5 mẫu local", self._retry_save, BLUE)
-        self.save_button.pack(fill="x", padx=12, pady=(0, 10))
-
-        footer = tk.Frame(self.root, bg=PANEL, height=105)
-        footer.pack(fill="x", side="bottom")
-        footer.pack_propagate(False)
-        top = tk.Frame(footer, bg=PANEL)
-        top.pack(fill="x", padx=15, pady=(11, 2))
-        self.state_var = tk.StringVar(value="TRẠNG THÁI: ĐANG TẢI AI1")
-        self.prediction_var = tk.StringVar(value="KẾT QUẢ: —")
-        tk.Label(top, textvariable=self.state_var, bg=PANEL, fg=YELLOW,
-                 font=("Segoe UI", 10, "bold"), anchor="w").pack(side="left")
-        tk.Label(top, textvariable=self.prediction_var, bg=PANEL, fg=TEXT,
-                 font=("Segoe UI", 10, "bold"), anchor="w").pack(side="left", padx=(24, 0))
-        bottom = tk.Frame(footer, bg=PANEL)
-        bottom.pack(fill="x", padx=15, pady=(4, 10))
-        self.progress_var = tk.StringVar(value="Tiến độ: 0/5")
-        self.sharpness_var = tk.StringVar(value="Sharpness: —")
-        self.latency_var = tk.StringVar(value="Latency: —")
-        self.score_var = tk.StringVar(value="Similarity: —")
-        self.threshold_var = tk.StringVar(value=f"Threshold: {RECOGNITION_THRESHOLD:.3f}")
-        self.consistency_var = tk.StringVar(value=f"Temporal: {FRAME_CONSISTENCY_THRESHOLD:.2f}")
-        for variable in (self.progress_var, self.sharpness_var, self.latency_var,
-                         self.score_var, self.threshold_var, self.consistency_var):
-            tk.Label(bottom, textvariable=variable, bg=PANEL, fg=DIM,
-                     font=("Segoe UI", 9), anchor="w").pack(side="left", padx=(0, 18))
-        actions = tk.Frame(bottom, bg=PANEL)
-        actions.pack(side="right")
-        self.exit_button = self._button(actions, "Thoát", self._on_close, "#30363d")
-        self.exit_button.pack(side="left")
         self._update_pose_ring(0, 0)
         self._sync_enrollment_start_button()
+
+    def _refresh_scroll_region(self, _event=None):
+        if hasattr(self, "content_canvas"):
+            self.content_canvas.configure(scrollregion=self.content_canvas.bbox("all"))
+
+    def _resize_scroll_content(self, event):
+        self.content_canvas.itemconfigure(self.content_window, width=max(1, event.width))
+        self._relayout_control_cards(event.width)
+        self.root.after_idle(self._resize_preview)
+
+    def _relayout_control_cards(self, width):
+        if not hasattr(self, "control_cards"):
+            return
+        width = max(1, int(width or 1))
+        columns = self._layout_columns_for_width(width)
+        if columns == self._control_columns:
+            return
+        for column in range(3):
+            self.controls_frame.grid_columnconfigure(
+                column, weight=1 if column < columns else 0, uniform="control-card"
+            )
+        if columns == 3:
+            placements = ((0, 0, 1), (0, 1, 1), (0, 2, 1), (1, 0, 2), (1, 2, 1))
+        elif columns == 2:
+            placements = ((0, 0, 1), (0, 1, 1), (1, 0, 2), (2, 0, 1), (2, 1, 1))
+        else:
+            placements = tuple((row, 0, 1) for row in range(len(self.control_cards)))
+        for card, (row, column, span) in zip(self.control_cards, placements):
+            card.grid_forget()
+            card.grid(row=row, column=column, columnspan=span, sticky="nsew",
+                      padx=5, pady=5)
+        self._control_columns = columns
+
+    @staticmethod
+    def _layout_columns_for_width(width):
+        width = max(1, int(width or 1))
+        return 3 if width >= 1240 else 2 if width >= 820 else 1
+
+    def _resize_preview(self, _event=None):
+        if not hasattr(self, "preview_host"):
+            return
+        canvas_width = max(320, self.content_canvas.winfo_width())
+        available_width = max(320, min(1280, canvas_width - 42))
+        viewport_height = max(360, self.content_canvas.winfo_height())
+        max_height = max(300, int(viewport_height * 0.80))
+        packet = getattr(self, "current_packet", None)
+        frame = getattr(packet, "frame", None) if packet is not None else None
+        if isinstance(frame, np.ndarray) and frame.ndim >= 2:
+            source_height, source_width = frame.shape[:2]
+            aspect = source_width / max(1, source_height)
+        else:
+            aspect = 4.0 / 3.0
+        width = max(1, min(available_width, int(max_height * aspect)))
+        height = max(1, int(round(width / aspect)))
+        self.preview_host.configure(width=width, height=height)
+        self._preview_size = (width, height)
+        self._preview_aspect = aspect
+        if hasattr(self, "preview_hint_label"):
+            self.preview_hint_label.configure(wraplength=max(320, width))
+        if hasattr(self, "result_detail_label"):
+            self.result_detail_label.configure(wraplength=max(280, int(width * 0.72)))
+        for label in getattr(self, "enrollment_info_labels", ()):
+            label.configure(wraplength=max(300, available_width - 50))
+
+    def _resize_result_overlay(self, event):
+        if hasattr(self, "result_detail_label"):
+            self.result_detail_label.configure(wraplength=max(280, int(event.width * 0.72)))
+
+    def _on_content_mousewheel(self, event):
+        widget = getattr(event, "widget", None)
+        while widget is not None and widget is not getattr(self, "scroll_content", None):
+            widget = getattr(widget, "master", None)
+        if widget is None:
+            return None
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        else:
+            raw_delta = int(getattr(event, "delta", 0))
+            delta = -int(raw_delta / 120) if raw_delta else 0
+            if raw_delta and delta == 0:
+                delta = -1 if raw_delta > 0 else 1
+        if delta:
+            self.content_canvas.yview_scroll(delta, "units")
+            return "break"
+        return None
 
     @staticmethod
     def _card(parent, title):
@@ -475,6 +615,12 @@ class AI1Gui:
         if not hasattr(self, "register_button") or not hasattr(self, "enrollment_mode_var"):
             return
         mode = str(self.enrollment_mode_var.get()).upper()
+        if (getattr(self, "active_operation", None) == "enrollment" and self.enrollment is not None
+                and self.enrollment.get("auto_paused") and mode == "MANUAL"
+                and self.enrollment.get("mode") == "AUTO"):
+            # AUTO remains paused until the operator explicitly selects MANUAL.
+            self.enrollment["mode"] = "MANUAL"
+            self.enrollment["requests"].put({"action": "select_manual"})
         label = "BẮT ĐẦU QUÉT AUTO" if mode == "AUTO" else "BẮT ĐẦU ĐĂNG KÝ MANUAL"
         self.register_button.configure(text=label)
         if hasattr(self, "retake_button"):
@@ -548,18 +694,20 @@ class AI1Gui:
                 self._show_captured_pose(payload)
             elif kind == "enrollment_retake":
                 self._show_retake_pose(payload)
-            elif kind == "enrollment_mode_fallback":
+            elif kind == "enrollment_auto_paused":
                 if self.enrollment is not None:
-                    self.enrollment["mode"] = "MANUAL"
+                    self.enrollment["auto_paused"] = True
                     self.enrollment["fallback_reason"] = str(
                         payload.get("reason") or "Pose tracking could not be trusted."
                     )
-                self.enrollment_mode_var.set("MANUAL")
+                self.enrollment_mode_var.set("AUTO")
                 self._sync_enrollment_start_button()
                 reason = str(payload.get("reason") or "Pose chưa đủ tin cậy.")
-                self.auto_status_var.set(f"MANUAL FALLBACK · {reason}")
-                self.capture_hint_var.set(f"AUTO tạm dừng: {reason} · tiếp tục bằng phím SPACE.")
-                self.state_var.set("TRẠNG THÁI: MANUAL FALLBACK · CẦN SPACE")
+                self.auto_status_var.set(f"AUTO TẠM DỪNG · {reason}")
+                self.capture_hint_var.set(
+                    f"AUTO tạm dừng: {reason} · chọn MANUAL để chụp hoặc khởi động lại AUTO."
+                )
+                self.state_var.set("TRẠNG THÁI: AUTO TẠM DỪNG · CHỜ LỰA CHỌN")
                 self._set_controls()
             elif kind == "enrollment_reset":
                 self._show_enrollment_reset(payload)
@@ -821,6 +969,7 @@ class AI1Gui:
             "requests": queue.Queue(), "ready_to_save": False, "saved": False,
             "session_id": None, "captured_order_ui": [],
             "mode": selected_mode, "capture_pending": False, "fallback_reason": None,
+            "auto_paused": False,
         }
         self.last_result_status = None
         self.result_card_until = 0.0
@@ -842,12 +991,15 @@ class AI1Gui:
         mode = self.enrollment["mode"]
         self._sync_enrollment_start_button()
         self.capture_hint_var.set(
-            "Nhìn thẳng vào camera, giữ yên để hiệu chỉnh pose chuẩn."
+            "Nhìn thẳng tự nhiên để hiệu chỉnh frontal; camera sẽ tự gom các frame hợp lệ."
             if mode == "AUTO" else "Nhìn theo pose yêu cầu; quality PASS thì nhấn SPACE để chụp."
         )
         if hasattr(self, "auto_status_var"):
-            self.auto_status_var.set("AUTO: hiệu chỉnh frontal · giữ yên 8 frame" if mode == "AUTO"
-                                     else "MANUAL: nhấn SPACE để chụp pose hiện tại")
+            self.auto_status_var.set(
+                f"AUTO: hiệu chỉnh frontal · {GUIDED_POSE_STABLE_FRAMES} frame hợp lệ / "
+                f"≤{GUIDED_POSE_STABILITY_WINDOW_SECONDS:.0f} giây"
+                if mode == "AUTO" else "MANUAL: nhấn SPACE để chụp pose hiện tại"
+            )
         token = self._start_session("enrollment", self._enrollment_worker)
         if token is None:
             self._discard_enrollment()
@@ -909,7 +1061,9 @@ class AI1Gui:
             "mode": session.get("mode", "MANUAL"),
         }))
         if auto_tracker is not None:
-            auto_tracker.capture_result(True, state.current_pose)
+            auto_tracker.capture_result(
+                True, state.current_pose, embedding=state.embeddings[pose]
+            )
         if not state.complete:
             return {"status": "CAPTURED", "pose": pose, "next_pose": state.current_pose}
 
@@ -940,20 +1094,20 @@ class AI1Gui:
         auto_tracker = GuidedPoseTracker() if mode == "AUTO" else None
         session["auto_tracker"] = auto_tracker
         last_sequence = -1
+        last_reported_duplicate_sequence = None
         last_ui_time = 0.0
         last_ui_signature = None
+        last_worker_analysis = {}
         pose_started_at = time.monotonic()
 
-        def switch_to_manual(reason):
-            nonlocal auto_tracker, pose_started_at
-            if session.get("mode") != "AUTO":
+        def pause_auto(reason):
+            if session.get("mode") != "AUTO" or session.get("auto_paused"):
                 return
-            session["mode"] = "MANUAL"
+            session["auto_paused"] = True
             session["fallback_reason"] = str(reason)
             if auto_tracker is not None:
                 auto_tracker.force_manual_fallback(reason)
-            self.events.put(("enrollment_mode_fallback", token, {"reason": str(reason)}))
-            pose_started_at = time.monotonic()
+            self.events.put(("enrollment_auto_paused", token, {"reason": str(reason)}))
 
         try:
             while not stop_event.is_set():
@@ -971,6 +1125,7 @@ class AI1Gui:
                             requested_mode = "MANUAL"
                         session["mode"] = requested_mode
                         session["fallback_reason"] = None
+                        session["auto_paused"] = False
                         auto_tracker = GuidedPoseTracker() if requested_mode == "AUTO" else None
                         session["auto_tracker"] = auto_tracker
                         state = EnrollmentCaptureState()
@@ -983,23 +1138,59 @@ class AI1Gui:
                         self.events.put(("enrollment_reset", token, {"mode": session.get("mode")}))
                         continue
 
+                    if action == "select_manual":
+                        if session.get("mode") == "MANUAL":
+                            session["auto_paused"] = False
+                            auto_tracker = None
+                            session["auto_tracker"] = None
+                            self.events.put(("enrollment_mode_selected", token,
+                                             {"mode": "MANUAL"}))
+                        continue
+
                     if action in {"capture", "capture_auto"}:
                         if action == "capture_auto":
                             candidate = request["candidate"]
                             sequence = candidate["sequence"]
                             captured_at = candidate["captured_at"]
                             frame = candidate["frame"].copy()
-                            outcome = candidate["outcome"]
-                            age = time.monotonic() - captured_at
-                            if age < -0.1 or age > STALE_FRAME_SECONDS:
+                            candidate_fresh = (
+                                auto_tracker is not None
+                                and auto_tracker.candidate_is_fresh(candidate)
+                            )
+                            if not candidate_fresh:
                                 if auto_tracker is not None:
                                     auto_tracker.capture_result(False, state.current_pose)
                                 session["capture_pending"] = False
                                 self.events.put(("enrollment_capture_result", token, {
                                     "captured": False, "code": "STALE_FRAME",
-                                    "reason": "Mẫu ổn định đã cũ; đang chờ pose mới.",
+                                    "reason": ("Frame được chọn đã cũ khi worker nhận từ camera; "
+                                               "đang chờ pose mới."),
                                 }))
                                 continue
+                            # Pose/quality tracking used SCRFD only. ArcFace is
+                            # now run once on the sharpest selected frame, then
+                            # pose and identity are revalidated before staging.
+                            pose = state.current_pose
+                            outcome = validate_enrollment_frame(
+                                self.controller.engine, frame, pose, enforce_pose=False
+                            )
+                            selected_check = (auto_tracker.validate_selected_candidate(
+                                candidate, outcome, pose
+                            ) if auto_tracker is not None else {
+                                "status": "RETRY", "code": "AUTO TRACKER MISSING",
+                                "reason": "Không còn AUTO tracker để xác minh mẫu đã chọn.",
+                            })
+                            if selected_check.get("status") != "OK":
+                                if auto_tracker is not None:
+                                    auto_tracker.capture_result(False, pose)
+                                session["capture_pending"] = False
+                                self.events.put(("enrollment_capture_result", token, {
+                                    "captured": False,
+                                    "code": selected_check.get("code", "QUALITY CHECK"),
+                                    "reason": selected_check.get("reason", "Mẫu đã chọn không hợp lệ."),
+                                }))
+                                continue
+                            outcome = {**outcome, "embedding": selected_check["embedding"]}
                         else:
                             packet, failure_code = self._wait_for_new_packet(last_sequence, stop_event)
                             if packet is None:
@@ -1067,37 +1258,76 @@ class AI1Gui:
 
                 packet = self.controller.get_packet()
                 if packet is None:
+                    missing = (auto_tracker.note_missing_frame() if auto_tracker is not None
+                               and session.get("mode") == "AUTO" else {})
                     if (session.get("mode") == "AUTO"
                             and time.monotonic() - pose_started_at >= GUIDED_POSE_TIMEOUT_SECONDS):
-                        switch_to_manual(
-                            f"Không có frame camera mới hoặc pose chưa ổn định sau "
-                            f"{GUIDED_POSE_TIMEOUT_SECONDS:.0f} giây."
+                        timeout_detail = (auto_tracker._timeout_reason(state.current_pose)
+                                          if auto_tracker is not None else
+                                          f"AUTO quá {GUIDED_POSE_TIMEOUT_SECONDS:.0f} giây.")
+                        pause_auto(
+                            f"{missing.get('reason', 'Không có frame mới từ camera.')} "
+                            f"{timeout_detail}"
                         )
-                    self._post_enrollment_progress(token, {
+                    missing_analysis = {
                         "current_pose": state.current_pose, "detected_pose": "—",
                         "captured": len(state.embeddings),
-                        "code": "CAMERA DISCONNECTED", "reason": "Camera chưa có frame mới.",
+                        "code": "STALE_FRAME",
+                        "reason": missing.get("reason", "Camera chưa có frame mới."),
                         "bbox": None, "sharpness": None, "color": RED, "sequence": None,
                         "quality_status": "FAIL", "diagnostics": {},
                         "mode": session.get("mode", "MANUAL"),
-                        "auto_status": "FALLBACK_MANUAL" if session.get("mode") == "MANUAL" else "WAITING",
+                        "auto_status": ("FALLBACK_MANUAL" if session.get("mode") == "MANUAL"
+                                        else "AUTO_PAUSED" if session.get("auto_paused")
+                                        else missing.get("status", "STALE_FRAME")),
                         "fallback_reason": session.get("fallback_reason"),
-                        "stable_count": 0,
-                    }, last_ui_signature, last_ui_time)
-                    last_ui_signature = self._analysis_signature(
-                        "CAMERA DISCONNECTED", state, "—",
-                        "FALLBACK_MANUAL" if session.get("mode") == "MANUAL" else "WAITING",
-                        0, session.get("mode", "MANUAL"),
+                        "stable_count": missing.get("stable_count", 0),
+                        "inference_fps": missing.get("inference_fps"),
+                        "valid_frames": missing.get("valid_frames", missing.get("stable_count", 0)),
+                        "time_remaining_seconds": missing.get("time_remaining_seconds"),
+                    }
+                    missing_signature = self._analysis_signature(
+                        missing_analysis["code"], state, missing_analysis["detected_pose"],
+                        missing_analysis["auto_status"], missing_analysis["stable_count"],
+                        missing_analysis["mode"],
                     )
-                    last_ui_time = time.monotonic()
+                    now = time.monotonic()
+                    if missing_signature != last_ui_signature or now - last_ui_time >= 0.12:
+                        self.events.put(("enrollment_progress", token, missing_analysis))
+                        last_ui_signature, last_ui_time = missing_signature, now
                     stop_event.wait(0.04)
                     continue
 
+                # Timestamp intake before SCRFD starts. Inference may take
+                # longer than STALE_FRAME_SECONDS on CPU; that does not make a
+                # fresh packet stale retroactively.
+                packet_received_at = time.monotonic()
+
                 if packet.sequence <= last_sequence:
+                    if (session.get("mode") == "AUTO" and auto_tracker is not None
+                            and packet.sequence != last_reported_duplicate_sequence):
+                        repeated = auto_tracker.note_repeated_frame()
+                        last_reported_duplicate_sequence = packet.sequence
+                        now = time.monotonic()
+                        if now - last_ui_time >= 0.12:
+                            repeated_analysis = dict(last_worker_analysis)
+                            repeated_analysis.update({
+                                "current_pose": state.current_pose,
+                                "captured": len(state.embeddings),
+                                "code": "STALE_FRAME", "reason": repeated["reason"],
+                                "mode": "AUTO", "auto_status": repeated["status"],
+                                "stable_count": repeated["stable_count"],
+                                "inference_fps": repeated.get("inference_fps"),
+                                "valid_frames": repeated.get("valid_frames", repeated.get("stable_count", 0)),
+                                "time_remaining_seconds": repeated.get("time_remaining_seconds"),
+                            })
+                            self.events.put(("enrollment_progress", token, repeated_analysis))
+                            last_ui_time = now
                     stop_event.wait(0.005)
                     continue
                 last_sequence = packet.sequence
-                age = time.monotonic() - packet.captured_at
+                last_reported_duplicate_sequence = None
+                age = packet_received_at - packet.captured_at
                 pose = state.current_pose
                 frame = packet.frame.copy()
                 if age < -0.1 or age > STALE_FRAME_SECONDS:
@@ -1114,35 +1344,50 @@ class AI1Gui:
                         "diagnostics": {}, "expected_pose": pose,
                     }
                 else:
-                    outcome = validate_enrollment_frame(
-                        self.controller.engine, frame, pose, enforce_pose=False
-                    )
+                    if session.get("mode") == "AUTO" and auto_tracker is not None:
+                        outcome = validate_enrollment_pose_frame(
+                            self.controller.engine, frame, pose
+                        )
+                    else:
+                        outcome = validate_enrollment_frame(
+                            self.controller.engine, frame, pose, enforce_pose=False
+                        )
                     analysis = self._make_enrollment_analysis(
                         packet, frame, pose, outcome, len(state.embeddings)
                     )
+                last_worker_analysis = analysis
                 analysis["mode"] = session.get("mode", "MANUAL")
                 if session.get("mode") == "AUTO" and auto_tracker is not None:
                     auto = auto_tracker.observe(
                         pose, outcome, frame, packet.sequence, packet.captured_at,
-                        now=time.monotonic(),
+                        now=time.monotonic(), received_at=packet_received_at,
                     )
                     analysis.update({
                         "auto_status": auto.get("status"),
                         "auto_reason": auto.get("reason"),
+                        "inference_fps": auto.get("inference_fps"),
                         "calibrated_yaw": auto.get("yaw"),
                         "calibrated_pitch": auto.get("pitch"),
                         "pose_roll": auto.get("roll"),
+                        "frontal_view": auto.get("frontal_view"),
+                        "frontal_ok": auto.get("frontal_ok"),
                         "calibrating": bool(auto.get("calibrating", False)),
                         "calibration_reason": auto.get("reason"),
                         "reprojection_error_px": auto.get("reprojection_error_px"),
                         "stable_count": auto.get("stable_count", 0),
+                        "valid_frames": auto.get("valid_frames", auto.get("stable_count", 0)),
+                        "time_remaining_seconds": auto.get("time_remaining_seconds"),
                         "stability_window_expirations": auto.get("stability_window_expirations", 0),
                         "detected_pose": auto.get("detected_pose", analysis.get("detected_pose")),
                     })
-                    if (auto.get("status") == "STABILIZING"
-                            and auto.get("reason")):
+                    if auto.get("reason") and auto.get("status") not in {
+                            "CAPTURE_READY", "CAPTURE_PENDING"}:
                         analysis["reason"] = auto["reason"]
-                    if auto.get("status") in {"POSE_NOT_READY", "STABILIZING", "POSE_UNRELIABLE"}:
+                        if auto.get("fps_reason") and auto["fps_reason"] not in analysis["reason"]:
+                            analysis["reason"] += f" {auto['fps_reason']}"
+                    if auto.get("status") in {
+                            "POSE_NOT_READY", "WRONG_POSE", "STABILIZING", "LOW_FPS",
+                            "POSE_UNRELIABLE", "IDENTITY_MISMATCH"}:
                         analysis["color"] = YELLOW
                     if auto.get("status") == "CAPTURE_READY" and not session.get("capture_pending"):
                         candidate = auto["candidate"]
@@ -1150,21 +1395,24 @@ class AI1Gui:
                         session["requests"].put({"action": "capture_auto", "candidate": candidate})
                         analysis["auto_status"] = "CAPTURE_PENDING"
                         analysis["reason"] = (
-                            f"Pose ổn định {auto['stable_count']}/{GUIDED_POSE_STABLE_FRAMES}; "
-                            "đang chọn ảnh nét nhất."
+                            f"Đã gom {auto['stable_count']}/{GUIDED_POSE_STABLE_FRAMES} frame hợp lệ "
+                            "trong cửa sổ ổn định; đang chọn ảnh nét nhất."
                         )
-                    elif auto.get("status") == "FALLBACK_MANUAL":
-                        switch_to_manual(auto.get("reason", "Pose estimate unreliable."))
-                        analysis["mode"] = "MANUAL"
+                    elif auto.get("status") in {"FALLBACK_MANUAL", "AUTO_PAUSED"}:
+                        pause_auto(auto.get("reason", "Pose estimate unreliable."))
+                        analysis["auto_status"] = "AUTO_PAUSED"
                         analysis["reason"] = (
-                            f"{auto.get('reason', 'Pose chưa tin cậy')} · chuyển sang SPACE thủ công."
+                            f"{auto.get('reason', 'Pose chưa tin cậy')} · AUTO tạm dừng; "
+                            "chọn MANUAL hoặc khởi động lại AUTO."
                         )
                     elif (time.monotonic() - pose_started_at >= GUIDED_POSE_TIMEOUT_SECONDS
                           and auto.get("status") not in {"CAPTURE_READY", "CAPTURE_PENDING"}):
-                        switch_to_manual("Pose did not stabilize before the guided timeout.")
-                        analysis["mode"] = "MANUAL"
-                        analysis["auto_status"] = "FALLBACK_MANUAL"
-                        analysis["reason"] = "Quá thời gian hướng dẫn · có thể tiếp tục bằng SPACE."
+                        reason = auto_tracker._timeout_reason(state.current_pose)
+                        pause_auto(reason)
+                        analysis["auto_status"] = "AUTO_PAUSED"
+                        analysis["reason"] = (
+                            f"{reason} · chọn MANUAL để tiếp tục hoặc khởi động lại AUTO."
+                        )
                 elif session.get("fallback_reason"):
                     analysis["auto_status"] = "FALLBACK_MANUAL"
                     analysis["auto_reason"] = session["fallback_reason"]
@@ -1238,9 +1486,6 @@ class AI1Gui:
         return (code, state.current_pose, len(state.embeddings), detected_pose,
                 auto_status, int(stable_count or 0), mode)
 
-    def _post_enrollment_progress(self, token, analysis, _last_signature, _last_time):
-        self.events.put(("enrollment_progress", token, analysis))
-
     def _show_enrollment_progress(self, analysis):
         if self.enrollment is None:
             return
@@ -1263,26 +1508,39 @@ class AI1Gui:
         captured = int(analysis.get("captured", len(self.enrollment["state"].embeddings)))
         self._update_pose_ring(captured, stable_count if mode == "AUTO" else 0)
         if mode == "AUTO":
-            self.enrollment_mode_var.set("AUTO")
+            manual_choice_pending = bool(
+                self.enrollment.get("auto_paused")
+                and str(self.enrollment_mode_var.get()).upper() == "MANUAL"
+            )
+            if not manual_choice_pending:
+                self.enrollment_mode_var.set("AUTO")
             if auto_status == "STABILIZING":
                 if analysis.get("calibrating"):
-                    message = ("Đang hiệu chỉnh frontal · nhìn thẳng, giữ yên "
+                    message = ("Đang hiệu chỉnh frontal · nhìn thẳng tự nhiên · "
                                f"{stable_count}/{GUIDED_POSE_STABLE_FRAMES}")
                 else:
                     message = (f"{POSE_DIRECTIONS.get(pose, 'Giữ pose hiện tại')} · "
-                               f"đang giữ yên {stable_count}/{GUIDED_POSE_STABLE_FRAMES}")
+                               f"đã gom {stable_count}/{GUIDED_POSE_STABLE_FRAMES} frame hợp lệ "
+                               f"trong {GUIDED_POSE_STABILITY_WINDOW_SECONDS:.0f}s")
+            elif auto_status == "LOW_FPS":
+                message = reason or "FPS inference thấp; AUTO đang chờ thêm frame mới."
             elif auto_status == "CAPTURE_PENDING":
-                message = "Pose ổn định · đang chọn frame rõ nhất để tự chụp."
+                message = "Đủ frame ổn định · đang chọn frame rõ nhất để tự chụp."
             elif auto_status == "CAPTURE_READY":
                 message = "Đã đạt pose · đang chụp mẫu tốt nhất."
             elif auto_status == "POSE_NOT_READY":
-                message = (str(analysis.get("calibration_reason") or "") if analysis.get("calibrating")
-                           else f"Hãy {POSE_DIRECTIONS.get(pose, 'điều chỉnh đầu')} · "
-                           f"hiện tại: {analysis.get('detected_pose', 'between')}")
-            elif auto_status in {"POSE_UNRELIABLE", "QUALITY_REJECTED", "STALE_FRAME"}:
+                message = reason or (
+                    f"Hãy {POSE_DIRECTIONS.get(pose, 'điều chỉnh đầu')} · hiện tại: "
+                    f"{analysis.get('detected_pose', 'between')}"
+                )
+            elif auto_status in {
+                    "WRONG_POSE", "POSE_UNRELIABLE", "QUALITY_REJECTED", "STALE_FRAME",
+                    "IDENTITY_MISMATCH"}:
                 message = reason or str(analysis.get("auto_reason") or auto_status)
             elif auto_status == "FALLBACK_MANUAL":
                 message = reason or "Pose chưa ổn định · dùng SPACE để chụp thủ công."
+            elif auto_status == "AUTO_PAUSED":
+                message = reason or "AUTO đã tạm dừng · chọn MANUAL hoặc khởi động lại AUTO."
             else:
                 message = "Nhìn thẳng vào camera để hiệu chỉnh pose frontal."
             yaw, pitch = analysis.get("calibrated_yaw"), analysis.get("calibrated_pitch")
@@ -1290,7 +1548,15 @@ class AI1Gui:
                       if yaw is not None and pitch is not None else "")
             status_detail = ("frontal calibration · góc tương đối chưa có"
                              if analysis.get("calibrating") and yaw is None
-                             else f"ổn định {stable_count}/{GUIDED_POSE_STABLE_FRAMES}{angles}")
+                             else f"frame hợp lệ {stable_count}/{GUIDED_POSE_STABLE_FRAMES}{angles}")
+            inference_fps = analysis.get("inference_fps")
+            if inference_fps is not None:
+                status_detail += f" · {float(inference_fps):.1f} FPS"
+            else:
+                status_detail += " · — FPS"
+            remaining = analysis.get("time_remaining_seconds")
+            if remaining is not None:
+                status_detail += f" · còn {max(0, int(float(remaining)))}s"
             self.auto_status_var.set(f"AUTO · {auto_status or 'WAITING'} · {status_detail}")
         else:
             self.enrollment_mode_var.set("MANUAL")
@@ -1319,12 +1585,17 @@ class AI1Gui:
             self.state_var.set(f"TRẠNG THÁI: {self.capture_feedback}")
         elif mode == "AUTO":
             status_map = {
-                "STABILIZING": "ĐANG GIỮ POSE ỔN ĐỊNH",
+                "STABILIZING": "ĐANG GOM FRAME HỢP LỆ",
+                "LOW_FPS": "FPS INFERENCE THẤP",
                 "CAPTURE_PENDING": "ĐANG TỰ CHỌN MẪU TỐT NHẤT",
                 "POSE_NOT_READY": "ĐANG ĐIỀU CHỈNH POSE",
+                "WRONG_POSE": "SAI HƯỚNG ĐẦU",
                 "POSE_UNRELIABLE": "POSE CHƯA ĐÁNG TIN CẬY",
+                "IDENTITY_MISMATCH": "KHUÔN MẶT KHÔNG NHẤT QUÁN",
                 "QUALITY_REJECTED": "QUALITY GATE CHƯA ĐẠT",
+                "STALE_FRAME": "ĐANG CHỜ FRAME MỚI",
                 "FALLBACK_MANUAL": "MANUAL FALLBACK · SPACE",
+                "AUTO_PAUSED": "AUTO TẠM DỪNG · CHỜ LỰA CHỌN",
             }
             self.state_var.set(f"TRẠNG THÁI: {status_map.get(auto_status, message)}")
         else:
@@ -1336,7 +1607,7 @@ class AI1Gui:
             self.sharpness_var.set(f"Sharpness: {float(analysis['sharpness']):.1f}")
         progress_text = f"Tiến độ: {captured}/5"
         if mode == "AUTO" and pose in POSES:
-            progress_text += f" · ổn định {stable_count}/{GUIDED_POSE_STABLE_FRAMES}"
+            progress_text += f" · frame hợp lệ {stable_count}/{GUIDED_POSE_STABLE_FRAMES}"
         self.progress_var.set(progress_text)
         self.enrollment_progress_var.set(progress_text)
 
@@ -1460,9 +1731,12 @@ class AI1Gui:
             self._update_pose_ring(0, 0)
             self.latest_analysis = {}
             self.pose_var.set("Pose yêu cầu: 1/5 · Nhìn thẳng")
-            self.auto_status_var.set("AUTO · hiệu chỉnh frontal · giữ yên 8 frame"
-                                     if session["mode"] == "AUTO"
-                                     else "MANUAL · nhấn SPACE khi quality PASS")
+            self.auto_status_var.set(
+                f"AUTO · frontal · {GUIDED_POSE_STABLE_FRAMES} frame hợp lệ / "
+                f"≤{GUIDED_POSE_STABILITY_WINDOW_SECONDS:.0f} giây"
+                if session["mode"] == "AUTO"
+                else "MANUAL · nhấn SPACE khi quality PASS"
+            )
             self._sync_enrollment_start_button()
             token = self._start_session("enrollment", self._enrollment_worker)
             if token is not None:
@@ -1490,8 +1764,11 @@ class AI1Gui:
             "Nhìn thẳng vào camera để hiệu chỉnh frontal." if mode == "AUTO"
             else "Nhìn theo pose yêu cầu; nhấn SPACE khi quality PASS."
         )
-        self.auto_status_var.set("AUTO · hiệu chỉnh frontal · giữ yên 8 frame"
-                                 if mode == "AUTO" else "MANUAL · nhấn SPACE khi quality PASS")
+        self.auto_status_var.set(
+            f"AUTO · frontal · {GUIDED_POSE_STABLE_FRAMES} frame hợp lệ / "
+            f"≤{GUIDED_POSE_STABILITY_WINDOW_SECONDS:.0f} giây"
+            if mode == "AUTO" else "MANUAL · nhấn SPACE khi quality PASS"
+        )
         self.state_var.set("TRẠNG THÁI: ĐÃ RESET · BẮT ĐẦU TỪ FRONTAL")
 
     def _cancel_enrollment(self):
@@ -1565,7 +1842,8 @@ class AI1Gui:
         canvas.create_text(center_x, center_y - 2, text=f"{completed}/5",
                            fill=TEXT, font=("Segoe UI", 12, "bold"))
         canvas.create_text(center_x, center_y + 14,
-                           text=(f"{stable_count}/8" if current_index is not None else "XONG"),
+                            text=(f"{stable_count}/{GUIDED_POSE_STABLE_FRAMES}"
+                                  if current_index is not None else "XONG"),
                            fill=DIM, font=("Segoe UI", 7))
 
     def _retry_save(self):
@@ -1894,8 +2172,20 @@ class AI1Gui:
             calibrated_pitch = analysis.get("calibrated_pitch")
             reprojection = analysis.get("reprojection_error_px", debug.get("reprojection_error_px"))
             stable_count = analysis.get("stable_count", 0)
+            frontal_view = analysis.get("frontal_view") or {}
+            if mode == "AUTO" and analysis.get("calibrating") and frontal_view:
+                frontal_text = (
+                    f"Front check: {'PASS' if analysis.get('frontal_ok') else 'FAIL'} · "
+                    f"yaw {number(frontal_view.get('raw_yaw'), 1, True)}° · "
+                    f"eye span {number(frontal_view.get('eye_span_face_height'), 2)}h · "
+                    f"nose offset {number(frontal_view.get('nose_offset_face_width'), 2)}w"
+                )
+            elif mode == "AUTO" and analysis.get("calibrating"):
+                frontal_text = "Front check: đang xác minh hướng mặt từ landmark SCRFD"
+            else:
+                frontal_text = None
             if mode == "AUTO":
-                capture_instruction = (f"AUTO: giữ ổn định {stable_count}/{GUIDED_POSE_STABLE_FRAMES}"
+                capture_instruction = (f"AUTO: gom frame {stable_count}/{GUIDED_POSE_STABLE_FRAMES}"
                                        if not analysis.get("calibrating") else
                                        f"Hiệu chỉnh frontal {stable_count}/{GUIDED_POSE_STABLE_FRAMES}")
             else:
@@ -1904,7 +2194,7 @@ class AI1Gui:
                 )
                 capture_instruction = (f"MANUAL FALLBACK: {fallback_reason}"
                                        if fallback_reason else "MANUAL: nhấn SPACE khi quality PASS")
-            pose_line = (f"Raw pose: {raw_detected} | Calibrated pose: {detected} | Expected: {expected}"
+            pose_line = (f"Raw zone (pre-map): {raw_detected} | AUTO pose: {detected} | Expected: {expected}"
                          if mode == "AUTO" else
                          f"Raw pose: {raw_detected} | Expected: {expected}")
             angle_text = (
@@ -1919,10 +2209,13 @@ class AI1Gui:
                 f"Center offset: X {number(offset_x, 1, True)}px ({number(None if offset_x_pct is None else offset_x_pct * 100, 1, True)}%)  Y {number(offset_y, 1, True)}px ({number(None if offset_y_pct is None else offset_y_pct * 100, 1, True)}%)",
                 f"Brightness: {number(debug.get('brightness'))} | Laplacian: {number(debug.get('sharpness'))}",
                 f"Raw yaw: {number(yaw, 1, True)}° | Raw pitch: {number(pitch, 1, True)}°",
+                *([frontal_text] if frontal_text else []),
                 pose_line,
                 f"Yaw/pitch đã hiệu chỉnh: {angle_text} | Reproject: {number(reprojection, 1)}px",
                 f"Quality: {quality_result} | Code: {quality_code}",
-                f"Capture: {capture_instruction}",
+                f"Inference: {number(analysis.get('inference_fps'), 1)} FPS | "
+                f"Frame hợp lệ: {stable_count}/{GUIDED_POSE_STABLE_FRAMES} | "
+                f"Còn: {number(analysis.get('time_remaining_seconds'), 0)}s | {capture_instruction}",
                 f"Reason: {reason}",
             ]
             font_size = 11
@@ -1981,6 +2274,11 @@ class AI1Gui:
         frame = packet.frame if packet is not None else None
         if frame is not None:
             self.current_packet = packet
+            source_height, source_width = frame.shape[:2]
+            aspect = source_width / max(1, source_height)
+            if (getattr(self, "_preview_size", None) is None
+                    or abs(getattr(self, "_preview_aspect", 0.0) - aspect) > 0.01):
+                self._resize_preview()
             if self.best_result_frame is not None and time.monotonic() < self.best_frame_until:
                 display = self.best_result_frame.copy()
             else:
@@ -1989,14 +2287,17 @@ class AI1Gui:
                 display = self._draw_preview(frame, packet)
             rgb = cv2.cvtColor(display, cv2.COLOR_BGR2RGB)
             image = Image.fromarray(rgb)
-            width = max(500, self.preview.winfo_width())
-            height = max(340, self.preview.winfo_height())
-            image = ImageOps.contain(image, (width, height), method=Image.Resampling.LANCZOS)
-            photo = ImageTk.PhotoImage(image)
+            width, height = getattr(self, "_preview_size", (640, 480))
+            contained = ImageOps.contain(image, (width, height), method=Image.Resampling.LANCZOS)
+            canvas_image = Image.new("RGB", (width, height), (5, 7, 10))
+            canvas_image.paste(contained, ((width - contained.width) // 2,
+                                           (height - contained.height) // 2))
+            photo = ImageTk.PhotoImage(canvas_image)
             self.current_photo = photo
             self.preview.configure(image=photo, text="")
         elif self.controller.ready and self.active_operation is None:
-            self.preview.configure(text="Chưa có frame mới từ camera.")
+            self.preview.configure(image="", text="Chưa có frame mới từ camera.")
+            self.current_photo = None
         self.root.after(33, self._update_preview)
 
     def _on_close(self):

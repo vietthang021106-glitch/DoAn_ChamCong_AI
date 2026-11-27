@@ -229,9 +229,6 @@ def process_attendance(ma_nv, ma_tb=1, image_bytes=None):
        - Có bản ghi, GioRa=NULL → CHECK-OUT
        - Có bản ghi, GioRa!=NULL → COMPLETED
 
-    3. CHECK-IN thành công → set_active_employee (caller xử lý)
-       CHECK-OUT thành công → clear_active_employee nếu đúng người
-
     image_bytes: bytes JPEG hoặc None.
                  Nếu None, chấm công vẫn hoạt động bình thường;
                  AnhVao / AnhRa sẽ lưu NULL.
@@ -346,7 +343,6 @@ def fetch_attendance_dashboard(target_date=None):
         VeSom         : GioRa < GioKetThuc (đã ra về)
         ChuaChamCong  : TongNhanVien - DaChamCong  (≥ 0)
         DaRaVe        : GioRa != NULL
-        CanhBaoHomNay : số cảnh báo AI ngày được chọn
         SelectedDate  : ngày được chọn (YYYY-MM-DD)
 
     Records: danh sách toàn bộ NV kèm trạng thái
@@ -368,8 +364,7 @@ def fetch_attendance_dashboard(target_date=None):
     selected_str = target_d.strftime('%Y-%m-%d')
 
     try:
-        rows         = database.get_attendance_by_date(target_d)
-        canh_bao_cnt = database.get_alert_count_by_date(target_d)
+        rows = database.get_attendance_by_date(target_d)
     except Exception as e:
         print(f"[services] Loi lay dashboard: {e}")
         return {
@@ -381,7 +376,6 @@ def fetch_attendance_dashboard(target_date=None):
                 "VeSom":         0,
                 "ChuaChamCong":  0,
                 "DaRaVe":        0,
-                "CanhBaoHomNay": 0,
             },
             "Records": [],
             "SelectedDate": selected_str,
@@ -466,7 +460,6 @@ def fetch_attendance_dashboard(target_date=None):
             "VeSom":         ve_som,
             "ChuaChamCong":  chua_cham,
             "DaRaVe":        da_ra_ve,
-            "CanhBaoHomNay": canh_bao_cnt,
         },
         "Records": records,
         "SelectedDate": selected_str,
@@ -601,106 +594,6 @@ def fetch_health_chart_data():
         ]
     except Exception as e:
         print(f"[services] Loi lay chart suc khoe: {e}")
-        return []
-
-
-# ============================================================
-# ============================================================
-# AI State Log
-# ============================================================
-
-def save_state_log(ma_nv, trang_thai, gia_tri=None):
-    """
-    Lưu trạng thái AI.
-    gia_tri nhận để tương thích với ai_engine.
-
-    Args:
-        ma_nv: Nhân viên đang được theo dõi; None thì không ghi.
-        trang_thai: Nhãn trạng thái hiện tại.
-        gia_tri: Giá trị tùy chọn giữ tương thích với caller cũ.
-    """
-    if ma_nv is None:
-        return False
-    try:
-        database.insert_trang_thai(ma_nv, trang_thai, gia_tri)
-        return True
-    except Exception as e:
-        print(f"[services] Loi luu trang thai: {e}")
-        return False
-
-
-# ============================================================
-# AI Alert
-# ============================================================
-
-def save_alert(ma_nv, loai_canh_bao, mo_ta, gia_tri=None):
-    """
-    Khi AI phát hiện buồn ngủ / gục đầu:
-    1. Tạo LichSuTrangThai → lấy MaTT.
-    2. Tạo CanhBao liên kết MaTT.
-
-    Args:
-        ma_nv: Mã nhân viên được xác định.
-        loai_canh_bao: Nhóm cảnh báo.
-        mo_ta: Nội dung cảnh báo.
-        gia_tri: Giá trị bổ sung tương thích với API nghiệp vụ.
-    """
-    if ma_nv is None:
-        return False
-
-    loai_lower = str(loai_canh_bao).strip().lower()
-
-    if "buon" in loai_lower or "ngu" in loai_lower or "ngủ" in loai_lower:
-        trang_thai = "buon_ngu"
-    elif "guc" in loai_lower or "gục" in loai_lower:
-        trang_thai = "guc_dau"
-    else:
-        trang_thai = "binh_thuong"
-
-    try:
-        ma_tt = database.insert_trang_thai(ma_nv, trang_thai, gia_tri)
-        database.insert_canh_bao(
-            ma_nv=ma_nv,
-            loai_canh_bao=loai_canh_bao,
-            mo_ta=mo_ta,
-            gia_tri=gia_tri,
-            ma_tt=ma_tt,
-            ma_tb=1,
-            ma_loai_cb=1,
-        )
-        return True
-    except Exception as e:
-        print(f"[services] Loi luu canh bao: {e}")
-        return False
-
-
-# ============================================================
-# Alert History
-# ============================================================
-
-def fetch_alert_history(limit=10):
-    """
-    Trả danh sách cảnh báo cho Dashboard.
-    Fields: HoTen, LoaiCanhBao, MoTa, GiaTri, ThoiGian, DaXuLy
-    """
-    try:
-        records = database.get_recent_canh_bao(limit=limit)
-        result = []
-        for row in records:
-            result.append({
-                "HoTen":      row[0],
-                "LoaiCanhBao": row[1] if row[1] else "Cảnh báo AI",
-                "MoTa":       row[2] if row[2] else "",
-                "GiaTri":     None,
-                "ThoiGian": (
-                    row[3].strftime("%Y-%m-%d %H:%M:%S")
-                    if row[3] else "--"
-                ),
-                "DaXuLy": False,
-            })
-        return result
-    except Exception as e:
-        print(f"[services] Loi lay canh bao: {e}")
         return []
 
 
@@ -1131,19 +1024,6 @@ def fetch_my_health(ma_nv):
     except Exception as e:
         print(f"[services] Loi lay suc khoe ca nhan {ma_nv}: {e}")
         return []
-
-def fetch_my_alerts(ma_nv):
-    try:
-        rows = database.get_employee_alert_history(ma_nv, limit=20)
-        return [{
-            "LoaiCanhBao": r[0] if r[0] else "Cảnh báo AI",
-            "MoTa": r[1] if r[1] else "",
-            "ThoiGian": r[2].strftime("%Y-%m-%d %H:%M:%S") if r[2] else "--"
-        } for r in rows]
-    except Exception as e:
-        print(f"[services] Loi lay canh bao ca nhan {ma_nv}: {e}")
-        return []
-
 
 # ============================================================
 # Face Enrollment — PHASE 1

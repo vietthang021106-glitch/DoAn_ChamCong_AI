@@ -7,7 +7,6 @@ require_once __DIR__ . '/../Model/EmployeeModel.php';
 require_once __DIR__ . '/../Model/AttendanceModel.php';
 require_once __DIR__ . '/../Model/ShiftModel.php';
 require_once __DIR__ . '/../Model/HealthModel.php';
-require_once __DIR__ . '/../Model/AlertModel.php';
 require_once __DIR__ . '/../Model/FaceEmbeddingModel.php';
 
 if (!in_array('sqlite', PDO::getAvailableDrivers(), true)) {
@@ -72,10 +71,8 @@ $assert($shifts->employeeExists(2), 'shift guard accepts a real employee');
 $assert(array_map('intval', array_column($shifts->findEmployees(), 'MaNV')) === [2], 'shift selector contains employees only');
 $assert((new FaceEmbeddingModel($pdo))->findAllForInternalGallery() === [], 'AI gallery query works without DaXoa');
 $healthSource = file_get_contents(__DIR__ . '/../Model/HealthModel.php');
-$alertSource = file_get_contents(__DIR__ . '/../Model/AlertModel.php');
 $dashboardSource = file_get_contents(__DIR__ . '/../Model/DashboardModel.php');
 $assert(is_string($healthSource) && str_contains($healthSource, 'Database::activeEmployeePredicate'), 'health selector uses schema-aware filter');
-$assert(is_string($alertSource) && str_contains($alertSource, 'Database::activeEmployeePredicate'), 'alert selector uses schema-aware filter');
 $assert(is_string($dashboardSource) && str_contains($dashboardSource, 'Database::activeEmployeePredicate'), 'dashboard counts use schema-aware filters');
 
 echo "PASS: {$assertions} legacy-schema compatibility assertions.\n";

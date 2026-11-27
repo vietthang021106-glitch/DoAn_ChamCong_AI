@@ -7,38 +7,33 @@ $paginationQuery = [
     'to_date' => $toDate,
     'employee_id' => $employeeId ?? '',
     'keyword' => $keyword,
+    'status' => $status,
     'limit' => $limit,
 ];
 $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($paginationQuery + ['page' => $targetPage]);
 ?>
 <?php endif; ?>
 <main class="page-container">
-    <section class="workspace" aria-label="Tra cứu chấm công">
-        <nav class="workspace-tabs" aria-label="Các mục chấm công">
-            <a href="/?action=attendance" <?= $activeTab === 'attendance' ? 'aria-current="page"' : '' ?>>Chấm công</a>
-            <a href="/?action=attendance&amp;tab=live" <?= $activeTab === 'live' ? 'aria-current="page"' : '' ?>>Giám sát trực tiếp</a>
-            <a href="/?action=attendance&amp;tab=scan_history" <?= $activeTab === 'scan_history' ? 'aria-current="page"' : '' ?>>Lịch sử quét thất bại</a>
-        </nav>
+    <section class="workspace attendance-workspace" aria-label="Tra cứu chấm công">
         <?php if ($activeTab === 'scan_history'): ?>
+            <div class="attendance-page-heading">
+                <div>
+                    <p class="eyebrow">CHẤM CÔNG · KIỂM TRA SỰ CỐ</p>
+                    <h1 id="attendance-page-title">Lịch sử quét thất bại</h1>
+                    <p>Các lượt quét không tạo hoặc cập nhật chấm công.</p>
+                </div>
+                <a class="button button--secondary button--small" href="/?action=attendance">Về chấm công</a>
+            </div>
             <?php require __DIR__ . '/partials/scan_history.php'; ?>
-        <?php elseif ($activeTab === 'live'): ?>
-            <?php require __DIR__ . '/partials/live_attendance.php'; ?>
         <?php else: ?>
-        <section class="ai1-recognition" data-ai1-recognition data-csrf="<?= htmlspecialchars(CsrfToken::token(), ENT_QUOTES, 'UTF-8') ?>" aria-label="Nhận diện khuôn mặt AI1">
-            <div class="ai1-recognition-copy">
-                <p class="eyebrow">AI1 · ArcFace buffalo_l</p>
-                <h2>Quét khuôn mặt</h2>
-                <p>Dùng ba khung hình mới, kiểm tra chúng nhất quán rồi chọn khung rõ nhất. Chức năng này chỉ hiển thị kết quả nhận diện, không ghi chấm công.</p>
-                <button class="button button--primary" type="button" data-ai1-recognition-start>Bắt đầu quét</button>
-                <p class="ai1-recognition-status" data-ai1-recognition-status data-state="idle" role="status" aria-live="polite">Sẵn sàng</p>
-                <div class="ai1-recognition-result" data-ai1-recognition-result hidden></div>
+            <div class="attendance-page-heading">
+                <div>
+                    <p class="eyebrow">QUẢN TRỊ · LỊCH SỬ</p>
+                    <h1 id="attendance-page-title">Chấm công</h1>
+                    <p>Lọc lịch sử vào/ra, trạng thái và ảnh bằng chứng.</p>
+                </div>
+                <a class="button button--secondary button--small" href="/?action=attendance&amp;tab=scan_history">Quét thất bại</a>
             </div>
-            <div class="ai1-recognition-camera-wrap">
-                <img data-ai1-recognition-camera alt="Khung hình camera AI1" hidden>
-                <canvas data-ai1-recognition-canvas hidden aria-label="Khung hình nhận diện tốt nhất"></canvas>
-                <div data-ai1-recognition-empty>Camera dùng chung từ nguồn hiện tại.</div>
-            </div>
-        </section>
         <form class="workspace-filters attendance-workspace-filters" method="get" action="/">
             <input type="hidden" name="action" value="attendance">
             <div class="filter-grid attendance-filter-grid">
@@ -64,6 +59,20 @@ $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($pagina
                         <?php endforeach; ?>
                     </select>
                     <?php if (isset($errors['employee_id'])): ?><p class="field-error"><?= htmlspecialchars($errors['employee_id'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p><?php endif; ?>
+                </div>
+                <div class="form-field">
+                    <label for="attendance-status">Trạng thái</label>
+                    <select id="attendance-status" name="status">
+                        <option value="" <?= $status === '' ? 'selected' : '' ?>>Tất cả trạng thái</option>
+                        <option value="not_checked" <?= $status === 'not_checked' ? 'selected' : '' ?>>Chưa chấm vào</option>
+                        <option value="on_time_in" <?= $status === 'on_time_in' ? 'selected' : '' ?>>Vào đúng giờ</option>
+                        <option value="working" <?= $status === 'working' ? 'selected' : '' ?>>Đang làm việc</option>
+                        <option value="late" <?= $status === 'late' ? 'selected' : '' ?>>Đi trễ</option>
+                        <option value="on_time_out" <?= $status === 'on_time_out' ? 'selected' : '' ?>>Ra đúng giờ</option>
+                        <option value="early" <?= $status === 'early' ? 'selected' : '' ?>>Về sớm</option>
+                        <option value="completed" <?= $status === 'completed' ? 'selected' : '' ?>>Đã chấm vào và ra</option>
+                    </select>
+                    <?php if (isset($errors['status'])): ?><p class="field-error"><?= htmlspecialchars($errors['status'], ENT_QUOTES | ENT_SUBSTITUTE, 'UTF-8') ?></p><?php endif; ?>
                 </div>
                 <div class="form-field">
                     <label for="attendance-keyword">Mã hoặc họ tên</label>
@@ -169,6 +178,4 @@ $pageUrl = static fn(int $targetPage): string => '/?' . http_build_query($pagina
 </main>
 <?php require __DIR__ . '/partials/evidence_lightbox.php'; ?>
 <script src="/public/js/evidence_lightbox.js" defer></script>
-<script src="/public/js/face_recognition.js" defer></script>
-<?php if ($activeTab === 'live'): ?><script src="/public/js/live_attendance.js" defer></script><?php endif; ?>
 <?php require __DIR__ . '/layout/footer.php'; ?>

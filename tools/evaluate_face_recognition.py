@@ -13,11 +13,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import cv2
-import numpy as np
 
 from face_engine import face_engine
 from face_evaluation import evaluate_scores
-from face_matching import cosine_similarity, normalize_embedding
+from face_matching import max_sample_similarity, normalize_embedding
 
 
 IMAGE_SUFFIXES = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
@@ -51,7 +50,7 @@ def evaluate_dataset(root, engine=face_engine):
         gallery_vectors = load_embeddings(gallery_dir, engine)
         probe_vectors = load_embeddings(probe_dir, engine)
         if gallery_vectors and probe_vectors:
-            gallery[person_dir.name] = normalize_embedding(np.mean(gallery_vectors, axis=0))
+            gallery[person_dir.name] = gallery_vectors
             probes[person_dir.name] = probe_vectors
 
     if len(gallery) < 2:
@@ -61,10 +60,10 @@ def evaluate_dataset(root, engine=face_engine):
     impostor_scores = []
     for identity, identity_probes in probes.items():
         for probe in identity_probes:
-            genuine_scores.append(cosine_similarity(probe, gallery[identity]))
+            genuine_scores.append(max_sample_similarity(probe, gallery[identity]))
             for other_id, other_gallery in gallery.items():
                 if other_id != identity:
-                    impostor_scores.append(cosine_similarity(probe, other_gallery))
+                    impostor_scores.append(max_sample_similarity(probe, other_gallery))
     return evaluate_scores(genuine_scores, impostor_scores)
 
 

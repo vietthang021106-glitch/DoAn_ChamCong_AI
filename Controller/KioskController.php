@@ -164,17 +164,56 @@ final class KioskController
         }
         try {
             if ($this->devices->findById($deviceId) === null) {
-                $this->jsonResponse(['state' => 'RETRY', 'message' => 'Không tìm thấy thiết bị chấm công.'], 404);
+                $this->jsonResponse([
+                    'state' => 'RETRY',
+                    'message' => 'Không tìm thấy thiết bị chấm công.',
+                    ...$this->recognizedEmployeeForSession($sessionId),
+                ], 404);
             }
             $result = $this->attendance->recordFromRecognitionSession($sessionId, $deviceId, $_SESSION);
         } catch (Throwable $exception) {
             error_log('Attendance terminal request failed: ' . $exception->getMessage());
-            $this->jsonResponse(['state' => 'OFFLINE', 'message' => 'Không kết nối được máy chủ.'], 503);
+            $this->jsonResponse([
+                'state' => 'OFFLINE',
+                'message' => 'Không kết nối được máy chủ.',
+                ...$this->recognizedEmployeeForSession($sessionId),
+            ], 503);
         }
 
         $status = ($result['state'] ?? '') === 'OFFLINE' ? 503
             : (($result['state'] ?? '') === 'PROCESSING' ? 202 : 200);
         $this->jsonResponse($result, $status);
+    }
+
+    /** Include a name only when AI1 has already completed and verified this session. */
+    private function recognizedEmployeeForSession(string $sessionId): array
+    {
+        try {
+            $session = $this->ai->recognitionSessionStatus($sessionId);
+            $result = $session['result'] ?? null;
+            if (($session['success'] ?? false) !== true
+                || ($session['state'] ?? '') !== 'COMPLETED'
+                || !is_array($result)
+                || ($result['recognized'] ?? false) !== true) {
+                return [];
+            }
+
+            $employeeId = filter_var(
+                $result['ma_nv'] ?? null,
+                FILTER_VALIDATE_INT,
+                ['options' => ['min_range' => 1]]
+            );
+            if (!is_int($employeeId)) {
+                return [];
+            }
+
+            return [
+                'employee_id' => $employeeId,
+                'employee_name' => is_string($result['ho_ten'] ?? null) ? $result['ho_ten'] : '',
+            ];
+        } catch (Throwable) {
+            return [];
+        }
     }
 
     private function pruneIssuedSessions(array &$issued): void

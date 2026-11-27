@@ -142,27 +142,6 @@ final class MyModel
         return $statement->fetchAll();
     }
 
-    /** Lấy cảnh báo thuộc riêng một nhân viên cùng loại/trạng thái liên quan. */
-    public function findAlerts(int $employeeId): array
-    {
-        $statement = Database::getConnection()->prepare(<<<'SQL'
-            SELECT
-                COALESCE(BH.TenBieuHien, LCB.TenLoaiCB) AS LoaiCanhBao,
-                CB.NoiDung,
-                CB.ThoiGian
-            FROM CanhBao CB
-            LEFT JOIN LoaiCanhBao LCB ON LCB.MaLoaiCB = CB.MaLoaiCB
-            LEFT JOIN LichSuTrangThai TT ON TT.MaTT = CB.MaTT
-            LEFT JOIN DanhMucBieuHien BH ON BH.MaBieuHien = TT.MaBieuHien
-            WHERE CB.MaNV = :employee_id
-            ORDER BY CB.ThoiGian DESC, CB.MaCB DESC
-            LIMIT 20
-            SQL);
-        $statement->execute(['employee_id' => $employeeId]);
-
-        return $statement->fetchAll();
-    }
-
     /** Trả ảnh bằng chứng chỉ khi MaCC thuộc đúng MaNV đã xác thực. */
     public function findOwnedEvidence(int $attendanceId, int $employeeId, string $type): ?string
     {

@@ -17,6 +17,7 @@
     const terminalLink = root.querySelector('[data-face-terminal-link]');
     const camera = root.querySelector('[data-face-camera]');
     const cameraEmpty = root.querySelector('[data-face-camera-empty]');
+    const cameraWrap = root.querySelector('.face-enrollment-camera-wrap');
     const stepLabel = root.querySelector('[data-face-step]');
     const feedback = root.querySelector('[data-face-feedback]');
     const poseList = root.querySelector('[data-face-pose-list]');
@@ -45,6 +46,8 @@
     let frameTimer = null;
     let activeMode = 'AUTO';
     let duplicateCheckStatus = null;
+    let demoDuplicateBypassAvailable = false;
+    let enrollmentSessionOpen = false;
 
     const post = async (action, values = {}) => {
         const body = new URLSearchParams({ _csrf_token: csrfToken, ...values });
@@ -67,6 +70,38 @@
         return { response, payload };
     };
 
+    const cancelOpenEnrollmentSession = async () => {
+        const { response, payload } = await post('face_enrollment_cancel');
+        if (!response.ok || !payload.success) {
+            throw new Error(payload.message || 'Không thể hủy phiên đăng ký.');
+        }
+        enrollmentSessionOpen = false;
+    };
+
+    const releaseEnrollmentSessionOnPageExit = () => {
+        if (!enrollmentSessionOpen) return;
+        enrollmentSessionOpen = false;
+        stopPosePolling();
+        const url = `/?action=face_enrollment_cancel&id=${encodeURIComponent(employeeId)}`;
+        const body = new URLSearchParams({ _csrf_token: csrfToken }).toString();
+        const queued = navigator.sendBeacon
+            && navigator.sendBeacon(url, new Blob([body], {
+                type: 'application/x-www-form-urlencoded;charset=UTF-8',
+            }));
+        if (!queued) {
+            fetch(url, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
+                body,
+                credentials: 'same-origin',
+                cache: 'no-store',
+                keepalive: true,
+            }).catch(() => {});
+        }
+    };
+
+    window.addEventListener('pagehide', releaseEnrollmentSessionOnPageExit);
+
     const showResult = (message, kind = 'info') => {
         result.textContent = message;
         result.className = `notice face-enrollment-result notice--${kind}`;
@@ -75,19 +110,39 @@
 
     const duplicateUnavailableReason = (reason) => ({
         THRESHOLD_NOT_CALIBRATED: 'chưa có ngưỡng chống trùng được hiệu chỉnh.',
+        THRESHOLD_MISSING: 'chưa cấu hình ngưỡng chống trùng riêng.',
+        THRESHOLD_INVALID: 'ngưỡng chống trùng không hợp lệ.',
+        THRESHOLD_NOT_VALIDATED: 'ngưỡng hiện tại chưa được xác nhận bằng dữ liệu gán nhãn.',
+        CALIBRATION_REPORT_MISSING: 'chưa có báo cáo hiệu chỉnh; cần chạy công cụ calibration trên bộ ảnh genuine/impostor có nhãn.',
+        CALIBRATION_REPORT_INVALID: 'báo cáo hiệu chỉnh không hợp lệ; hãy tạo lại bằng công cụ calibration.',
+        CALIBRATION_DATA_INSUFFICIENT: 'bộ hiệu chỉnh chưa đủ danh tính, phiên chụp hoặc cặp so sánh theo yêu cầu.',
+        CALIBRATION_TARGETS_NOT_MET: 'báo cáo chưa đạt đồng thời mục tiêu FMR và FNMR đã chọn.',
+        CALIBRATION_CONFIG_MISMATCH: 'threshold cấu hình không khớp báo cáo hiệu chỉnh.',
+        MODEL_MISMATCH: 'báo cáo không được tạo bằng buffalo_l.',
+        AGGREGATION_MISMATCH: 'báo cáo không dùng phép so khớp max-over-5x5.',
         INCOMPLETE_GALLERY: 'gallery của nhân viên khác không có đúng 5 mẫu chuẩn để đối chiếu.',
         GALLERY_UNAVAILABLE: 'không đọc được gallery hiện tại.',
         GALLERY_ENROLLMENT_LOCK_UNAVAILABLE: 'không khóa được gallery trong lúc lưu.',
         INVALID_OR_UNREADABLE_EMBEDDING: 'có embedding không hợp lệ trong gallery.',
+        INVALID_GALLERY_DIMENSION: 'gallery có embedding không đúng 512 chiều.',
+        INVALID_GALLERY_IDENTITY: 'gallery có mã nhân viên không hợp lệ.',
     }[reason] || '');
 
-    const renderDuplicateCheck = (check) => {
+    const canSaveCurrentBatch = () => duplicateCheckStatus === 'CLEAR'
+        || (demoDuplicateBypassAvailable && duplicateCheckStatus === 'CHECK_UNAVAILABLE');
+
+    const renderDuplicateCheck = (check, demoBypassEnabled = false) => {
         duplicateCheckStatus = check?.status || 'CHECK_UNAVAILABLE';
-        completeButton.disabled = duplicateCheckStatus !== 'CLEAR';
+        const demoReasonAllowed = check?.reason === 'THRESHOLD_NOT_CALIBRATED';
+        demoDuplicateBypassAvailable = Boolean(
+            demoBypassEnabled && duplicateCheckStatus === 'CHECK_UNAVAILABLE' && demoReasonAllowed
+        );
+        completeButton.disabled = !canSaveCurrentBatch();
 
         if (duplicateCheckStatus === 'CLEAR') {
             guide.dataset.state = 'ready';
             feedback.textContent = 'Kiểm tra trùng: CLEAR · chưa phát hiện bằng chứng trùng. Có thể lưu 5 mẫu.';
+            completeButton.title = feedback.textContent;
             return;
         }
 
@@ -100,13 +155,36 @@
             guide.dataset.state = 'fail';
             feedback.textContent = 'Phát hiện khuôn mặt có khả năng trùng với nhân viên '
                 + employeeCode + candidateName + '. Vui lòng kiểm tra trước khi đăng ký; lưu đang bị chặn.';
+            completeButton.title = feedback.textContent;
+            return;
+        }
+
+        if (demoDuplicateBypassAvailable) {
+            guide.dataset.state = 'warning';
+            feedback.textContent = 'DEMO LOCAL đang bật. Có thể gửi yêu cầu lưu sau khi xác nhận rõ rằng kiểm tra trùng chưa khả dụng ('
+                + (check.reason || 'chưa hiệu chỉnh') + '). Kết quả vẫn là CHECK_UNAVAILABLE, không phải CLEAR.';
+            completeButton.title = feedback.textContent;
             return;
         }
 
         const detail = duplicateUnavailableReason(check?.reason);
         guide.dataset.state = 'fail';
-        feedback.textContent = 'Chưa thể kiểm tra trùng khuôn mặt. Vui lòng thử lại.'
-            + (detail ? ' Nguyên nhân: ' + detail : '') + ' Lưu đang bị chặn.';
+        feedback.textContent = 'Chưa thể kiểm tra trùng khuôn mặt. '
+            + (detail || 'Không đủ điều kiện để kiểm tra trùng an toàn.')
+            + ' Các ảnh tạm vẫn được giữ; lưu đang bị chặn cho đến khi hiệu chỉnh hợp lệ.';
+        completeButton.title = feedback.textContent;
+    };
+
+    const showCompletedReview = (duplicateCheck, demoBypassEnabled = false) => {
+        if (cameraWrap) cameraWrap.hidden = true;
+        setCamera(false);
+        if (cameraEmpty) cameraEmpty.hidden = true;
+        captureButton.hidden = true;
+        manualFallbackButton.hidden = true;
+        terminalLink.hidden = true;
+        cancelButton.hidden = false;
+        completeButton.hidden = false;
+        renderDuplicateCheck(duplicateCheck, demoBypassEnabled);
     };
 
     const renderStep = () => {
@@ -215,11 +293,7 @@
                 showCapturedThumbnails(captured, captured, true);
                 stopPosePolling();
                 guide.dataset.state = 'ready';
-                captureButton.hidden = true;
-                manualFallbackButton.hidden = true;
-                completeButton.hidden = false;
-                cancelButton.hidden = false;
-                renderDuplicateCheck(payload.duplicate_check);
+                showCompletedReview(payload.duplicate_check, payload.demo_duplicate_bypass_enabled);
                 return;
             }
 
@@ -262,6 +336,7 @@
             device_id: deviceId,
         });
         if (!response.ok || !payload.success) throw new Error(payload.message || 'Không thể bắt đầu đăng ký.');
+        enrollmentSessionOpen = true;
         terminalLink.href = `/?action=man-hinh-cham-cong&device_id=${encodeURIComponent(deviceId)}`;
         terminalLink.hidden = false;
         if (terminalWindow && !terminalWindow.closed) {
@@ -269,6 +344,7 @@
         }
         captured = 0;
         duplicateCheckStatus = null;
+        if (cameraWrap) cameraWrap.hidden = false;
         renderStep();
         guide.dataset.state = 'adjust';
         root.hidden = false;
@@ -316,8 +392,7 @@
             captureButton.hidden = true;
             if (payload.complete || captured >= poses.length) {
                 stopPosePolling();
-                completeButton.hidden = false;
-                renderDuplicateCheck(payload.duplicate_check);
+                showCompletedReview(payload.duplicate_check, payload.demo_duplicate_bypass_enabled);
             } else {
                 feedback.textContent = `Đã chụp ${captured}/5 · Pose tiếp theo: ${poses[captured].label}`;
             }
@@ -331,7 +406,7 @@
     manualFallbackButton.addEventListener('click', async () => {
         manualFallbackButton.disabled = true;
         try {
-            await post('face_enrollment_cancel');
+            await cancelOpenEnrollmentSession();
             modeSelect.value = 'MANUAL';
             await beginEnrollment('MANUAL');
         } catch (error) {
@@ -342,25 +417,42 @@
     });
 
     completeButton.addEventListener('click', async () => {
+        const confirmDemoUnverified = demoDuplicateBypassAvailable;
+        if (confirmDemoUnverified && !window.confirm(
+            'Chỉ lưu trong DEMO LOCAL: hệ thống chưa hiệu chỉnh được ngưỡng chống trùng nên sẽ KHÔNG kiểm tra khuôn mặt trùng. '
+            + 'Kết quả vẫn là CHECK_UNAVAILABLE. Bạn xác nhận lưu 5 mẫu sinh trắc học cho nhân viên này?'
+        )) {
+            return;
+        }
         completeButton.disabled = true;
         try {
-            const { response, payload } = await post('face_enrollment_complete');
+            const { response, payload } = await post('face_enrollment_complete', confirmDemoUnverified
+                ? { confirm_demo_unverified: '1' }
+                : {});
             if (!response.ok || !payload.success) {
-                if (payload.duplicate_check) renderDuplicateCheck(payload.duplicate_check);
+                if (payload.duplicate_check) {
+                    renderDuplicateCheck(
+                        payload.duplicate_check, payload.demo_duplicate_bypass_enabled
+                    );
+                }
                 const error = new Error(payload.message || 'Không thể lưu batch.');
                 error.duplicateCheck = payload.duplicate_check;
+                error.demoDuplicateBypassEnabled = payload.demo_duplicate_bypass_enabled;
                 throw error;
             }
-            showResult(payload.gallery_updated
+            enrollmentSessionOpen = false;
+            showResult(payload.demo_duplicate_check_skipped
+                ? payload.message
+                : (payload.gallery_updated
                 ? 'Đã lưu 5 mẫu khuôn mặt và làm mới gallery AI.'
-                : 'Đã lưu 5 mẫu, nhưng gallery AI1 chưa đồng bộ. Nhận diện sẽ tạm dừng cho đến khi đồng bộ thành công.',
-                payload.gallery_updated ? 'success' : 'warning');
+                : 'Đã lưu 5 mẫu, nhưng gallery AI1 chưa đồng bộ. Nhận diện sẽ tạm dừng cho đến khi đồng bộ thành công.'),
+                payload.demo_duplicate_check_skipped || !payload.gallery_updated ? 'warning' : 'success');
             setTimeout(() => window.location.reload(), 900);
         } catch (error) {
             if (error.duplicateCheck) {
-                renderDuplicateCheck(error.duplicateCheck);
+                renderDuplicateCheck(error.duplicateCheck, error.demoDuplicateBypassEnabled);
             } else {
-                completeButton.disabled = duplicateCheckStatus !== 'CLEAR';
+                completeButton.disabled = !canSaveCurrentBatch();
             }
             showResult(error.message, 'error');
         }
@@ -369,9 +461,10 @@
     cancelButton.addEventListener('click', async () => {
         stopPosePolling();
         try {
-            await post('face_enrollment_cancel');
-        } catch {
-            // The PHP session expires automatically if cancellation cannot reach the server.
+            await cancelOpenEnrollmentSession();
+        } catch (error) {
+            showResult(`${error.message} Hãy thử hủy lại; camera có thể vẫn đang được phiên giữ.`, 'error');
+            return;
         }
         root.hidden = true;
         setCamera(false);

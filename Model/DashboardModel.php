@@ -6,13 +6,12 @@ require_once __DIR__ . '/AttendanceModel.php';
 
 final class DashboardModel
 {
-    /** Đọc các KPI, chấm công, hoạt động tuần và cảnh báo cho ngày đã chọn. */
+    /** Đọc các KPI, chấm công và hoạt động tuần cho ngày đã chọn. */
     public function findOverview(string $date): array
     {
         $pdo = Database::getConnection();
         $activeEmployee = Database::activeEmployeePredicate('', $pdo);
         $activeEmployeeNv = Database::activeEmployeePredicate('nv', $pdo);
-        $activeEmployeeAlert = Database::activeEmployeePredicate('ActiveNV', $pdo);
         $totalEmployees = (int)$pdo->query('SELECT COUNT(*) FROM NhanVien WHERE ' . $activeEmployee)->fetchColumn();
         $registeredEmployees = (int)$pdo->query(
             'SELECT COUNT(DISTINCT fe.MaNV) FROM FaceEmbedding fe INNER JOIN NhanVien nv ON nv.MaNV = fe.MaNV WHERE ' . $activeEmployeeNv
@@ -118,31 +117,11 @@ final class DashboardModel
             ];
         }
 
-        $alerts = $pdo->query(<<<SQL
-            SELECT
-                NV.HoTen,
-                COALESCE(BH.TenBieuHien, LCB.TenLoaiCB) AS LoaiCanhBao,
-                CB.ThoiGian
-            FROM CanhBao CB
-            LEFT JOIN NhanVien NV ON NV.MaNV = CB.MaNV
-            LEFT JOIN LoaiCanhBao LCB ON LCB.MaLoaiCB = CB.MaLoaiCB
-            LEFT JOIN LichSuTrangThai TT ON TT.MaTT = CB.MaTT
-            LEFT JOIN DanhMucBieuHien BH ON BH.MaBieuHien = TT.MaBieuHien
-            WHERE CB.MaNV IS NULL OR EXISTS (
-                SELECT 1 FROM NhanVien ActiveNV
-                WHERE ActiveNV.MaNV = CB.MaNV
-                  AND {$activeEmployeeAlert}
-            )
-            ORDER BY CB.ThoiGian DESC, CB.MaCB DESC
-            LIMIT 5
-            SQL)->fetchAll();
-
         return [
             'date' => $date,
             'summary' => $summary,
             'attendance' => $attendanceRows,
             'weekly' => $weekly,
-            'alerts' => $alerts,
         ];
     }
 

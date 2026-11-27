@@ -70,8 +70,8 @@ class RecognitionSessionTests(unittest.TestCase):
         runtime.refresh_gallery = lambda: {"embedding_count": 1, "employee_count": 1, "invalid_count": 0}
         return runtime
 
-    def wait_for_terminal(self, runtime, session_id):
-        deadline = time.monotonic() + 3
+    def wait_for_terminal(self, runtime, session_id, timeout_seconds=3):
+        deadline = time.monotonic() + timeout_seconds
         while time.monotonic() < deadline:
             record = runtime.get_recognition_session(session_id)
             if record["state"] in {"COMPLETED", "ABORTED"}:
@@ -100,6 +100,49 @@ class RecognitionSessionTests(unittest.TestCase):
         self.assertEqual(record["result"]["best_frame_index"], expected_best)
         self.assertEqual(record["result"]["frame_width"], 160)
         self.assertEqual(record["result"]["temporal_consistency_min"], 1.0)
+
+    def test_web_session_budget_allows_three_cpu_embeddings_at_about_0_6_fps(self):
+        runtime = self.runtime([0, 0, 0])
+
+        class SlowCpuEngine:
+            _initialized = True
+
+            def __init__(self):
+                self.calls = 0
+
+            def detect_embeddings(self, _frame):
+                self.calls += 1
+                time.sleep(1.7)  # Approximately 0.59 ArcFace inferences per second.
+                return [{"embedding": vector(0), "bbox": [10, 10, 150, 150]}]
+
+        runtime.engine = SlowCpuEngine()
+        frame = frame_with_noise(14)
+        ok, encoded = cv2.imencode(".jpg", frame)
+        self.assertTrue(ok)
+        sequence = [0]
+
+        def fresh_packet():
+            sequence[0] += 1
+            return encoded.tobytes(), frame, sequence[0], time.monotonic()
+
+        runtime.fetch_camera_snapshot = fresh_packet
+        started_at = time.monotonic()
+        started = runtime.start_recognition_session()
+        self.assertEqual(started["timeout_seconds"], 20.0)
+        record = self.wait_for_terminal(runtime, started["session_id"], timeout_seconds=12)
+
+        self.assertEqual(record["state"], "COMPLETED")
+        self.assertEqual(record["captured_frames"], 3)
+        self.assertEqual(runtime.engine.calls, 3)
+        self.assertGreaterEqual(time.monotonic() - started_at, 5.0)
+
+    def test_recognition_session_timeout_configuration_is_bounded(self):
+        with patch.dict("os.environ", {"AI1_RECOGNITION_SESSION_TIMEOUT_SECONDS": "24"}):
+            self.assertEqual(ai_service._recognition_session_timeout_seconds(), 24.0)
+        with patch.dict("os.environ", {"AI1_RECOGNITION_SESSION_TIMEOUT_SECONDS": "2"}):
+            self.assertEqual(ai_service._recognition_session_timeout_seconds(), 8.5)
+        with patch.dict("os.environ", {"AI1_RECOGNITION_SESSION_TIMEOUT_SECONDS": "invalid"}):
+            self.assertEqual(ai_service._recognition_session_timeout_seconds(), 20.0)
 
     def test_inconsistent_identity_aborts_without_a_match(self):
         runtime = self.runtime([0, 1, 0])

@@ -75,11 +75,14 @@ final class AttendanceModel
         ?int $employeeId = null,
         ?string $keyword = null,
         ?int $limit = null,
-        int $offset = 0
+        int $offset = 0,
+        ?string $status = null
     ): array {
+        $connection = $this->connection ?? Database::getConnection();
         [$filter, $params] = $this->employeeFilters($employeeId, $keyword, 'NV');
-        $activeEmployee = Database::activeEmployeePredicate('NV');
+        $activeEmployee = Database::activeEmployeePredicate('NV', $connection);
         $filter .= ' AND ' . $activeEmployee;
+        $filter .= $this->statusFilter($status);
         $start = $date . ' 00:00:00';
         $end = (new DateTimeImmutable($date))->modify('+1 day')->format('Y-m-d') . ' 00:00:00';
         $sql = <<<SQL
@@ -119,14 +122,42 @@ final class AttendanceModel
         return $this->fetchPage($sql, $params, $limit, $offset);
     }
 
-    public function countDaily(string $date, ?int $employeeId = null, ?string $keyword = null): int
+    public function countDaily(
+        string $date,
+        ?int $employeeId = null,
+        ?string $keyword = null,
+        ?string $status = null
+    ): int
     {
+        $connection = $this->connection ?? Database::getConnection();
         [$filter, $params] = $this->employeeFilters($employeeId, $keyword, 'NV');
-        $activeEmployee = Database::activeEmployeePredicate('NV');
+        $activeEmployee = Database::activeEmployeePredicate('NV', $connection);
         $filter .= ' AND ' . $activeEmployee;
-        $statement = Database::getConnection()->prepare(
-            "SELECT COUNT(*) FROM NhanVien NV WHERE 1 = 1 {$filter}"
-        );
+        $filter .= $this->statusFilter($status);
+        $start = $date . ' 00:00:00';
+        $end = (new DateTimeImmutable($date))->modify('+1 day')->format('Y-m-d') . ' 00:00:00';
+        $params += [
+            'work_date' => $date,
+            'attendance_start' => $start,
+            'attendance_end' => $end,
+        ];
+        $statement = $connection->prepare(<<<SQL
+            SELECT COUNT(*)
+            FROM NhanVien NV
+            LEFT JOIN PhanCaNhanVien PCN
+                ON PCN.MaNV = NV.MaNV AND PCN.NgayLamViec = :work_date
+            LEFT JOIN CaLamViec CLV ON CLV.MaCa = PCN.MaCa
+            LEFT JOIN ChamCong CC ON CC.MaCC = (
+                SELECT CC2.MaCC
+                FROM ChamCong CC2
+                WHERE CC2.MaNV = NV.MaNV
+                    AND CC2.GioVao >= :attendance_start
+                    AND CC2.GioVao < :attendance_end
+                ORDER BY CC2.GioVao ASC, CC2.MaCC ASC
+                LIMIT 1
+            )
+            WHERE 1 = 1 {$filter}
+            SQL);
         $statement->execute($params);
 
         return (int)$statement->fetchColumn();
@@ -139,10 +170,13 @@ final class AttendanceModel
         ?int $employeeId = null,
         ?string $keyword = null,
         ?int $limit = null,
-        int $offset = 0
+        int $offset = 0,
+        ?string $status = null
     ): array {
+        $connection = $this->connection ?? Database::getConnection();
         [$filter, $params] = $this->attendanceFilters($employeeId, $keyword);
-        $activeEmployee = Database::activeEmployeePredicate('NV');
+        $activeEmployee = Database::activeEmployeePredicate('NV', $connection);
+        $filter .= $this->statusFilter($status);
         $endExclusive = (new DateTimeImmutable($toDate))->modify('+1 day')->format('Y-m-d') . ' 00:00:00';
         $sql = <<<SQL
             SELECT
@@ -179,19 +213,23 @@ final class AttendanceModel
         string $fromDate,
         string $toDate,
         ?int $employeeId = null,
-        ?string $keyword = null
+        ?string $keyword = null,
+        ?string $status = null
     ): int {
+        $connection = $this->connection ?? Database::getConnection();
         [$filter, $params] = $this->attendanceFilters($employeeId, $keyword);
-        $activeEmployee = Database::activeEmployeePredicate('NV');
+        $activeEmployee = Database::activeEmployeePredicate('NV', $connection);
+        $filter .= $this->statusFilter($status);
         $endExclusive = (new DateTimeImmutable($toDate))->modify('+1 day')->format('Y-m-d') . ' 00:00:00';
         $params += [
             'from_date' => $fromDate . ' 00:00:00',
             'to_date' => $endExclusive,
         ];
-        $statement = Database::getConnection()->prepare(<<<SQL
+        $statement = $connection->prepare(<<<SQL
             SELECT COUNT(*)
             FROM ChamCong CC
             INNER JOIN NhanVien NV ON NV.MaNV = CC.MaNV
+            LEFT JOIN CaLamViec CLV ON CLV.MaCa = CC.MaCa
             WHERE CC.GioVao >= :from_date
                 AND CC.GioVao < :to_date
                 AND {$activeEmployee}
@@ -337,12 +375,36 @@ final class AttendanceModel
         return [$filters, $params];
     }
 
+    /** Filter the derived attendance state without applying it after pagination. */
+    private function statusFilter(?string $status): string
+    {
+        if ($status === null || $status === '') {
+            return '';
+        }
+
+        return match ($status) {
+            'not_checked' => ' AND CC.GioVao IS NULL',
+            'on_time_in' => ' AND CC.GioVao IS NOT NULL AND (CLV.GioBatDau IS NULL'
+                . ' OR TIME(CC.GioVao) <= CLV.GioBatDau)',
+            'working' => ' AND CC.GioVao IS NOT NULL AND CC.GioRa IS NULL',
+            'late' => ' AND CC.GioVao IS NOT NULL AND CLV.GioBatDau IS NOT NULL'
+                . ' AND TIME(CC.GioVao) > CLV.GioBatDau',
+            'on_time_out' => ' AND CC.GioRa IS NOT NULL AND (CLV.GioKetThuc IS NULL'
+                . ' OR TIME(CC.GioRa) >= CLV.GioKetThuc)',
+            'early' => ' AND CC.GioRa IS NOT NULL AND CLV.GioKetThuc IS NOT NULL'
+                . ' AND TIME(CC.GioRa) < CLV.GioKetThuc',
+            'completed' => ' AND CC.GioVao IS NOT NULL AND CC.GioRa IS NOT NULL',
+            default => throw new InvalidArgumentException('Invalid attendance status filter.'),
+        };
+    }
+
     private function fetchPage(string $sql, array $params, ?int $limit, int $offset): array
     {
         if ($limit !== null) {
             $sql .= ' LIMIT :limit OFFSET :offset';
         }
-        $statement = Database::getConnection()->prepare($sql);
+        $connection = $this->connection ?? Database::getConnection();
+        $statement = $connection->prepare($sql);
         foreach ($params as $key => $value) {
             $statement->bindValue(':' . $key, $value, is_int($value) ? PDO::PARAM_INT : PDO::PARAM_STR);
         }

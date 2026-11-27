@@ -62,17 +62,29 @@ $attendancePayload = ['status' => 'success', 'action' => 'checkin', 'TenCa' => '
 $checkin = $service->recordFromRecognitionSession(str_repeat('d', 32), 2, $session);
 assertSameValue('SUCCESS', $checkin['state'], 'Confirmed check-in');
 assertSameValue('checkin', $checkin['action'], 'Check-in event');
+assertSameValue('Nguyen Van A', $checkin['employee_name'], 'Check-in returns verified employee name');
 assertSameValue([7, 2, 'server-camera-jpeg'], $attendanceCalls[0], 'Server identity/device/evidence passed');
 $passed++;
 
-// NV022 is passed as its numeric primary key, and a no-shift response identifies
-// the matched employee instead of hiding a possible gallery/identity mismatch.
+// A no-shift response carries the backend employee name for the result card;
+// the primary identity remains numeric and the user-facing message omits the ID.
 $aiPayload = makeKioskRecognition(['recognized' => true, 'ma_nv' => 22, 'ho_ten' => 'Nguyễn Viết Thắng']);
 $attendancePayload = ['status' => 'error', 'action' => 'error', 'message' => 'Nhân viên chưa được phân ca hôm nay'];
 $nv022 = $service->recordFromRecognitionSession(str_repeat('6', 32), 1, $session);
 assertSameValue([22, 1, 'server-camera-jpeg'], $attendanceCalls[count($attendanceCalls) - 1], 'NV022 numeric identity is passed to attendance');
 assertSameValue(22, $nv022['employee_id'], 'NV022 identity is retained in no-shift result');
-assertSameValue(true, str_contains($nv022['message'], 'NV022'), 'No-shift message exposes matched employee code');
+assertSameValue('Nguyễn Viết Thắng', $nv022['employee_name'], 'No-shift result carries verified employee name');
+assertSameValue('Bạn chưa được phân ca hôm nay. Vui lòng liên hệ quản lý.', $nv022['message'], 'No-shift message is user-facing');
+assertSameValue(false, str_contains($nv022['message'], 'NV022'), 'Employee code is not the main message');
+$passed++;
+
+$attendancePayload = ['status' => 'error', 'action' => 'error', 'message' => 'Chưa đến giờ chấm công'];
+$tooEarly = $service->recordFromRecognitionSession(str_repeat('7', 32), 1, $session);
+assertSameValue('Nguyễn Viết Thắng', $tooEarly['employee_name'], 'Too-early rejection carries verified name');
+assertSameValue('Chưa đến giờ chấm công. Vui lòng chờ đến giờ quy định.', $tooEarly['message'], 'Too-early message is clear');
+$attendancePayload = ['status' => 'error', 'action' => 'error', 'message' => 'Không có ca làm hợp lệ'];
+$invalidShift = $service->recordFromRecognitionSession(str_repeat('8', 32), 1, $session);
+assertSameValue('Bạn chưa được phân ca hôm nay. Vui lòng liên hệ quản lý.', $invalidShift['message'], 'Invalid shift maps to safe schedule message');
 $passed++;
 
 // The same terminal result can confirm a check-out.
@@ -86,9 +98,18 @@ $passed++;
 $attendancePayload = ['status' => 'success', 'action' => 'completed'];
 $completed = $service->recordFromRecognitionSession(str_repeat('f', 32), 2, $session);
 assertSameValue('ALREADY_COMPLETED', $completed['state'], 'Completed attendance');
+assertSameValue('Nguyễn Viết Thắng', $completed['employee_name'], 'Completed result carries verified name');
 $attendancePayload = ['status' => 'error', 'action' => 'error', 'message' => 'write failed'];
 $failed = $service->recordFromRecognitionSession(str_repeat('1', 32), 2, $session);
 assertSameValue('RETRY', $failed['state'], 'Failed write is not success');
+$passed++;
+
+$attendanceThrows = true;
+$aiPayload = makeKioskRecognition(['recognized' => true, 'ma_nv' => 12, 'ho_ten' => 'Database Failure User']);
+$writeFailure = $service->recordFromRecognitionSession(str_repeat('9', 32), 2, $session);
+assertSameValue('RETRY', $writeFailure['state'], 'Attendance exception is rejected');
+assertSameValue('Database Failure User', $writeFailure['employee_name'], 'Recognized name survives attendance exception');
+$attendanceThrows = false;
 $passed++;
 
 // The employee ID is read only from AI's terminal result, not supplied by caller input.
@@ -124,6 +145,7 @@ $callsBeforeCameraFailure = count($attendanceCalls);
 $cameraOffline = $service->recordFromRecognitionSession(str_repeat('5', 32), 2, $session);
 assertSameValue('OFFLINE', $cameraOffline['state'], 'Camera outage blocks attendance');
 assertSameValue('CAMERA_SOURCE_UNAVAILABLE', $cameraOffline['code'], 'Camera outage has precise code');
+assertSameValue('Camera Test', $cameraOffline['employee_name'], 'Post-match camera error carries verified name');
 assertSameValue($callsBeforeCameraFailure, count($attendanceCalls), 'Camera outage does not write attendance');
 $passed++;
 

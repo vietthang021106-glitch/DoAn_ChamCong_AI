@@ -51,12 +51,55 @@ final class FaceEmbeddingModel
     /** Đếm số embedding hiện lưu của một nhân viên. */
     public function countByEmployee(int $employeeId): int
     {
-        $statement = Database::getConnection()->prepare(
+        $statement = ($this->connection ?? Database::getConnection())->prepare(
             'SELECT COUNT(*) FROM FaceEmbedding WHERE MaNV = :employee_id'
         );
         $statement->execute(['employee_id' => $employeeId]);
 
         return (int)$statement->fetchColumn();
+    }
+
+    /** Count embeddings for active employees, matching the AI gallery endpoint. */
+    public function countAllActive(): int
+    {
+        $pdo = $this->connection ?? Database::getConnection();
+        $activeEmployee = Database::activeEmployeePredicate('nv', $pdo);
+        $statement = $pdo->query(
+            'SELECT COUNT(*) FROM FaceEmbedding fe '
+            . 'INNER JOIN NhanVien nv ON nv.MaNV = fe.MaNV WHERE ' . $activeEmployee
+        );
+
+        return (int)$statement->fetchColumn();
+    }
+
+    /** Reload the committed batch and compare all five vectors and images byte-for-byte. */
+    public function verifyBatchByEmployee(int $employeeId, array $samples): bool
+    {
+        try {
+            $samples = $this->validateSamples($samples);
+        } catch (Throwable $exception) {
+            return false;
+        }
+        $statement = ($this->connection ?? Database::getConnection())->prepare(<<<'SQL'
+            SELECT SoChieu, VectorData, AnhKhuonMat
+            FROM FaceEmbedding
+            WHERE MaNV = :employee_id
+            ORDER BY MaEmbedding
+            SQL);
+        $statement->execute(['employee_id' => $employeeId]);
+        $rows = $statement->fetchAll();
+        if (count($rows) !== 5) {
+            return false;
+        }
+        foreach ($rows as $index => $row) {
+            if ((int)($row['SoChieu'] ?? 0) !== 512
+                || $this->lobBytes($row['VectorData'] ?? null) !== $samples[$index]['vector']
+                || $this->lobBytes($row['AnhKhuonMat'] ?? null) !== $samples[$index]['image']) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /** Stable hash for one employee's samples, without changing the DB schema. */
@@ -115,8 +158,15 @@ final class FaceEmbeddingModel
     }
 
     /** Thay batch 5 pose nguyên tử; batch mới lỗi sẽ rollback và giữ nguyên mẫu cũ. */
-    public function replaceByEmployee(int $employeeId, array $samples, string $expectedRevision): array
+    public function replaceByEmployee(
+        int $employeeId,
+        array $samples,
+        string $expectedRevision,
+        ?array &$saveContext = null,
+        bool $demoUnverifiedConfirmed = false
+    ): array
     {
+        $saveContext = ['demo_duplicate_check_skipped' => false, 'duplicate_check' => null];
         $samples = $this->validateSamples($samples);
         if (!preg_match('/^[a-f0-9]{64}$/D', $expectedRevision)) {
             throw new InvalidArgumentException('Enrollment gallery revision is invalid.');
@@ -155,7 +205,7 @@ final class FaceEmbeddingModel
             }
 
             $currentSql = <<<'SQL'
-                SELECT MaEmbedding, VectorData, AnhKhuonMat
+                SELECT MaEmbedding, SoChieu, VectorData, AnhKhuonMat
                 FROM FaceEmbedding
                 WHERE MaNV = :employee_id
                 ORDER BY MaEmbedding
@@ -167,10 +217,9 @@ final class FaceEmbeddingModel
             $currentStatement->execute(['employee_id' => $employeeId]);
             $currentRows = $currentStatement->fetchAll();
             if ($this->matchesSamples($currentRows, $samples)) {
-                $duplicateCheck = $this->checkDuplicateInsideTransaction($pdo, $employeeId, $samples);
-                if ($duplicateCheck['status'] !== 'CLEAR') {
-                    throw new FaceDuplicateCheckException($duplicateCheck);
-                }
+                $this->requireDuplicateCheckOrLocalDemoBypass(
+                    $pdo, $employeeId, $samples, $saveContext, $demoUnverifiedConfirmed
+                );
                 $ids = array_map(static fn(array $row): int => (int)$row['MaEmbedding'], $currentRows);
                 $pdo->commit();
                 return $ids;
@@ -180,14 +229,16 @@ final class FaceEmbeddingModel
                 throw new FaceEnrollmentConflict('Gallery đã thay đổi trong lúc đăng ký. Hãy tải lại và đăng ký lại.');
             }
 
-            $duplicateCheck = $this->checkDuplicateInsideTransaction($pdo, $employeeId, $samples);
-            if ($duplicateCheck['status'] !== 'CLEAR') {
-                throw new FaceDuplicateCheckException($duplicateCheck);
-            }
+            $this->requireDuplicateCheckOrLocalDemoBypass(
+                $pdo, $employeeId, $samples, $saveContext, $demoUnverifiedConfirmed
+            );
 
             $delete = $pdo->prepare('DELETE FROM FaceEmbedding WHERE MaNV = :employee_id');
             $delete->execute(['employee_id' => $employeeId]);
             $ids = $this->insertSamples($pdo, $employeeId, $samples);
+            if (count($ids) !== 5 || !$this->verifyBatchUsingConnection($pdo, $employeeId, $samples)) {
+                throw new RuntimeException('Saved enrollment batch did not pass transactional read-back verification.');
+            }
             $pdo->commit();
 
             return $ids;
@@ -206,6 +257,35 @@ final class FaceEmbeddingModel
                 }
             }
         }
+    }
+
+    /** Keep duplicate decisions authoritative; only an explicitly enabled local demo can
+     * proceed when the check is unavailable solely because calibration is missing. */
+    private function requireDuplicateCheckOrLocalDemoBypass(
+        PDO $pdo,
+        int $employeeId,
+        array $samples,
+        array &$saveContext,
+        bool $demoUnverifiedConfirmed
+    ): void {
+        $result = $this->checkDuplicateInsideTransaction($pdo, $employeeId, $samples);
+        $saveContext['duplicate_check'] = $result;
+        if (($result['status'] ?? null) === 'CLEAR') {
+            return;
+        }
+        if ($demoUnverifiedConfirmed
+            && FaceDuplicateChecker::isLocalDemoBypassEnabled()
+            && FaceDuplicateChecker::isDemoBypassableUnavailable($result)) {
+            $saveContext['demo_duplicate_check_skipped'] = true;
+            error_log(sprintf(
+                'AI1_ENROLLMENT_DEMO_UNCHECKED employee_id=%d duplicate_check=%s reason=%s',
+                $employeeId,
+                (string)($result['status'] ?? 'UNKNOWN'),
+                (string)($result['reason'] ?? 'UNKNOWN')
+            ));
+            return;
+        }
+        throw new FaceDuplicateCheckException($result);
     }
 
     private function checkDuplicateInsideTransaction(PDO $pdo, int $employeeId, array $samples): array
@@ -328,7 +408,8 @@ final class FaceEmbeddingModel
             return false;
         }
         foreach ($rows as $index => $row) {
-            if ($this->lobBytes($row['VectorData'] ?? null) !== $samples[$index]['vector']
+            if ((int)($row['SoChieu'] ?? 0) !== 512
+                || $this->lobBytes($row['VectorData'] ?? null) !== $samples[$index]['vector']
                 || $this->lobBytes($row['AnhKhuonMat'] ?? null) !== $samples[$index]['image']) {
                 return false;
             }
@@ -369,6 +450,31 @@ final class FaceEmbeddingModel
         }
 
         return $ids;
+    }
+
+    /** Verify the exact five persisted samples before the transaction commits. */
+    private function verifyBatchUsingConnection(PDO $pdo, int $employeeId, array $samples): bool
+    {
+        $statement = $pdo->prepare(<<<'SQL'
+            SELECT SoChieu, VectorData, AnhKhuonMat
+            FROM FaceEmbedding
+            WHERE MaNV = :employee_id
+            ORDER BY MaEmbedding
+            SQL);
+        $statement->execute(['employee_id' => $employeeId]);
+        $rows = $statement->fetchAll();
+        if (count($rows) !== 5) {
+            return false;
+        }
+        foreach ($rows as $index => $row) {
+            if ((int)($row['SoChieu'] ?? 0) !== 512
+                || $this->lobBytes($row['VectorData'] ?? null) !== $samples[$index]['vector']
+                || $this->lobBytes($row['AnhKhuonMat'] ?? null) !== $samples[$index]['image']) {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     /** Đọc gallery cho AI nội bộ và base64 hóa vector chỉ ở ranh giới HTTP/JSON. */

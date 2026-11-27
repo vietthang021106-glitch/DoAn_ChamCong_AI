@@ -33,7 +33,9 @@ final class AttendanceController
             return;
         }
         if ($activeTab === 'live') {
-            $this->liveAttendanceIndex();
+            // The admin attendance history no longer embeds a second camera.
+            // Keep the old URL compatible by sending it to the dedicated kiosk.
+            header('Location: /?action=man-hinh-cham-cong', true, 302);
             return;
         }
         if ($activeTab !== 'attendance') {
@@ -50,6 +52,8 @@ final class AttendanceController
         $employees = [];
         $error = null;
         $keyword = trim((string)($_GET['keyword'] ?? ''));
+        $status = trim((string)($_GET['status'] ?? ''));
+        $allowedStatuses = ['', 'not_checked', 'on_time_in', 'late', 'working', 'on_time_out', 'early', 'completed'];
         $page = filter_var($_GET['page'] ?? 1, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1]]);
         $limit = filter_var($_GET['limit'] ?? 20, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 100]]);
         $page = is_int($page) ? $page : 1;
@@ -63,6 +67,10 @@ final class AttendanceController
         }
         if (mb_strlen($keyword, 'UTF-8') > 100) {
             $errors['keyword'] = 'Từ khóa không được vượt quá 100 ký tự.';
+        }
+        if (!in_array($status, $allowedStatuses, true)) {
+            $errors['status'] = 'Trạng thái chấm công không hợp lệ.';
+            $status = '';
         }
 
         if ($fromDate === '') {
@@ -102,14 +110,14 @@ final class AttendanceController
             if ($errors === []) {
                 $isDaily = $fromDate === $toDate;
                 $totalRows = $isDaily
-                    ? $this->attendance->countDaily($fromDate, $employeeId, $keyword)
-                    : $this->attendance->countHistory($fromDate, $toDate, $employeeId, $keyword);
+                    ? $this->attendance->countDaily($fromDate, $employeeId, $keyword, $status)
+                    : $this->attendance->countHistory($fromDate, $toDate, $employeeId, $keyword, $status);
                 $totalPages = max(1, (int)ceil($totalRows / $limit));
                 $page = min($page, $totalPages);
                 $offset = ($page - 1) * $limit;
                 $attendanceRows = $isDaily
-                    ? $this->attendance->findDaily($fromDate, $employeeId, $keyword, $limit, $offset)
-                    : $this->attendance->findHistory($fromDate, $toDate, $employeeId, $keyword, $limit, $offset);
+                    ? $this->attendance->findDaily($fromDate, $employeeId, $keyword, $limit, $offset, $status)
+                    : $this->attendance->findHistory($fromDate, $toDate, $employeeId, $keyword, $limit, $offset, $status);
                 foreach ($attendanceRows as &$row) {
                     $statuses = $this->calculateStatuses(
                         $row['GioBatDau'] ?? null,
@@ -130,24 +138,6 @@ final class AttendanceController
 
         $isDaily = $fromDate === $toDate;
         $pageTitle = 'Chấm công';
-        require __DIR__ . '/../View/attendance.php';
-    }
-
-    /** Màn hình giám sát chỉ đọc, dùng camera singleton và dữ liệu chấm công hiện có. */
-    private function liveAttendanceIndex(): void
-    {
-        $recentPunches = [];
-        $error = null;
-        try {
-            $recentPunches = $this->attendance->findRecentPunches(6);
-        } catch (Throwable $exception) {
-            error_log('Live attendance page read failed: ' . $exception->getMessage());
-            http_response_code(500);
-            $error = 'Không thể tải lượt chấm công gần đây. Vui lòng kiểm tra kết nối cơ sở dữ liệu.';
-        }
-
-        $activeTab = 'live';
-        $pageTitle = 'Giám sát chấm công trực tiếp';
         require __DIR__ . '/../View/attendance.php';
     }
 

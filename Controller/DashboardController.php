@@ -42,7 +42,6 @@ final class DashboardController
                 ],
                 'attendance' => [],
                 'weekly' => [],
-                'alerts' => [],
             ];
         }
 

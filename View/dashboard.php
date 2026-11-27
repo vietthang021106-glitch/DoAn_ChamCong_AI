@@ -4,7 +4,6 @@ $h = static fn(mixed $value): string => htmlspecialchars((string)($value ?? ''),
 $summary = $dashboard['summary'];
 $attendance = $dashboard['attendance'];
 $weekly = $dashboard['weekly'];
-$alerts = $dashboard['alerts'];
 $dateLabel = (new DateTimeImmutable($dashboard['date']))->format('d/m/Y');
 $weeklyMax = 1;
 foreach ($weekly as $day) {
@@ -45,24 +44,18 @@ foreach ($weekly as $day) {
             </table></div>
         </section>
 
-        <div class="workspace-bottom-grid">
-            <section class="workspace-section" aria-labelledby="weekly-title">
-                <div class="workspace-section-heading"><h2 id="weekly-title">Hoạt động 7 ngày</h2></div>
-                <div class="dashboard-chart-body">
-                    <div class="dashboard-weekly-chart" role="img" aria-label="Biểu đồ lượt vào và ra trong 7 ngày gần nhất">
-                        <?php foreach ($weekly as $day): ?>
-                            <?php $inHeight = max(3, (int)round((int)$day['check_in'] / $weeklyMax * 100)); $outHeight = max(3, (int)round((int)$day['check_out'] / $weeklyMax * 100)); ?>
-                            <div class="dashboard-weekly-day"><div class="dashboard-weekly-bars"><span class="dashboard-weekly-bar dashboard-weekly-bar--in" style="height: <?= $inHeight ?>%" title="Người vào: <?= (int)$day['check_in'] ?>"></span><span class="dashboard-weekly-bar dashboard-weekly-bar--out" style="height: <?= $outHeight ?>%" title="Người ra: <?= (int)$day['check_out'] ?>"></span></div><span class="dashboard-weekly-label"><?= $h($day['label']) ?></span><small><?= $h(substr($day['date'], 5)) ?></small></div>
-                        <?php endforeach; ?>
-                    </div>
-                    <div class="dashboard-weekly-legend"><span><i class="dashboard-weekly-bar--in"></i>Người vào</span><span><i class="dashboard-weekly-bar--out"></i>Người ra</span></div>
+        <section class="workspace-section" aria-labelledby="weekly-title">
+            <div class="workspace-section-heading"><h2 id="weekly-title">Hoạt động 7 ngày</h2></div>
+            <div class="dashboard-chart-body">
+                <div class="dashboard-weekly-chart" role="img" aria-label="Biểu đồ lượt vào và ra trong 7 ngày gần nhất">
+                    <?php foreach ($weekly as $day): ?>
+                        <?php $inHeight = max(3, (int)round((int)$day['check_in'] / $weeklyMax * 100)); $outHeight = max(3, (int)round((int)$day['check_out'] / $weeklyMax * 100)); ?>
+                        <div class="dashboard-weekly-day"><div class="dashboard-weekly-bars"><span class="dashboard-weekly-bar dashboard-weekly-bar--in" style="height: <?= $inHeight ?>%" title="Người vào: <?= (int)$day['check_in'] ?>"></span><span class="dashboard-weekly-bar dashboard-weekly-bar--out" style="height: <?= $outHeight ?>%" title="Người ra: <?= (int)$day['check_out'] ?>"></span></div><span class="dashboard-weekly-label"><?= $h($day['label']) ?></span><small><?= $h(substr($day['date'], 5)) ?></small></div>
+                    <?php endforeach; ?>
                 </div>
+                <div class="dashboard-weekly-legend"><span><i class="dashboard-weekly-bar--in"></i>Người vào</span><span><i class="dashboard-weekly-bar--out"></i>Người ra</span></div>
             </section>
-            <section class="workspace-section" aria-labelledby="recent-alerts-title">
-                <div class="workspace-section-heading"><h2 id="recent-alerts-title">Cảnh báo gần đây</h2><a class="text-action" href="/?action=monitoring&amp;tab=alerts">Xem tất cả</a></div>
-                <?php if ($alerts === []): ?><p class="dashboard-alert-empty">Chưa có cảnh báo gần đây.</p><?php else: ?><ul class="dashboard-alert-list"><?php foreach ($alerts as $alert): $alertTime = (new DateTimeImmutable($alert['ThoiGian']))->format('d/m H:i'); ?><li><div class="dashboard-alert-main"><strong><?= $h($alert['HoTen'] ?? 'Không rõ nhân viên') ?></strong><span><?= $h($alert['LoaiCanhBao'] ?? 'Cảnh báo') ?></span></div><time datetime="<?= $h($alert['ThoiGian']) ?>"><?= $h($alertTime) ?></time></li><?php endforeach; ?></ul><?php endif; ?>
-            </section>
-        </div>
+        </section>
     </section>
 </main>
 <?php require __DIR__ . '/layout/footer.php'; ?>

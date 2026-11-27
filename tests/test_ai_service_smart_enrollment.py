@@ -43,30 +43,146 @@ class SmartEnrollmentSessionTests(unittest.TestCase):
             "face_bbox": [100.0, 80.0, 220.0, 240.0],
             "frame_width": 640,
             "frame_height": 480,
+            "face_count": 1,
+            "detection_score": 0.91,
+            "frame_sequence": 42,
+            "frame_timestamp": 123.5,
+            "frame_age_ms": 22.0,
             "samples": [{"vector": "private-vector", "image_jpeg": "private-image"}],
         })
 
         self.assertEqual(summary["stable_count"], 3)
         self.assertEqual(summary["stable_frames_required"], 5)
         self.assertEqual(summary["face_bbox"], [100.0, 80.0, 220.0, 240.0])
+        self.assertEqual(summary["face_count"], 1)
+        self.assertEqual(summary["detection_score"], 0.91)
+        self.assertEqual(summary["frame_sequence"], 42)
+        self.assertEqual(summary["frame_timestamp"], 123.5)
+        self.assertEqual(summary["frame_age_ms"], 22.0)
         self.assertEqual(summary["observation_status"], "STABILIZING")
         self.assertNotIn("samples", summary)
         self.assertNotIn("private-vector", str(summary))
 
-    def test_enrollment_face_geometry_is_hidden_for_stale_or_multiple_face_frames(self):
+    def test_enrollment_geometry_tracks_single_face_and_hides_stale_boxes(self):
         frame = ai_service.np.zeros((480, 640, 3), dtype=ai_service.np.uint8)
         outcome = {
-            "face_count": 1,
-            "face": {"bbox": [100, 80, 220, 240]},
-            "faces": [{"bbox": [100, 80, 220, 240]}],
+            "face_count": 1, "total_face_count": 1,
+            "primary_face_safe": True,
+            "face": {"bbox": [100, 80, 220, 240], "detection_score": 0.91},
+            "faces": [{"bbox": [100, 80, 220, 240], "detection_score": 0.91}],
+            "selected_primary_face": {"bbox": [100, 80, 220, 240], "detection_score": 0.91},
         }
-        self.assertEqual(
-            ai_service._enrollment_face_geometry(frame, outcome, "STABILIZING"),
-            {"face_bbox": [100.0, 80.0, 220.0, 240.0], "frame_width": 640, "frame_height": 480},
+        geometry = ai_service._enrollment_face_geometry(
+            frame, outcome, "STABILIZING", frame_sequence=12,
+            frame_timestamp=20.25, frame_age_ms=18.0,
         )
-        self.assertIsNone(ai_service._enrollment_face_geometry(frame, outcome, "STALE_FRAME")["face_bbox"])
-        multi = {**outcome, "face_count": 2, "faces": [outcome["face"], outcome["face"]]}
-        self.assertIsNone(ai_service._enrollment_face_geometry(frame, multi, "STABILIZING")["face_bbox"])
+        self.assertEqual(geometry["face_bbox"], [100.0, 80.0, 220.0, 240.0])
+        self.assertEqual(geometry["frame_width"], 640)
+        self.assertEqual(geometry["frame_height"], 480)
+        self.assertEqual(geometry["face_count"], 1)
+        self.assertEqual(geometry["detection_score"], 0.91)
+        self.assertEqual(geometry["frame_sequence"], 12)
+        self.assertEqual(geometry["frame_timestamp"], 20.25)
+        self.assertEqual(geometry["frame_age_ms"], 18.0)
+        stale = ai_service._enrollment_face_geometry(frame, outcome, "STALE_FRAME")
+        self.assertIsNone(stale["face_bbox"])
+
+    def test_multiple_faces_only_draw_backend_selected_safe_primary(self):
+        frame = ai_service.np.zeros((480, 640, 3), dtype=ai_service.np.uint8)
+        smaller = {"bbox": [20, 30, 100, 130], "detection_score": 0.99}
+        largest = {"bbox": [180, 80, 420, 400], "detection_score": 0.78}
+        outcome = {
+            "face_count": 2, "total_face_count": 2,
+            "face": largest, "selected_primary_face": largest,
+            "primary_face_safe": True,
+            "faces": [smaller, largest],
+        }
+        geometry = ai_service._enrollment_face_geometry(frame, outcome, "STABILIZING")
+        self.assertEqual(geometry["face_bbox"], [180.0, 80.0, 420.0, 400.0])
+        self.assertEqual(geometry["face_count"], 2)
+        self.assertEqual(geometry["detection_score"], 0.78)
+        self.assertTrue(geometry["primary_face_safe"])
+
+    def test_ambiguous_or_tracker_rejected_face_never_draws_confirmation_ring(self):
+        frame = ai_service.np.zeros((480, 640, 3), dtype=ai_service.np.uint8)
+        left = {"bbox": [30, 100, 150, 260], "detection_score": 0.95}
+        center = {"bbox": [260, 100, 380, 260], "detection_score": 0.80}
+        outcome = {"face_count": 2, "total_face_count": 2,
+                   "face": center, "faces": [left, center], "primary_face_safe": False,
+                   "primary_face_area_ratio": 1.4,
+                   "primary_face_area_ratio_required": 2.0}
+        ambiguous = ai_service._enrollment_face_geometry(frame, outcome, "QUALITY_REJECTED")
+        self.assertIsNone(ambiguous["face_bbox"])
+        self.assertFalse(ambiguous["primary_face_safe"])
+        self.assertEqual(ambiguous["primary_face_area_ratio"], 1.4)
+        self.assertEqual(ambiguous["primary_face_area_ratio_required"], 2.0)
+        self.assertEqual(ambiguous["detection_score"], 0.80)
+        safe_outcome = {**outcome, "face": left, "selected_primary_face": left,
+                        "primary_face_safe": True}
+        changed = ai_service._enrollment_face_geometry(frame, safe_outcome, "QUALITY_REJECTED")
+        self.assertEqual(changed["face_bbox"], [30.0, 100.0, 150.0, 260.0])
+        self.assertTrue(changed["primary_face_safe"])
+
+    def test_quality_rejected_but_safely_selected_face_can_show_neutral_bbox(self):
+        frame = ai_service.np.zeros((480, 640, 3), dtype=ai_service.np.uint8)
+        face = {"bbox": [180, 80, 420, 400], "detection_score": 0.88}
+        geometry = ai_service._enrollment_face_geometry(
+            frame,
+            {"face_count": 2, "total_face_count": 2, "primary_face_safe": True,
+             "selected_primary_face": face, "face": face},
+            "QUALITY_REJECTED",
+        )
+        self.assertEqual(geometry["face_bbox"], [180.0, 80.0, 420.0, 400.0])
+        self.assertTrue(geometry["primary_face_safe"])
+
+    def test_invalid_frame_clears_primary_selection_status(self):
+        geometry = ai_service._enrollment_face_geometry(
+            None, {"face_count": 2, "primary_face_safe": True}, "STABILIZING"
+        )
+        self.assertEqual(geometry["total_face_count"], 0)
+        self.assertFalse(geometry["primary_face_safe"])
+        self.assertIsNone(geometry["face_bbox"])
+
+    def test_ambiguous_multiple_face_frame_is_rejected_by_pose_tracker(self):
+        tracker = ai_service.GuidedPoseTracker(stable_frames=3)
+        frame = ai_service.np.zeros((480, 640, 3), dtype=ai_service.np.uint8)
+        outcome = {
+            "status": "RETRY",
+            "code": "MULTIPLE FACES",
+            "face_count": 2,
+            "face": {"bbox": [100, 80, 220, 240]},
+            "faces": [
+                {"bbox": [100, 80, 220, 240]},
+                {"bbox": [350, 80, 470, 240]},
+            ],
+        }
+        result = tracker.observe(
+            "frontal", outcome, frame, sequence=1, captured_at=1.0,
+            now=1.0, received_at=1.0,
+        )
+        self.assertEqual(result["status"], "QUALITY_REJECTED")
+        self.assertEqual(result["rejected_code"], "MULTIPLE FACES")
+        self.assertEqual(result["stable_count"], 0)
+        self.assertEqual(result["face_count"], 2)
+        self.assertEqual(result["total_face_count"], 2)
+        self.assertFalse(result["primary_face_safe"])
+        self.assertNotEqual(result["status"], "CAPTURE_READY")
+
+    def test_multiple_face_rejection_without_count_reports_truthful_lower_bound(self):
+        tracker = ai_service.GuidedPoseTracker(stable_frames=3)
+        frame = ai_service.np.zeros((480, 640, 3), dtype=ai_service.np.uint8)
+        outcome = {
+            "status": "RETRY", "code": "MULTIPLE FACES",
+            "reason": "Không xác định được mặt chính.",
+        }
+        result = tracker.observe(
+            "frontal", outcome, frame, sequence=1, captured_at=1.0,
+            now=1.0, received_at=1.0,
+        )
+        self.assertEqual(result["face_count"], 2)
+        self.assertEqual(result["total_face_count"], 2)
+        self.assertTrue(result["face_count_lower_bound"])
+        self.assertFalse(result["primary_face_safe"])
 
     def test_auto_session_is_unique_and_blocks_recognition_until_released(self):
         runtime = ai_service.AIRuntime()

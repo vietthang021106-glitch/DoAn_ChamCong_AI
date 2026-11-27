@@ -15,7 +15,7 @@ $myEmployeeCode = 'NV' . str_pad((string)$myEmployeeId, 3, '0', STR_PAD_LEFT);
         <nav class="workspace-tabs" aria-label="Trang cá nhân">
             <a href="/?action=my&amp;tab=today" <?= $activeTab === 'today' ? 'aria-current="page"' : '' ?>>Hôm nay</a>
             <a href="/?action=my&amp;tab=history" <?= $activeTab === 'history' ? 'aria-current="page"' : '' ?>>Lịch sử</a>
-            <a href="/?action=my&amp;tab=monitoring" <?= $activeTab === 'monitoring' ? 'aria-current="page"' : '' ?>>Sức khỏe &amp; Cảnh báo</a>
+            <a href="/?action=my&amp;tab=monitoring" <?= $activeTab === 'monitoring' ? 'aria-current="page"' : '' ?>>Sức khỏe</a>
         </nav>
 
         <?php if ($activeTab === 'today'): ?>
@@ -93,13 +93,6 @@ $myEmployeeCode = 'NV' . str_pad((string)$myEmployeeId, 3, '0', STR_PAD_LEFT);
                     <caption class="visually-hidden">Lịch sử sức khỏe cá nhân</caption>
                     <thead><tr><th>Nhịp tim</th><th>SpO₂</th><th>Thời gian</th></tr></thead>
                     <tbody><?php if ($healthRows === []): ?><tr><td colspan="3"><div class="empty-state">Chưa có dữ liệu sức khỏe.</div></td></tr><?php else: foreach ($healthRows as $row): ?><tr><td><?= $row['NhipTim'] === null ? '--' : $h($row['NhipTim']) . ' bpm' ?></td><td><?= $row['SpO2'] === null ? '--' : $h($row['SpO2']) . '%' ?></td><td><?= $h($row['ThoiGian']) ?></td></tr><?php endforeach; endif; ?></tbody>
-                </table></div>
-            </div>
-            <div class="my-history-block">
-                <div class="table-scroll"><table class="employee-table data-table">
-                    <caption class="visually-hidden">Cảnh báo cá nhân</caption>
-                    <thead><tr><th>Loại</th><th>Nội dung</th><th>Thời gian</th></tr></thead>
-                    <tbody><?php if ($alertRows === []): ?><tr><td colspan="3"><div class="empty-state">Không có cảnh báo.</div></td></tr><?php else: foreach ($alertRows as $row): ?><tr><td><?= $h($row['LoaiCanhBao'] ?: 'Cảnh báo AI') ?></td><td><?= $h($row['NoiDung'] ?? '') ?></td><td><?= $h($row['ThoiGian'] ?? '--') ?></td></tr><?php endforeach; endif; ?></tbody>
                 </table></div>
             </div>
         <?php endif; ?>

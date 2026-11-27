@@ -1,7 +1,7 @@
 """
 test_image_flow.py — Test trực tiếp flow lưu ảnh bằng chứng
 ============================================================
-KHÔNG dùng Flask, KHÔNG import ai_engine.
+Không cần khởi tạo ứng dụng web để kiểm tra truy vấn ảnh bằng chứng.
 Test: database.insert_checkin / update_checkout với AnhVao / AnhRa.
 """
 

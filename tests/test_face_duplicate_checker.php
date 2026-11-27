@@ -47,12 +47,36 @@ function duplicateRows(int $employeeId, float $angle, int $count = 5): array
     return $rows;
 }
 
+function validCalibrationReport(float $threshold): array
+{
+    return [
+        'version' => 1,
+        'validated' => true,
+        'model' => 'buffalo_l',
+        'aggregation' => 'max_5x5_cosine',
+        'threshold' => $threshold,
+        'targets' => ['max_fmr' => 0.05, 'max_fnmr' => 0.10],
+        'sample_counts' => [
+            'identity_count' => 10, 'session_count' => 20, 'image_count' => 100,
+            'genuine_pair_count' => 30, 'impostor_pair_count' => 100,
+        ],
+        'metrics' => [
+            'fmr' => 0.0, 'fnmr' => 0.0, 'false_match_count' => 0,
+            'false_non_match_count' => 0, 'genuine_pair_count' => 30,
+            'impostor_pair_count' => 100,
+        ],
+        'dataset_sha256' => str_repeat('a', 64),
+    ];
+}
+
 $samples = duplicateSamples(0.0);
 $unconfigured = new FaceDuplicateChecker();
 $empty = $unconfigured->evaluate(2, $samples, []);
 assertDuplicateCheck($empty['status'] === 'CLEAR', 'An empty other-employee gallery should be clear.');
 
-$checker = new FaceDuplicateChecker(0.95, true, 'buffalo_l', 'max_5x5_cosine');
+$checker = new FaceDuplicateChecker(
+    0.95, true, 'buffalo_l', 'max_5x5_cosine', validCalibrationReport(0.95)
+);
 $differentEmployee = $checker->evaluate(2, $samples, duplicateRows(1, 0.45));
 assertDuplicateCheck($differentEmployee['status'] === 'CLEAR', 'A new face below the calibrated threshold should be clear.');
 
@@ -63,7 +87,9 @@ assertDuplicateCheck($sameAsNv001['candidate_id'] === 1, 'The suspected employee
 $selfReenrollment = $unconfigured->evaluate(1, $samples, duplicateRows(1, 0.0));
 assertDuplicateCheck($selfReenrollment['status'] === 'CLEAR', 'Re-enrollment must exclude the same employee.');
 
-$highSimilarityButBelowLimit = (new FaceDuplicateChecker(0.995, true, 'buffalo_l', 'max_5x5_cosine'))
+$highSimilarityButBelowLimit = (new FaceDuplicateChecker(
+    0.995, true, 'buffalo_l', 'max_5x5_cosine', validCalibrationReport(0.995)
+))
     ->evaluate(2, $samples, duplicateRows(1, 0.15));
 assertDuplicateCheck(
     $highSimilarityButBelowLimit['status'] === 'CLEAR',
@@ -72,10 +98,41 @@ assertDuplicateCheck(
 
 $noThreshold = $unconfigured->evaluate(22, $samples, duplicateRows(1, 0.0));
 assertDuplicateCheck($noThreshold['status'] === 'CHECK_UNAVAILABLE', 'An uncalibrated threshold must fail closed.');
-assertDuplicateCheck($noThreshold['reason'] === 'THRESHOLD_NOT_CALIBRATED', 'Missing calibration must be explicit.');
+assertDuplicateCheck($noThreshold['reason'] === 'THRESHOLD_NOT_CALIBRATED', 'A missing threshold must be reported as uncalibrated.');
+
+$missingReport = (new FaceDuplicateChecker(0.95, true, 'buffalo_l', 'max_5x5_cosine'))
+    ->evaluate(22, $samples, duplicateRows(1, 0.0));
+assertDuplicateCheck($missingReport['reason'] === 'CALIBRATION_REPORT_MISSING', 'A missing report with a configured validated threshold must remain blocked.');
+$insufficientReport = validCalibrationReport(0.95);
+$insufficientReport['sample_counts']['identity_count'] = 2;
+$insufficient = (new FaceDuplicateChecker(
+    0.95, true, 'buffalo_l', 'max_5x5_cosine', $insufficientReport
+))->evaluate(22, $samples, duplicateRows(1, 0.0));
+assertDuplicateCheck($insufficient['reason'] === 'CALIBRATION_DATA_INSUFFICIENT', 'A small calibration report must remain blocked.');
 
 $partialGallery = $checker->evaluate(22, $samples, duplicateRows(1, 0.0, 2));
 assertDuplicateCheck($partialGallery['status'] === 'CHECK_UNAVAILABLE', 'A partial employee gallery must fail closed.');
+
+$unvalidatedThreshold = (new FaceDuplicateChecker(
+    0.95, false, 'buffalo_l', 'max_5x5_cosine', validCalibrationReport(0.95)
+))->evaluate(22, $samples, duplicateRows(1, 0.0));
+assertDuplicateCheck(
+    $unvalidatedThreshold['status'] === 'CHECK_UNAVAILABLE'
+        && $unvalidatedThreshold['reason'] === 'THRESHOLD_NOT_CALIBRATED',
+    'An unvalidated threshold must be reported as uncalibrated and remain unavailable.'
+);
+assertDuplicateCheck(
+    FaceDuplicateChecker::isDemoBypassableUnavailable($noThreshold),
+    'Only explicit threshold-not-calibrated status is eligible for the local demo confirmation path.'
+);
+assertDuplicateCheck(
+    !FaceDuplicateChecker::isDemoBypassableUnavailable([
+        'status' => 'CHECK_UNAVAILABLE', 'reason' => 'THRESHOLD_MISSING',
+    ]) && !FaceDuplicateChecker::isDemoBypassableUnavailable([
+        'status' => 'CHECK_UNAVAILABLE', 'reason' => 'CALIBRATION_REPORT_MISSING',
+    ]),
+    'Legacy or other unavailable reasons must not be bypassable.'
+);
 
 $invalidGallery = duplicateRows(1, 0.0);
 $invalidGallery[2]['VectorData'] = str_repeat("\0", 32);

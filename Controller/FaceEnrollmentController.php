@@ -321,8 +321,14 @@ final class FaceEnrollmentController
             ], 502);
             return;
         }
+        $duplicateCheck = $state['duplicate_check'] ?? null;
+        $legacyUncalibratedReason = is_array($duplicateCheck)
+            && ($duplicateCheck['status'] ?? null) === 'CHECK_UNAVAILABLE'
+            && in_array((string)($duplicateCheck['reason'] ?? ''), [
+                'THRESHOLD_MISSING', 'THRESHOLD_NOT_VALIDATED',
+            ], true);
         if ($state['state'] === 'AWAITING_CONFIRMATION'
-            && !is_array($state['duplicate_check'] ?? null)) {
+            && (!is_array($duplicateCheck) || $legacyUncalibratedReason)) {
             $state['duplicate_check'] = $this->faceEmbeddings->checkDuplicate(
                 $employeeId,
                 $state['samples']
@@ -356,6 +362,7 @@ final class FaceEnrollmentController
             'auto_captured' => $captured > $previouslyReported,
             'complete' => $state['state'] === 'AWAITING_CONFIRMATION',
             'duplicate_check' => $state['duplicate_check'] ?? null,
+            'demo_duplicate_bypass_enabled' => FaceDuplicateChecker::isLocalDemoBypassEnabled(),
         ]);
     }
 
@@ -510,11 +517,27 @@ final class FaceEnrollmentController
         }
 
         try {
+            $saveContext = [];
+            $demoUnverifiedConfirmed = ($_POST['confirm_demo_unverified'] ?? null) === '1';
             $ids = $this->faceEmbeddings->replaceByEmployee(
                 $employeeId,
                 $state['samples'],
-                (string)($state['expected_revision'] ?? '')
+                (string)($state['expected_revision'] ?? ''),
+                $saveContext,
+                $demoUnverifiedConfirmed
             );
+            // Independently reload the committed rows before releasing the pending
+            // batch. The model also performs this check inside its transaction.
+            if (count($ids) !== 5
+                || $this->faceEmbeddings->countByEmployee($employeeId) !== 5
+                || !$this->faceEmbeddings->verifyBatchByEmployee($employeeId, $state['samples'])) {
+                $this->jsonResponse([
+                    'success' => false,
+                    'code' => 'PERSISTENCE_VERIFY_FAILED',
+                    'message' => 'Chưa xác minh được đủ 5 ảnh và embedding trong database. Batch vẫn được giữ để kiểm tra lại.',
+                ], 500);
+                return;
+            }
             $deviceId = (int)($state['device_id'] ?? 0);
             if (is_string($state['ai_session_id'] ?? null)) {
                 try {
@@ -526,26 +549,46 @@ final class FaceEnrollmentController
             unset($_SESSION[self::SESSION_KEY][$employeeId]);
             $galleryUpdated = false;
             try {
-                $galleryUpdated = !empty($this->ai->refreshGallery()['success']);
+                $gallery = $this->ai->refreshGallery();
+                $galleryUpdated = !empty($gallery['success'])
+                    && (int)($gallery['embedding_count'] ?? -1) === $this->faceEmbeddings->countAllActive()
+                    && (int)($gallery['invalid_count'] ?? -1) === 0;
             } catch (Throwable $exception) {
                 $galleryUpdated = false;
             }
             $this->rememberDeviceEnrollmentNotice(
                 $deviceId,
                 'COMPLETED',
-                $galleryUpdated
-                    ? 'Đăng ký khuôn mặt thành công.'
-                    : 'Đã lưu đăng ký. Hệ thống đang đồng bộ AI1; vui lòng thử lại sau.',
+                !empty($saveContext['demo_duplicate_check_skipped'])
+                    ? 'Đã lưu trong DEMO LOCAL; kiểm tra trùng chưa được thực hiện.'
+                    : ($galleryUpdated
+                        ? 'Đăng ký khuôn mặt thành công.'
+                        : 'Đã lưu đăng ký. Hệ thống đang đồng bộ AI1; vui lòng thử lại sau.'),
                 $employeeId,
                 (string)($state['employee_name'] ?? '')
             );
+            $demoUnchecked = !empty($saveContext['demo_duplicate_check_skipped']);
+            $duplicateResult = $saveContext['duplicate_check'] ?? null;
+            $demoReason = is_array($duplicateResult)
+                ? (string)($duplicateResult['reason'] ?? 'UNKNOWN')
+                : 'UNKNOWN';
             $this->jsonResponse([
                 'success' => true,
                 'saved' => count($ids),
                 'gallery_updated' => $galleryUpdated,
-                'message' => $galleryUpdated
-                    ? 'Đã lưu đủ 5 mẫu khuôn mặt.'
-                    : 'Đã lưu đủ 5 mẫu, nhưng gallery AI1 chưa đồng bộ. Nhận diện sẽ bị tạm chặn cho đến khi đồng bộ thành công.',
+                'demo_duplicate_check_skipped' => $demoUnchecked,
+                'duplicate_check_status' => $duplicateResult['status'] ?? null,
+                'duplicate_check_reason' => $demoUnchecked ? $demoReason : null,
+                'message' => $demoUnchecked
+                    ? ($galleryUpdated
+                        ? 'Đã lưu đủ 5 mẫu trong DEMO LOCAL. Chống trùng chưa được kiểm tra ('
+                            . ($duplicateResult['status'] ?? 'CHECK_UNAVAILABLE') . ': '
+                            . $demoReason . ').'
+                        : 'Đã lưu đủ 5 mẫu trong DEMO LOCAL nhưng gallery AI1 chưa đồng bộ. '
+                            . 'Chống trùng chưa được kiểm tra (' . $demoReason . ').')
+                    : ($galleryUpdated
+                        ? 'Đã lưu đủ 5 mẫu khuôn mặt.'
+                        : 'Đã lưu đủ 5 mẫu, nhưng gallery AI1 chưa đồng bộ. Nhận diện sẽ bị tạm chặn cho đến khi đồng bộ thành công.'),
             ]);
         } catch (FaceDuplicateCheckException $exception) {
             $check = $exception->checkResult();
@@ -566,6 +609,7 @@ final class FaceEnrollmentController
                 'success' => false,
                 'code' => 'DUPLICATE_FACE_CHECK',
                 'duplicate_check' => $check,
+                'demo_duplicate_bypass_enabled' => FaceDuplicateChecker::isLocalDemoBypassEnabled(),
                 'message' => $message,
             ], ($check['status'] ?? '') === 'SUSPECTED_DUPLICATE' ? 409 : 503);
         } catch (FaceEnrollmentConflict $exception) {
@@ -743,10 +787,12 @@ final class FaceEnrollmentController
                 }
             }
             $employee = $this->employees->findById((int)$employeeId);
+            $primaryFaceSafe = ($aiState['primary_face_safe'] ?? false) === true;
             $faceBox = $aiState['face_bbox'] ?? null;
             $frameWidth = filter_var($aiState['frame_width'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 8192]]);
             $frameHeight = filter_var($aiState['frame_height'] ?? null, FILTER_VALIDATE_INT, ['options' => ['min_range' => 1, 'max_range' => 8192]]);
-            if (!is_array($faceBox) || count($faceBox) !== 4 || !is_int($frameWidth) || !is_int($frameHeight)) {
+            if (!is_array($faceBox) || count($faceBox) !== 4 || !is_int($frameWidth) || !is_int($frameHeight)
+                || !$primaryFaceSafe) {
                 $faceBox = null;
                 $frameWidth = 0;
                 $frameHeight = 0;
@@ -775,6 +821,70 @@ final class FaceEnrollmentController
             if (!in_array($detectedPose, ['frontal', 'left', 'right', 'up', 'down', 'between', 'no_face', 'unknown', 'multiple_faces'], true)) {
                 $detectedPose = 'unknown';
             }
+            $faceCount = filter_var($aiState['face_count'] ?? null, FILTER_VALIDATE_INT, [
+                'options' => ['min_range' => 0, 'max_range' => 100],
+            ]);
+            $totalFaceCount = filter_var($aiState['total_face_count'] ?? $aiState['face_count'] ?? null, FILTER_VALIDATE_INT, [
+                'options' => ['min_range' => 0, 'max_range' => 100],
+            ]);
+            $faceCountLowerBound = false;
+            if (!is_int($faceCount) && is_int($totalFaceCount)) {
+                $faceCount = $totalFaceCount;
+            }
+            if (!is_int($totalFaceCount) && is_int($faceCount)) {
+                $totalFaceCount = $faceCount;
+            }
+            if (!is_int($faceCount) && $qualityCode === 'MULTIPLE FACES') {
+                // MULTIPLE FACES proves at least two detections even if an old
+                // AI1 worker omitted the newly-added count fields.
+                $faceCount = 2;
+                $totalFaceCount = 2;
+                $faceCountLowerBound = true;
+            }
+            $primaryFaceAreaRatio = $aiState['primary_face_area_ratio'] ?? null;
+            if (!is_numeric($primaryFaceAreaRatio) || !is_finite((float)$primaryFaceAreaRatio)
+                || (float)$primaryFaceAreaRatio < 1.0 || (float)$primaryFaceAreaRatio > 10000.0) {
+                $primaryFaceAreaRatio = null;
+            } else {
+                $primaryFaceAreaRatio = (float)$primaryFaceAreaRatio;
+            }
+            $primaryFaceAreaRatioRequired = $aiState['primary_face_area_ratio_required'] ?? null;
+            if (!is_numeric($primaryFaceAreaRatioRequired) || !is_finite((float)$primaryFaceAreaRatioRequired)
+                || (float)$primaryFaceAreaRatioRequired < 1.0 || (float)$primaryFaceAreaRatioRequired > 100.0) {
+                $primaryFaceAreaRatioRequired = null;
+            } else {
+                $primaryFaceAreaRatioRequired = (float)$primaryFaceAreaRatioRequired;
+            }
+            $detectionScore = $aiState['detection_score'] ?? null;
+            if (!is_numeric($detectionScore) || !is_finite((float)$detectionScore)
+                || (float)$detectionScore < 0.0 || (float)$detectionScore > 1.0) {
+                $detectionScore = null;
+            } else {
+                $detectionScore = (float)$detectionScore;
+            }
+            $inferenceFps = $aiState['inference_fps'] ?? null;
+            if (!is_numeric($inferenceFps) || !is_finite((float)$inferenceFps)
+                || (float)$inferenceFps < 0.0 || (float)$inferenceFps > 1000.0) {
+                $inferenceFps = null;
+            } else {
+                $inferenceFps = (float)$inferenceFps;
+            }
+            $frameSequence = filter_var($aiState['frame_sequence'] ?? null, FILTER_VALIDATE_INT, [
+                'options' => ['min_range' => 0],
+            ]);
+            $frameTimestamp = $aiState['frame_timestamp'] ?? null;
+            if (!is_numeric($frameTimestamp) || !is_finite((float)$frameTimestamp)) {
+                $frameTimestamp = null;
+            } else {
+                $frameTimestamp = (float)$frameTimestamp;
+            }
+            $frameAgeMs = $aiState['frame_age_ms'] ?? null;
+            if (!is_numeric($frameAgeMs) || !is_finite((float)$frameAgeMs)
+                || (float)$frameAgeMs < 0.0 || (float)$frameAgeMs > 600000.0) {
+                $frameAgeMs = null;
+            } else {
+                $frameAgeMs = (float)$frameAgeMs;
+            }
             $this->jsonResponse([
                 'success' => true,
                 'state' => $stateName,
@@ -790,6 +900,17 @@ final class FaceEnrollmentController
                 'observation_status' => (string)($aiState['observation_status'] ?? ''),
                 'feedback_code' => $feedbackCode,
                 'quality_code' => $qualityCode,
+                'face_count' => is_int($faceCount) ? $faceCount : null,
+                'total_face_count' => is_int($totalFaceCount) ? $totalFaceCount : null,
+                'face_count_lower_bound' => $faceCountLowerBound,
+                'primary_face_safe' => $primaryFaceSafe,
+                'primary_face_area_ratio' => $primaryFaceAreaRatio,
+                'primary_face_area_ratio_required' => $primaryFaceAreaRatioRequired,
+                'detection_score' => $detectionScore,
+                'inference_fps' => $inferenceFps,
+                'frame_sequence' => is_int($frameSequence) ? $frameSequence : null,
+                'frame_timestamp' => $frameTimestamp,
+                'frame_age_ms' => $frameAgeMs,
                 'face_bbox' => $faceBox,
                 'frame_width' => $frameWidth,
                 'frame_height' => $frameHeight,
@@ -888,6 +1009,7 @@ final class FaceEnrollmentController
                         'next_pose' => $nextPose,
                         'complete' => $captured === count(self::POSES),
                         'duplicate_check' => $state['duplicate_check'] ?? null,
+                        'demo_duplicate_bypass_enabled' => FaceDuplicateChecker::isLocalDemoBypassEnabled(),
                         'auto_captured' => $automatic,
                         'stable_frame_count' => 0,
                         'stable_frames_required' => EnrollmentCaptureState::STABLE_FRAMES_REQUIRED,
@@ -927,6 +1049,7 @@ final class FaceEnrollmentController
             'progress' => $captured . '/' . count(self::POSES),
             'stable_frame_count' => (int)($state['stable_frame_count'] ?? 0),
             'stable_frames_required' => EnrollmentCaptureState::STABLE_FRAMES_REQUIRED,
+            'demo_duplicate_bypass_enabled' => FaceDuplicateChecker::isLocalDemoBypassEnabled(),
         ];
     }
 

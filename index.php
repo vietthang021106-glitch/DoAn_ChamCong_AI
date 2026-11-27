@@ -1,6 +1,89 @@
 <?php
 declare(strict_types=1);
 
+require_once __DIR__ . '/Service/Environment.php';
+ProjectEnvironment::loadFile(__DIR__ . '/.env');
+
+require_once __DIR__ . '/Controller/DeviceApiController.php';
+
+$method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
+$requestPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH) ?: '/';
+$scriptDirectory = str_replace('\\', '/', dirname($_SERVER['SCRIPT_NAME'] ?? '/index.php'));
+$applicationBasePath = $scriptDirectory === '/' ? '' : rtrim($scriptDirectory, '/');
+
+// Public device connectivity probe. It must not initialize a browser session.
+if ($requestPath === $applicationBasePath . '/api/device/ping') {
+    if ($method !== 'GET') {
+        header('Allow: GET');
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+    (new DeviceApiController())->ping();
+}
+
+if ($requestPath === $applicationBasePath . '/api/device/camera-test') {
+    if ($method !== 'POST') {
+        header('Allow: POST');
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+    (new DeviceApiController())->cameraTestUpload();
+}
+
+if ($requestPath === $applicationBasePath . '/api/device/camera-test/latest') {
+    if ($method !== 'GET') {
+        header('Allow: GET');
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+    (new DeviceApiController())->latestCameraTestImage();
+}
+
+if ($requestPath === $applicationBasePath . '/api/device/camera-test/latest-db') {
+    if ($method !== 'GET') {
+        header('Allow: GET');
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+    (new DeviceApiController())->latestCameraTestImageFromDatabase();
+}
+
+if ($requestPath === $applicationBasePath . '/api/device/camera-test/image') {
+    if ($method !== 'GET') {
+        header('Allow: GET');
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+    (new DeviceApiController())->cameraTestImageById();
+}
+
+if ($requestPath === $applicationBasePath . '/api/device/integration-test') {
+    if ($method !== 'GET') {
+        header('Allow: GET');
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+    (new DeviceApiController())->integrationTestIndex();
+}
+
+if ($requestPath === $applicationBasePath . '/api/device/face-test') {
+    if ($method !== 'POST') {
+        header('Allow: POST');
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+    (new DeviceApiController())->faceTest();
+}
+
+if ($requestPath === $applicationBasePath . '/api/device/health-test') {
+    if ($method !== 'POST') {
+        header('Allow: POST');
+        http_response_code(405);
+        exit('Method Not Allowed');
+    }
+    (new DeviceApiController())->healthTest();
+}
+
 require_once __DIR__ . '/Security/CsrfToken.php';
 
 if (session_status() !== PHP_SESSION_ACTIVE) {
@@ -272,14 +355,11 @@ if ($action === 'monitoring' && $method === 'GET') {
     return;
 }
 
-if (in_array($action, ['health', 'alerts'], true) && $method === 'GET') {
+if ($action === 'health' && $method === 'GET') {
     $query = $_GET;
     $query['action'] = 'monitoring';
-    if ($action === 'health' && isset($query['page'])) {
+    if (isset($query['page'])) {
         $query['health_page'] = $query['page'];
-    }
-    if ($action === 'alerts' && isset($query['page'])) {
-        $query['alert_page'] = $query['page'];
     }
     unset($query['page']);
     header('Location: /?' . http_build_query($query), true, 302);
@@ -306,11 +386,11 @@ if ($action === 'attendance_image_out' && $method === 'GET') {
     return;
 }
 
-if (in_array($action, ['index', 'dashboard', 'create', 'store', 'edit', 'update', 'delete_employee', 'login', 'logout', 'shifts', 'assign_shift', 'bulk_assign_shift', 'copy_week_shifts', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift', 'attendance', 'live_attendance_feed', 'devices', 'scan_history_image', 'health', 'alerts', 'monitoring', 'attendance_image_in', 'attendance_image_out', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'internal_face_gallery', 'face_image', 'face_camera_frame', 'face_enrollment_preview', 'face_recognition_start', 'face_recognition_status', 'man-hinh-cham-cong', 'kiosk_record_attendance', 'kiosk_recognition_start', 'kiosk_enrollment_status', ...array_keys($faceEnrollmentActions)], true)) {
+if (in_array($action, ['index', 'dashboard', 'create', 'store', 'edit', 'update', 'delete_employee', 'login', 'logout', 'shifts', 'assign_shift', 'bulk_assign_shift', 'copy_week_shifts', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift', 'attendance', 'live_attendance_feed', 'devices', 'scan_history_image', 'health', 'monitoring', 'attendance_image_in', 'attendance_image_out', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'internal_face_gallery', 'face_image', 'face_camera_frame', 'face_enrollment_preview', 'face_recognition_start', 'face_recognition_status', 'man-hinh-cham-cong', 'kiosk_record_attendance', 'kiosk_recognition_start', 'kiosk_enrollment_status', ...array_keys($faceEnrollmentActions)], true)) {
     $allowedMethods = match ($action) {
         'login' => 'GET, POST',
         'store', 'update', 'delete_employee', 'logout', 'assign_shift', 'bulk_assign_shift', 'copy_week_shifts', 'unassign_shift', 'create_shift', 'update_shift', 'delete_shift', 'disable_shift', 'enable_shift', 'kiosk_record_attendance', 'kiosk_recognition_start' => 'POST',
-        'internal_face_gallery', 'face_image', 'face_camera_frame', 'face_enrollment_preview', 'face_recognition_status', 'attendance_image_in', 'attendance_image_out', 'scan_history_image', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'health', 'alerts', 'monitoring', 'live_attendance_feed', 'devices', 'man-hinh-cham-cong', 'kiosk_enrollment_status' => 'GET',
+        'internal_face_gallery', 'face_image', 'face_camera_frame', 'face_enrollment_preview', 'face_recognition_status', 'attendance_image_in', 'attendance_image_out', 'scan_history_image', 'my', 'my_attendance_image_in', 'my_attendance_image_out', 'health', 'monitoring', 'live_attendance_feed', 'devices', 'man-hinh-cham-cong', 'kiosk_enrollment_status' => 'GET',
         'face_recognition_start' => 'POST',
         default => isset($faceEnrollmentActions[$action]) ? 'POST' : 'GET',
     };

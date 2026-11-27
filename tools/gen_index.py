@@ -129,7 +129,6 @@ PARTS.append(r"""<!-- TOPBAR -->
     </div>
     <div id="topbar-date" class="topbar-date" style="font-size:12px;color:var(--text-muted);"></div>
   </div>
-  <div style="margin-left:12px;"><span id="ai-status-badge" class="ai-badge none">Khởi động...</span></div>
   <div class="topbar-right">
     <div class="user-menu">
       <button class="user-btn" id="userBtn" aria-label="Tài khoản">
@@ -202,10 +201,6 @@ PARTS.append(r"""<!-- TOGGLE -->
       <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
       Camera AI
     </button>
-    <button class="drawer-item" id="drawer-item-alerts" onclick="openFeatureModal('alerts')">
-      <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-      Cảnh báo
-    </button>
     <div class="drawer-section-label">Hỗ trợ</div>
     <button class="drawer-item" id="drawer-item-health" onclick="openFeatureModal('health')">
       <svg fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z"/></svg>
@@ -252,7 +247,6 @@ PARTS.append(r"""<!-- MAIN -->
   <!-- hidden KPI for JS -->
   <span id="kpi-dang-lam" style="display:none;"></span>
   <span id="kpi-ve-som"   style="display:none;"></span>
-  <span id="kpi-canh-bao" style="display:none;"></span>
   <span id="chamcong-badge" style="display:none;"></span>
 
   <!-- Quick Access -->
@@ -270,10 +264,6 @@ PARTS.append(r"""<!-- MAIN -->
         <div class="dash-sum-icon" style="background:var(--info-bg);"><svg fill="none" stroke="var(--info)" stroke-width="2" viewBox="0 0 24 24"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg></div>
         <div><div class="dash-sum-label">Camera AI</div><div class="dash-sum-value" style="font-size:13px;font-weight:600;" id="qa-camera">Live</div></div>
       </button>
-      <button class="dash-sum-card" onclick="openFeatureModal('alerts')" style="border:none;">
-        <div class="dash-sum-icon" style="background:var(--warning-bg);"><svg fill="none" stroke="var(--warning)" stroke-width="2" viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></div>
-        <div><div class="dash-sum-label">Cảnh báo</div><div class="dash-sum-value" id="qa-canhbao">--</div></div>
-      </button>
       <button class="dash-sum-card" onclick="openFeatureModal('health')" style="border:none;">
         <div class="dash-sum-icon" style="background:var(--success-bg);"><svg fill="none" stroke="var(--success)" stroke-width="2" viewBox="0 0 24 24"><path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z"/></svg></div>
         <div><div class="dash-sum-label">Sức khỏe</div><div class="dash-sum-value" style="font-size:13px;font-weight:600;" id="qa-health">--</div></div>
@@ -281,8 +271,8 @@ PARTS.append(r"""<!-- MAIN -->
     </div>
   </div>
 
-  <!-- Stat summary + Env + Alerts -->
-  <div class="content-grid-7030">
+  <!-- Stat summary -->
+  <div class="content-grid-7030" style="grid-template-columns:1fr;">
     <div class="panel">
       <div class="panel-header">
         <span class="panel-title">Tình trạng hôm nay</span>
@@ -294,15 +284,6 @@ PARTS.append(r"""<!-- MAIN -->
         <div class="stat-list-item"><span class="stat-list-label"><span class="stat-list-dot" style="background:var(--primary);"></span>Đang làm việc</span><span class="stat-list-value" id="leg-dang-lam">--</span></div>
         <div class="stat-list-item"><span class="stat-list-label"><span class="stat-list-dot" style="background:var(--danger);"></span>Về sớm</span><span class="stat-list-value" id="leg-ve-som">--</span></div>
         <div class="stat-list-item"><span class="stat-list-label"><span class="stat-list-dot" style="background:var(--text-muted);"></span>Chưa chấm công</span><span class="stat-list-value" id="leg-chua-cham">--</span></div>
-      </div>
-    </div>
-    <div class="right-col">
-      <div class="panel">
-        <div class="panel-header">
-          <span class="panel-title">Cảnh báo gần đây</span>
-          <button onclick="openFeatureModal('alerts')" style="font-size:11px;color:var(--primary);border:none;background:none;font-family:inherit;font-weight:500;cursor:pointer;">Tất cả →</button>
-        </div>
-        <div id="cam-alerts-body"><div class="alert-list-item" style="padding:12px 16px;color:var(--text-muted);font-size:12.5px;">Đang tải...</div></div>
       </div>
     </div>
   </div>
@@ -377,12 +358,11 @@ const MODAL_ICONS={
   attendance:'<path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11"/>',
   statistics:'<line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>',
   camera:'<path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2"/>',
-  alerts:'<path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>',
   health:'<path d="M20.84 4.61a5.5 5.5 0 00-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 00-7.78 7.78L12 21.23l8.84-8.84a5.5 5.5 0 000-7.78z"/>',
 };
 const MODAL_TITLES={
   employees:'Quản lý nhân viên',attendance:'Chấm công',statistics:'Thống kê',
-  camera:'Camera AI',alerts:'Cảnh báo AI',health:'Sức khỏe nhân viên'
+  camera:'Camera AI',health:'Sức khỏe nhân viên'
 };
 
 function openFeatureModal(feature){
@@ -475,28 +455,6 @@ function buildModalContent(f){
   if(f==='camera') return `
     <div class="modal-cam-wrap">
       <div class="modal-cam-video"><img id="camera-feed" src="{{ url_for('video_feed') }}" alt="Camera stream AI"></div>
-      <div class="modal-cam-info">
-        <div class="panel" style="margin:0;">
-          <div class="panel-header"><span class="panel-title">AI Status</span></div>
-          <div style="padding:16px;display:flex;flex-direction:column;gap:12px;">
-            <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">Trạng thái</div><span id="ai-status-badge-modal" class="ai-badge none">--</span></div>
-            <div><div style="font-size:10px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px;">EAR Score</div><span id="ear-display" class="ai-badge none" style="font-size:10.5px;">EAR --</span></div>
-          </div>
-        </div>
-        <div class="panel" style="margin:0;">
-          <div class="panel-header"><span class="panel-title">Cảnh báo gần đây</span></div>
-          <div id="cam-alerts-body-modal" style="max-height:200px;overflow-y:auto;"><div style="padding:12px 16px;color:var(--text-muted);font-size:12px;">Đang tải...</div></div>
-        </div>
-      </div>
-    </div>`;
-
-  if(f==='alerts') return `
-    <div class="modal-section-label">10 cảnh báo gần nhất</div>
-    <div class="modal-table-wrap">
-      <table class="data-table" id="alert-table">
-        <thead><tr><th>Nhân viên</th><th>Loại</th><th>Mô tả</th><th>Thời gian</th></tr></thead>
-        <tbody id="alert-tbody"><tr><td colspan="4" class="td-empty">Đang tải...</td></tr></tbody>
-      </table>
     </div>`;
 
   if(f==='health') return `
@@ -533,13 +491,6 @@ function initModalContent(f){
     if(wc){chartsInModal.weekly=new Chart(wc,{type:'bar',data:{labels:[],datasets:[{label:'Người vào',data:[],backgroundColor:'#BFDBFE',borderColor:'#2563EB',borderWidth:1,borderRadius:4,borderSkipped:false},{label:'Người ra',data:[],backgroundColor:'#BBF7D0',borderColor:'#16A34A',borderWidth:1,borderRadius:4,borderSkipped:false}]},options:{...CB,plugins:{...CB.plugins,legend:{display:true,position:'top',labels:{color:'#667085',font:{size:11},boxWidth:10,padding:10}}},scales:{x:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:10}}},y:{grid:{color:'#F3F4F6'},ticks:{color:'#98A2B3',font:{size:10},stepSize:1},beginAtZero:true}}}});weeklyChart=chartsInModal.weekly;fetchWeekly();}
     fetchDashboard(selectedDate);
   }
-  if(f==='camera'){
-    const mb=document.getElementById('ai-status-badge'),mm=document.getElementById('ai-status-badge-modal');
-    if(mb&&mm){mm.textContent=mb.textContent;mm.className=mb.className;}
-    const ca=document.getElementById('cam-alerts-body'),cm=document.getElementById('cam-alerts-body-modal');
-    if(ca&&cm) cm.innerHTML=ca.innerHTML;
-  }
-  if(f==='alerts') fetchAlerts();
   if(f==='health') fetchHealth();
 }
 
@@ -548,7 +499,6 @@ function initials(n){if(!n)return'?';const p=n.trim().split(' ');return p.length
 function fmtTime(s){if(!s)return'--';const m=s.match(/(\d{2}):(\d{2})(?::(\d{2}))?/);return m?`${m[1]}:${m[2]}`:s;}
 function badgeVao(t){if(!t||t==='Chưa chấm công')return`<span class="badge badge-gray">${t||'Chưa chấm công'}</span>`;if(t==='Đúng giờ')return`<span class="badge badge-green">Đúng giờ</span>`;if(t==='Đi trễ')return`<span class="badge badge-orange">Đi trễ</span>`;return`<span class="badge badge-gray">${t}</span>`;}
 function badgeRa(t){if(!t||t==='--')return'<span class="text-xs text-muted">--</span>';if(t==='Đang làm việc')return`<span class="badge badge-blue">Đang làm việc</span>`;if(t==='Đúng giờ')return`<span class="badge badge-green">Đúng giờ</span>`;if(t==='Về sớm')return`<span class="badge badge-red">Về sớm</span>`;return`<span class="badge badge-gray">${t}</span>`;}
-function badgeAlert(l){if(!l)return`<span class="badge badge-gray">--</span>`;const lc=l.toLowerCase();if(lc.includes('ngu')||lc.includes('buồn'))return`<span class="badge badge-red">${l}</span>`;if(lc.includes('guc')||lc.includes('tilt'))return`<span class="badge badge-orange">${l}</span>`;return`<span class="badge badge-gray">${l}</span>`;}
 
 /* ATTENDANCE STATE */
 let attendanceRecords=[],selectedDate='',searchDebounce=null;
@@ -588,7 +538,6 @@ function fetchDashboard(dateOverride){
     document.getElementById('kpi-di-tre').textContent=s.DiTre??'--';
     document.getElementById('kpi-ve-som').textContent=s.VeSom??'--';
     document.getElementById('kpi-chua-cham').textContent=s.ChuaChamCong??'--';
-    document.getElementById('kpi-canh-bao').textContent=s.CanhBaoHomNay??'--';
     const cb=document.getElementById('chamcong-badge');if(cb) cb.textContent=`${s.DaChamCong??0}/${s.TongNhanVien??0} người`;
     const qa=document.getElementById('qa-chamcong');if(qa) qa.textContent=`${s.DaChamCong??'--'}/${s.TongNhanVien??'--'}`;
     const sub=document.getElementById('kpi-da-cham-sub');if(sub) sub.textContent=`/ ${s.TongNhanVien??'--'} nhân viên`;
@@ -625,42 +574,13 @@ function fetchHealth(){
   }).catch(e=>console.error('[health]',e));
 }
 
-/* FETCH: ALERTS */
-function fetchAlerts(){
-  fetch('/api/get_alerts?limit=10').then(r=>r.json()).then(data=>{
-    const qa=document.getElementById('qa-canhbao');if(qa) qa.textContent=data.length||0;
-    const tb=document.getElementById('alert-tbody');
-    if(tb){if(!data.length){tb.innerHTML='<tr><td colspan="4" class="td-empty">Chưa có cảnh báo</td></tr>';}else{tb.innerHTML=data.map(r=>`<tr><td class="fw-600">${r.HoTen}</td><td>${badgeAlert(r.LoaiCanhBao)}</td><td class="text-xs text-muted">${r.MoTa||'--'}</td><td class="text-xs text-muted tabular">${r.ThoiGian}</td></tr>`).join('');}}
-    const today=new Date().toDateString();
-    const ta=data.filter(r=>{if(!r.ThoiGian||r.ThoiGian==='--')return false;try{return new Date(r.ThoiGian).toDateString()===today;}catch{return false;}});
-    const cb=document.getElementById('cam-alerts-body');
-    if(cb){if(!ta.length){cb.innerHTML='<div class="alert-list-item"><span class="text-xs text-muted">Không có cảnh báo hôm nay</span></div>';}else{cb.innerHTML=ta.slice(0,5).map(r=>{const l=(r.LoaiCanhBao||'').toLowerCase();const dc=l.includes('ngu')||l.includes('buồn')?'alert-dot-red':l.includes('guc')||l.includes('tilt')?'alert-dot-orange':'alert-dot-gray';return`<div class="alert-list-item"><span class="alert-dot ${dc}"></span><div style="flex:1;min-width:0;"><div class="alert-name">${r.HoTen}</div><div class="alert-type">${r.LoaiCanhBao||'--'}</div></div><span class="alert-time">${fmtTime(r.ThoiGian)}</span></div>`;}).join('');}}
-    const cm=document.getElementById('cam-alerts-body-modal');if(cm&&cb) cm.innerHTML=cb.innerHTML;
-  }).catch(e=>console.error('[alerts]',e));
-}
-
-/* FETCH: AI STATUS */
-function fetchAiStatus(){
-  fetch('/api/ai_status').then(r=>r.json()).then(data=>{
-    const badge=document.getElementById('ai-status-badge'),ear=document.getElementById('ear-display');
-    const M={binh_thuong:{label:'Bình thường',cls:'normal'},buon_ngu:{label:'Buồn ngủ',cls:'warning'},guc_dau:{label:'Gục đầu',cls:'tilt'},khong_co_khuon_mat:{label:'Không phát hiện',cls:'none'}};
-    const info=M[data.state]||{label:data.state||'N/A',cls:'none'};
-    if(badge){badge.textContent=info.label;badge.className=`ai-badge ${info.cls}`;}
-    if(ear){ear.textContent=`EAR ${data.ear??'--'}`;ear.className=`ai-badge ${data.state==='buon_ngu'?'warning':'none'}`;ear.style.fontSize='10.5px';}
-    const mm=document.getElementById('ai-status-badge-modal');if(mm&&badge){mm.textContent=badge.textContent;mm.className=badge.className;}
-  }).catch(e=>console.error('[ai_status]',e));
-}
-
 function getTodayStr(){const n=new Date();return`${n.getFullYear()}-${String(n.getMonth()+1).padStart(2,'0')}-${String(n.getDate()).padStart(2,'0')}`;}
 
 /* POLLING */
 function initPolling(){
   const today=getTodayStr(); selectedDate=today;
-  fetchDashboard(today);fetchAlerts();fetchHealth();fetchAiStatus();
   setInterval(()=>{if(selectedDate===getTodayStr()) fetchDashboard(selectedDate);},3000);
-  setInterval(fetchAlerts,5000);
   setInterval(fetchHealth,10000);
-  setInterval(fetchAiStatus,1500);
 }
 document.addEventListener('DOMContentLoaded',initPolling);
 </script>

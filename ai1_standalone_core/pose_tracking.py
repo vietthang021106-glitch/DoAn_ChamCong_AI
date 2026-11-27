@@ -283,6 +283,8 @@ class GuidedPoseTracker:
         self.stability_window_expirations = 0
         self.stale_frame_count = 0
         self.identity_reference = None
+        self.primary_identity_reference = None
+        self.primary_face_anchor = None
         self.last_valid_captured_at = None
         self.inference_times = deque(maxlen=32)
         self.inference_fps = None
@@ -298,6 +300,75 @@ class GuidedPoseTracker:
         self.window = []
         self.capture_issued = False
         self.pending_candidate = None
+
+    def set_primary_identity_reference(self, embedding):
+        """Pin the first validated frontal face before any pose is committed."""
+        vector = face_matching.normalize_embedding(embedding, EMBEDDING_DIMENSIONS)
+        if self.primary_identity_reference is not None:
+            similarity = face_matching.cosine_similarity(self.primary_identity_reference, vector)
+            if similarity < self.same_person_threshold:
+                raise ValueError("Primary identity reference cannot be silently replaced.")
+            return similarity
+        self.primary_identity_reference = vector.copy()
+        return 1.0
+
+    @staticmethod
+    def _bbox_iou(first, second):
+        try:
+            a = np.asarray(first.get("bbox"), dtype=np.float64).reshape(-1)
+            b = np.asarray(second.get("bbox"), dtype=np.float64).reshape(-1)
+        except (AttributeError, TypeError, ValueError):
+            return 0.0
+        if (a.size != 4 or b.size != 4 or not np.all(np.isfinite(a))
+                or not np.all(np.isfinite(b))):
+            return 0.0
+        intersection = max(0.0, min(a[2], b[2]) - max(a[0], b[0])) * max(
+            0.0, min(a[3], b[3]) - max(a[1], b[1])
+        )
+        area_a = max(0.0, a[2] - a[0]) * max(0.0, a[3] - a[1])
+        area_b = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+        union = area_a + area_b - intersection
+        return float(intersection / union) if union > 0 else 0.0
+
+    @staticmethod
+    def _normalized_face_geometry(face, frame):
+        try:
+            box = np.asarray(face.get("bbox"), dtype=np.float64).reshape(-1)
+            height, width = np.asarray(frame).shape[:2]
+        except (AttributeError, TypeError, ValueError):
+            return None
+        if (box.size != 4 or not np.all(np.isfinite(box)) or width <= 0 or height <= 0
+                or box[2] <= box[0] or box[3] <= box[1]):
+            return None
+        return {
+            "bbox": box.tolist(),
+            "cx": float((box[0] + box[2]) * 0.5 / width),
+            "cy": float((box[1] + box[3]) * 0.5 / height),
+            "area": float((box[2] - box[0]) * (box[3] - box[1]) / (width * height)),
+        }
+
+    def _accept_primary_face(self, face, frame, outcome, total_face_count):
+        selected = outcome.get("selected_primary_face")
+        declared_safe = outcome.get("primary_face_safe") is True
+        if total_face_count > 1:
+            if not declared_safe or not isinstance(selected, dict):
+                return False, "MULTIPLE FACES", "Không xác định chắc chắn được khuôn mặt chính; vui lòng đứng một mình."
+            if self._bbox_iou(face, selected) < 0.50:
+                return False, "PRIMARY_FACE_CHANGED", "Khuôn mặt chính trong kết quả không khớp ứng viên đã chọn."
+        elif total_face_count == 1 and selected is not None and self._bbox_iou(face, selected) < 0.50:
+            return False, "PRIMARY_FACE_CHANGED", "Ứng viên khuôn mặt đã thay đổi trong frame."
+
+        geometry = self._normalized_face_geometry(face, frame)
+        if geometry is None:
+            return False, "INVALID FACE BBOX", "Bounding box khuôn mặt không hợp lệ."
+        # Geometry is useful for diagnostics, but it is not identity. Before a
+        # frontal ArcFace reference has been captured, users must be able to
+        # move naturally into the guide and change distance. Once frontal is
+        # captured, identity continuity is enforced by the existing embedding
+        # cosine gate in observe()/validate_selected_candidate(). A spatial
+        # anchor here falsely rejected the same person after ordinary movement.
+        self.primary_face_anchor = geometry
+        return True, "OK", ""
 
     def _response(self, status, **values):
         response = {"status": status, "stable_count": self.stable_count,
@@ -406,6 +477,8 @@ class GuidedPoseTracker:
         self.stability_window_expirations = 0
         self.stale_frame_count = 0
         self.identity_reference = None
+        self.primary_identity_reference = None
+        self.primary_face_anchor = None
         self.last_valid_captured_at = None
         self.inference_times.clear()
         self.inference_fps = None
@@ -531,20 +604,77 @@ class GuidedPoseTracker:
             code = str(outcome.get("code", "QUALITY CHECK")).upper() \
                 if isinstance(outcome, dict) else "QUALITY CHECK"
             reason = str(outcome.get("reason") or code) if isinstance(outcome, dict) else code
+            # Preserve detection diagnostics on rejected frames. In particular,
+            # MULTIPLE FACES must carry the real count/area ratio to the Kiosk
+            # instead of collapsing to a generic message with an empty count.
+            faces = outcome.get("faces") if isinstance(outcome, dict) else None
+            reported_count = (outcome.get("total_face_count", outcome.get("face_count"))
+                              if isinstance(outcome, dict) else None)
+            try:
+                face_count = max(int(reported_count or 0),
+                                 len(faces) if isinstance(faces, (list, tuple)) else 0)
+            except (TypeError, ValueError):
+                face_count = len(faces) if isinstance(faces, (list, tuple)) else 0
+            face_count_lower_bound = False
+            if face_count == 0 and code in {"MULTIPLE FACES", "MULTIPLE_FACE"}:
+                face_count = 2
+                face_count_lower_bound = True
+            area_ratio = outcome.get("primary_face_area_ratio") if isinstance(outcome, dict) else None
+            required_ratio = (outcome.get("primary_face_area_ratio_required")
+                              if isinstance(outcome, dict) else None)
+            try:
+                area_ratio = float(area_ratio)
+                if not np.isfinite(area_ratio) or area_ratio < 1.0:
+                    area_ratio = None
+            except (TypeError, ValueError):
+                area_ratio = None
+            try:
+                required_ratio = float(required_ratio)
+                if not np.isfinite(required_ratio) or required_ratio < 1.0:
+                    required_ratio = None
+            except (TypeError, ValueError):
+                required_ratio = None
+            diagnostic_face = (outcome.get("selected_primary_face") or outcome.get("face")
+                               if isinstance(outcome, dict) else None)
+            detection_score = (diagnostic_face.get("detection_score")
+                               if isinstance(diagnostic_face, dict) else None)
+            primary_face_safe = (outcome.get("primary_face_safe") is True
+                                 if isinstance(outcome, dict) else False)
+            if (primary_face_safe and self.primary_face_anchor is not None
+                    and isinstance(diagnostic_face, dict) and face_count > 0):
+                tracked, tracking_code, tracking_reason = self._accept_primary_face(
+                    diagnostic_face, frame, outcome, face_count
+                )
+                if not tracked:
+                    self._clear_window()
+                    code = tracking_code
+                    reason = tracking_reason
+                    primary_face_safe = False
             # Multiple faces invalidate identity continuity; a brief blur/no-face
             # result only skips that sample and leaves the bounded time window intact.
             if code in {"MULTIPLE FACES", "MULTIPLE_FACE"}:
                 self._clear_window()
             low_fps_reason = self._low_fps_reason(now)
             return self._response("QUALITY_REJECTED", reason=reason,
-                                  rejected_code=code, fps_reason=low_fps_reason)
+                                  rejected_code=code, fps_reason=low_fps_reason,
+                                  face_count=face_count,
+                                  total_face_count=face_count,
+                                  face_count_lower_bound=face_count_lower_bound,
+                                  primary_face_safe=primary_face_safe,
+                                  selected_primary_face=diagnostic_face if primary_face_safe else None,
+                                  primary_face_area_ratio=area_ratio,
+                                  primary_face_area_ratio_required=required_ratio,
+                                  detection_score=detection_score)
 
         face = outcome.get("face")
-        face_count = outcome.get("face_count")
+        face_count = outcome.get("total_face_count", outcome.get("face_count"))
         diagnostics = outcome.get("diagnostics") or {}
         faces = outcome.get("faces")
         if isinstance(faces, (list, tuple)) and len(faces) > 1:
-            face_count = len(faces)
+            try:
+                face_count = max(int(face_count or 0), len(faces))
+            except (TypeError, ValueError):
+                face_count = len(faces)
         if face_count is None:
             face_count = diagnostics.get("face_count")
         if face_count is None:
@@ -554,13 +684,27 @@ class GuidedPoseTracker:
             face_count = int(face_count)
         except (TypeError, ValueError):
             face_count = 0
-        if face_count != 1:
+        if face_count < 1 or not isinstance(face, dict):
             if face_count > 1:
                 self._clear_window()
                 return self._response("QUALITY_REJECTED", rejected_code="MULTIPLE FACES",
-                                      reason="Chỉ được có đúng một khuôn mặt trong khung.")
+                                      total_face_count=face_count,
+                                      reason="Không xác định chắc chắn được khuôn mặt chính; vui lòng đứng một mình.")
             return self._response("QUALITY_REJECTED", rejected_code="NO FACE",
                                   reason="Không tìm thấy khuôn mặt hợp lệ.")
+        if not outcome.get("primary_face_safe", face_count == 1):
+            self._clear_window()
+            return self._response("QUALITY_REJECTED", rejected_code="MULTIPLE FACES",
+                                  total_face_count=face_count, primary_face_safe=False,
+                                  reason="Khuôn mặt chính chưa đạt điều kiện lựa chọn an toàn.")
+        primary_ok, primary_code, primary_reason = self._accept_primary_face(
+            face, frame, outcome, face_count
+        )
+        if not primary_ok:
+            self._clear_window()
+            return self._response("QUALITY_REJECTED", rejected_code=primary_code,
+                                  total_face_count=face_count, primary_face_safe=False,
+                                  reason=primary_reason)
 
         embedding = None
         if outcome.get("embedding") is not None:
@@ -571,7 +715,8 @@ class GuidedPoseTracker:
             except (TypeError, ValueError) as exc:
                 return self._response("IDENTITY_MISMATCH", rejected_code="INVALID EMBEDDING",
                                       reason=f"Embedding không hợp lệ: {exc}")
-        identity_anchor = self.identity_reference
+        identity_anchor = (self.identity_reference if self.identity_reference is not None
+                           else self.primary_identity_reference)
         if identity_anchor is None and self.window:
             identity_anchor = next((item.get("embedding") for item in self.window
                                      if item.get("embedding") is not None), None)
@@ -621,6 +766,8 @@ class GuidedPoseTracker:
                     reprojection_error_px=reprojection_error, calibrating=True,
                     frontal_view=frontal_metrics,
                     frontal_ok=False,
+                    face_count=face_count, total_face_count=face_count,
+                    primary_face_safe=True,
                     reason=(frontal_reason + " Raw pitch chỉ là thông tin debug; "
                             "nhìn thẳng tự nhiên, không cần căn hai mắt cân đối."),
                 )
@@ -647,6 +794,8 @@ class GuidedPoseTracker:
                     reprojection_error_px=reprojection_error,
                     frontal_view=None,
                     frontal_ok=None,
+                    face_count=face_count, total_face_count=face_count,
+                    primary_face_safe=True,
                     reason=(f"Sai hướng: yêu cầu {expected_pose}, hiện phát hiện "
                             f"{detected_pose} (yaw={angles['yaw']:+.1f}°, "
                             f"pitch={angles['pitch']:+.1f}°)."),
@@ -655,6 +804,8 @@ class GuidedPoseTracker:
         if self.capture_issued:
             return self._response("CAPTURE_PENDING", detected_pose=detected_pose,
                     expected_pose=expected_pose,
+                    face_count=face_count, total_face_count=face_count,
+                    primary_face_safe=True,
                     yaw=None if angles is None else angles["yaw"],
                     pitch=None if angles is None else angles["pitch"],
                     roll=None if angles is None else angles["roll"])
@@ -689,6 +840,9 @@ class GuidedPoseTracker:
             "embedding": None if embedding is None else embedding.copy(),
             **reported_angles,
             "reprojection_error_px": reprojection_error,
+            "total_face_count": face_count,
+            "selected_primary_face": outcome.get("selected_primary_face", face),
+            "primary_face_safe": True,
         })
         self.window = self.window[-self.stable_frames:]
         # Keep the newest mutually stable cluster instead of throwing away all
@@ -708,6 +862,8 @@ class GuidedPoseTracker:
             low_fps_reason = self._low_fps_reason(now)
             return self._response(
                     "LOW_FPS" if low_fps_reason else "STABILIZING",
+                    face_count=face_count, total_face_count=face_count,
+                    primary_face_safe=True,
                     detected_pose=detected_pose,
                     expected_pose=expected_pose,
                     yaw=None if angles is None else angles["yaw"],
@@ -744,6 +900,8 @@ class GuidedPoseTracker:
         return self._response(
             "CAPTURE_READY", detected_pose=detected_pose,
             expected_pose=expected_pose,
+            face_count=face_count, total_face_count=face_count,
+            primary_face_safe=True,
             yaw=None if angles is None else angles["yaw"],
             pitch=None if angles is None else angles["pitch"],
             roll=None if angles is None else angles["roll"],
@@ -782,15 +940,37 @@ class GuidedPoseTracker:
             return {"status": "RETRY", "code": outcome.get("code", "QUALITY CHECK"),
                     "reason": outcome.get("reason", "Quality gate không đạt.")}
         faces = outcome.get("faces")
-        face_count = outcome.get("face_count", len(faces) if isinstance(faces, (list, tuple)) else 1)
+        face_count = outcome.get("total_face_count", outcome.get(
+            "face_count", len(faces) if isinstance(faces, (list, tuple)) else 1
+        ))
         try:
             face_count = int(face_count)
         except (TypeError, ValueError):
             face_count = 0
-        if face_count != 1:
+        if face_count < 1:
             return {"status": "RETRY", "code": "MULTIPLE FACES" if face_count > 1 else "NO FACE",
-                    "reason": "Frame được chọn không còn đúng một khuôn mặt."}
+                    "reason": "Frame được chọn không còn khuôn mặt hợp lệ."}
         face = outcome.get("face")
+        selected_primary = outcome.get("selected_primary_face")
+        candidate_primary = candidate.get("selected_primary_face")
+        if face_count > 1:
+            if (outcome.get("primary_face_safe") is not True
+                    or not isinstance(selected_primary, dict)
+                    or not isinstance(candidate_primary, dict)):
+                return {"status": "RETRY", "code": "MULTIPLE FACES",
+                        "reason": "Không xác minh được khuôn mặt chính của frame đã chọn."}
+            if (self._bbox_iou(face, selected_primary) < 0.50
+                    or self._bbox_iou(selected_primary, candidate_primary) < 0.50):
+                return {"status": "RETRY", "code": "PRIMARY_FACE_CHANGED",
+                        "reason": "Người ở phía sau đã thay đổi ứng viên khuôn mặt chính."}
+        elif isinstance(candidate_primary, dict) and self._bbox_iou(face, candidate_primary) < 0.50:
+            return {"status": "RETRY", "code": "PRIMARY_FACE_CHANGED",
+                    "reason": "Ứng viên chính của frame đã thay đổi trước khi lưu."}
+        primary_ok, primary_code, primary_reason = self._accept_primary_face(
+            face, candidate.get("frame"), outcome, face_count
+        )
+        if not primary_ok:
+            return {"status": "RETRY", "code": primary_code, "reason": primary_reason}
         quality = outcome.get("quality") or {}
         if not isinstance(face, dict) or quality.get("ready") is not True:
             return {"status": "RETRY", "code": "QUALITY CHECK",
@@ -837,14 +1017,17 @@ class GuidedPoseTracker:
                         "reason": (f"Sai hướng ở frame được chọn: yêu cầu {expected_pose}, "
                                    f"phát hiện {detected} (yaw={angles['yaw']:+.1f}°, "
                                    f"pitch={angles['pitch']:+.1f}°).")}
-        if self.identity_reference is not None:
-            similarity = face_matching.cosine_similarity(self.identity_reference, embedding)
+        identity_anchor = (self.identity_reference if self.identity_reference is not None
+                           else self.primary_identity_reference)
+        if identity_anchor is not None:
+            similarity = face_matching.cosine_similarity(identity_anchor, embedding)
             if similarity < self.same_person_threshold:
                 return {"status": "RETRY", "code": "SAME PERSON",
-                        "reason": (f"Frame được chọn không khớp mẫu frontal: cosine={similarity:.3f}, "
+                        "reason": (f"Frame được chọn không khớp người đã bắt đầu đăng ký: cosine={similarity:.3f}, "
                                    f"cần ≥ {self.same_person_threshold:.3f}.")}
         return {"status": "OK", "embedding": embedding, "face": face,
-                "quality": quality, "pose_delta_deg": same_frame_delta}
+                "quality": quality, "pose_delta_deg": same_frame_delta,
+                "total_face_count": face_count, "selected_primary_face": face}
 
     def capture_result(self, captured, next_pose=None, now=None, embedding=None):
         """Advance once after gallery state has accepted the candidate sample."""
