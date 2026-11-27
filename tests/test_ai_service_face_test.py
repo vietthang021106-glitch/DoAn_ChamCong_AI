@@ -154,6 +154,45 @@ class DeviceFaceRecognitionTests(unittest.TestCase):
                 runtime.refresh_gallery()
         self.assertAlmostEqual(float(runtime._gallery[1]["embeddings"][0][1]), 1.0)
 
+    def test_loopback_push_sync_replaces_gallery_without_php_fetch(self):
+        raw = _vector(6).astype("<f4").tobytes()
+        document = {
+            "success": True,
+            "embeddings": [{
+                "ma_embedding": 17,
+                "ma_nv": 23,
+                "ho_ten": "Employee fixture",
+                "so_chieu": 512,
+                "vector": base64.b64encode(raw).decode("ascii"),
+                "sha256": hashlib.sha256(raw).hexdigest(),
+            }],
+        }
+        runtime = ai_service.AIRuntime()
+        runtime.engine = _Engine([])
+        runtime._gallery_error = "previous PHP pull failed"
+        original_runtime = ai_service.runtime
+        try:
+            ai_service.runtime = runtime
+            client = ai_service.app.test_client()
+            remote = client.post(
+                "/api/ai/gallery/sync",
+                json=document,
+                environ_base={"REMOTE_ADDR": "192.0.2.10"},
+            )
+            self.assertEqual(remote.status_code, 403)
+            self.assertFalse(runtime.health()["gallery_ready"])
+
+            with patch("ai_service.urllib.request.urlopen", side_effect=AssertionError("unexpected PHP callback")):
+                synced = client.post("/api/ai/gallery/sync", json=document)
+
+            self.assertEqual(synced.status_code, 200)
+            self.assertEqual(synced.get_json()["embedding_count"], 1)
+            self.assertEqual(synced.get_json()["employee_count"], 1)
+            self.assertTrue(runtime.health()["gallery_ready"])
+            self.assertIsNone(runtime.health()["gallery_error"])
+        finally:
+            ai_service.runtime = original_runtime
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -261,49 +261,59 @@ class AIRuntime:
             with urllib.request.urlopen(PHP_GALLERY_URL, timeout=10) as response:
                 payload = response.read()
             document = json.loads(payload.decode("utf-8"))
-            if not document.get("success") or not isinstance(document.get("embeddings"), list):
-                raise RuntimeError("PHP face gallery response is invalid.")
+            return self._replace_gallery_document(document)
 
-            rows = []
-            sample_ids = set()
-            for item in document["embeddings"]:
-                if not isinstance(item, dict):
-                    raise ValueError("Face gallery contains an invalid sample.")
-                sample_id, employee_id = item.get("ma_embedding"), item.get("ma_nv")
-                dimensions = item.get("so_chieu")
-                if (type(sample_id) is not int or sample_id <= 0 or sample_id in sample_ids
-                        or type(employee_id) is not int or not 0 < employee_id <= 2_147_483_647
-                        or dimensions != EMBEDDING_DIMENSIONS):
-                    raise ValueError("Face gallery contains an invalid sample identity or dimension.")
-                raw = base64.b64decode(item["vector"], validate=True)
-                if len(raw) != EMBEDDING_BYTES:
-                    raise ValueError("Face gallery contains an embedding with invalid dimensions or byte length.")
-                expected_hash = item.get("sha256")
-                if not isinstance(expected_hash, str) or hashlib.sha256(raw).hexdigest() != expected_hash:
-                    raise ValueError("Face embedding checksum mismatch after HTTP/base64 decode.")
-                employee_name = item.get("ho_ten", "")
-                if not isinstance(employee_name, str):
-                    raise ValueError("Face gallery contains an invalid employee name.")
-                rows.append((sample_id, employee_id, raw, dimensions, employee_name))
-                sample_ids.add(sample_id)
+    def sync_gallery(self, document):
+        """Accept a validated PHP-pushed snapshot without calling back into PHP."""
+        with self._refresh_lock:
+            return self._replace_gallery_document(document)
 
-            gallery, invalid_rows = aggregate_gallery(rows)
-            revision_rows = sorted((sample_id, hashlib.sha256(raw).hexdigest())
-                                   for sample_id, _, raw, _, _ in rows)
-            revision_bytes = json.dumps(revision_rows, separators=(",", ":")).encode("ascii")
-            gallery_revision = hashlib.sha256(revision_bytes).hexdigest()
-            with self._lock:
-                self._gallery = gallery
-                self._gallery_revision = gallery_revision
-                self._embedding_count = len(rows) - len(invalid_rows)
-                self._invalid_count = len(invalid_rows)
-                self._gallery_loaded = True
-                self._gallery_error = None
+    def _replace_gallery_document(self, document):
+        if (not isinstance(document, dict) or document.get("success") is not True
+                or not isinstance(document.get("embeddings"), list)):
+            raise RuntimeError("Face gallery document is invalid.")
+
+        rows = []
+        sample_ids = set()
+        for item in document["embeddings"]:
+            if not isinstance(item, dict):
+                raise ValueError("Face gallery contains an invalid sample.")
+            sample_id, employee_id = item.get("ma_embedding"), item.get("ma_nv")
+            dimensions = item.get("so_chieu")
+            if (type(sample_id) is not int or sample_id <= 0 or sample_id in sample_ids
+                    or type(employee_id) is not int or not 0 < employee_id <= 2_147_483_647
+                    or dimensions != EMBEDDING_DIMENSIONS):
+                raise ValueError("Face gallery contains an invalid sample identity or dimension.")
+            raw = base64.b64decode(item["vector"], validate=True)
+            if len(raw) != EMBEDDING_BYTES:
+                raise ValueError("Face gallery contains an embedding with invalid dimensions or byte length.")
+            expected_hash = item.get("sha256")
+            if not isinstance(expected_hash, str) or hashlib.sha256(raw).hexdigest() != expected_hash:
+                raise ValueError("Face embedding checksum mismatch after HTTP/base64 decode.")
+            employee_name = item.get("ho_ten", "")
+            if not isinstance(employee_name, str):
+                raise ValueError("Face gallery contains an invalid employee name.")
+            rows.append((sample_id, employee_id, raw, dimensions, employee_name))
+            sample_ids.add(sample_id)
+
+        gallery, invalid_rows = aggregate_gallery(rows)
+        revision_rows = sorted((sample_id, hashlib.sha256(raw).hexdigest())
+                               for sample_id, _, raw, _, _ in rows)
+        revision_bytes = json.dumps(revision_rows, separators=(",", ":")).encode("ascii")
+        gallery_revision = hashlib.sha256(revision_bytes).hexdigest()
+        with self._lock:
+            self._gallery = gallery
+            self._gallery_revision = gallery_revision
+            self._embedding_count = len(rows) - len(invalid_rows)
+            self._invalid_count = len(invalid_rows)
+            self._gallery_loaded = True
+            self._gallery_error = None
 
         return {
             "embedding_count": self._embedding_count,
             "employee_count": len(gallery),
             "invalid_count": self._invalid_count,
+            "gallery_revision": gallery_revision,
         }
 
     def health(self):
@@ -371,19 +381,13 @@ class AIRuntime:
             if active and active.get("future") is not None and not active["future"].done():
                 return None
 
-        # A failed enrollment refresh leaves _gallery_error set even if an old
-        # cache is still present. Retry that refresh before recognition; never
-        # match against the stale cache. The normal ready path keeps its
-        # existing request latency and gallery snapshot behavior.
+        # Never pull PHP synchronously from a PHP-originated recognition request.
+        # The PHP built-in server handles one request at a time, so a pull here
+        # would wait on the request that is currently waiting on this AI call.
         with self._lock:
             gallery_needs_refresh = not self._gallery_loaded or self._gallery_error is not None
         if gallery_needs_refresh:
-            try:
-                self.refresh_gallery()
-            except Exception as exc:
-                with self._lock:
-                    self._gallery_error = "Could not load gallery from PHP."
-                raise GalleryUnavailableError("Face gallery is unavailable or stale.") from exc
+            raise GalleryUnavailableError("Face gallery is unavailable or stale.")
 
         with self._session_lock:
             enrollment = self._enrollment_sessions.get(self._active_enrollment_session)
@@ -1330,6 +1334,22 @@ def refresh_gallery():
         with runtime._lock:
             runtime._gallery_error = "Could not load gallery from PHP."
         return jsonify({"success": False, "message": "Không thể tải gallery từ PHP."}), 503
+
+
+@app.post("/api/ai/gallery/sync")
+def sync_gallery():
+    """Replace the gallery from PHP without a nested AI-to-PHP callback."""
+    if request.remote_addr not in {"127.0.0.1", "::1"}:
+        return jsonify({"success": False, "message": "Local requests only."}), 403
+    document = request.get_json(silent=True)
+    try:
+        result = runtime.sync_gallery(document)
+        return jsonify({"success": True, **result})
+    except Exception:
+        logging.getLogger("ai1.gallery").exception("Loopback gallery sync failed.")
+        with runtime._lock:
+            runtime._gallery_error = "Could not sync gallery from PHP."
+        return jsonify({"success": False, "message": "Không thể đồng bộ gallery từ PHP."}), 503
 
 
 @app.get("/api/ai/frame")

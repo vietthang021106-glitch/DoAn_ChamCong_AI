@@ -17,6 +17,12 @@ final class AiClient
         return $this->requestJson('POST', '/api/ai/gallery/refresh');
     }
 
+    /** Push a PHP-owned gallery snapshot so AI never calls back into a busy PHP request. */
+    public function syncGallery(array $embeddings): array
+    {
+        return $this->requestJson('POST', '/api/ai/gallery/sync', ['success' => true, 'embeddings' => $embeddings]);
+    }
+
     /** Gửi JPEG enrollment tới AI để kiểm tra pose mà chưa nhận sample lưu trữ. */
     public function inspectEnrollmentImage(string $jpeg, string $expectedPose): array
     {
@@ -112,13 +118,15 @@ final class AiClient
         return '/api/ai/enrollment-sessions/' . $sessionId;
     }
 
-    private function requestJson(string $method, string $path): array
+    private function requestJson(string $method, string $path, ?array $jsonBody = null): array
     {
         $context = stream_context_create([
             'http' => [
                 'method' => $method,
                 'header' => "Accept: application/json\r\nContent-Type: application/json\r\n",
-                'content' => $method === 'POST' ? '{}' : '',
+                'content' => $method === 'POST'
+                    ? json_encode($jsonBody ?? [], JSON_THROW_ON_ERROR | JSON_UNESCAPED_UNICODE)
+                    : '',
                 'timeout' => $method === 'POST' ? 30 : 4,
                 'ignore_errors' => true,
             ],

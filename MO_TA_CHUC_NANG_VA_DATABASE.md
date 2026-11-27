@@ -42,6 +42,8 @@ Ca đã có phân ca hoặc chấm công tham chiếu thì không được xóa.
 
 Admin chọn nhân viên, ca đang sử dụng và ngày làm việc. Hệ thống lưu `MaNV`, `MaCa`, `NgayLamViec` vào `PhanCaNhanVien`. Mỗi bản ghi trả lời: ai làm ca nào vào ngày nào.
 
+Chức năng phân ca cho phép Admin chọn nhiều nhân viên, một khoảng ngày và các thứ áp dụng. Hệ thống duyệt từng ngày, kiểm tra cặp `MaNV` + `NgayLamViec`, tạo lịch mới nếu chưa có hoặc cập nhật `MaCa` nếu đã tồn tại; toàn bộ thao tác được thực hiện trong một transaction. Admin cũng có thể sao chép lịch một tuần sang tuần kế tiếp, giữ nguyên nhân viên và ca, với ngày đích lệch 7 ngày.
+
 Một nhân viên có nhiều phân ca qua các ngày; một ca được phân cho nhiều nhân viên. Vì vậy, cả `NhanVien` và `CaLamViec` đều có quan hệ 1–n với `PhanCaNhanVien`.
 
 Ràng buộc duy nhất trên `MaNV + NgayLamViec` giới hạn một nhân viên một ca mỗi ngày. Phân lại cùng nhân viên/ngày cập nhật ca trên bản ghi hiện có. Hủy phân ca bị chặn nếu ngày đó đã phát sinh chấm công. Không có phân ca hôm nay thì nghiệp vụ chấm công trả lỗi.

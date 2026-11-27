@@ -202,7 +202,7 @@ class SmartEnrollmentSessionTests(unittest.TestCase):
         cancelled = runtime.close_enrollment_session(started["session_id"], cancelled=True)
         self.assertEqual(cancelled["state"], "CANCELLED")
 
-    def test_recognition_fails_closed_when_authoritative_gallery_refresh_fails(self):
+    def test_recognition_fails_closed_without_nested_php_gallery_pull(self):
         runtime = ai_service.AIRuntime()
         runtime._recognition_pool.shutdown(wait=False)
         runtime._enrollment_pool.shutdown(wait=False)
@@ -213,9 +213,10 @@ class SmartEnrollmentSessionTests(unittest.TestCase):
         runtime._gallery = {1: {"embeddings": []}}
         runtime._gallery_error = "previous refresh failed"
 
-        with patch.object(runtime, "refresh_gallery", side_effect=RuntimeError("PHP unavailable")):
+        with patch.object(runtime, "refresh_gallery") as refresh:
             with self.assertRaises(ai_service.GalleryUnavailableError):
                 runtime.start_recognition_session()
+        refresh.assert_not_called()
 
         self.assertEqual(pool.submissions, [])
         self.assertIsNone(runtime._active_recognition_session)

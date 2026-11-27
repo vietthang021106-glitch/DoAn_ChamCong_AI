@@ -6,6 +6,7 @@ require_once __DIR__ . '/../Service/AttendanceCameraBinding.php';
 require_once __DIR__ . '/../Security/CsrfToken.php';
 require_once __DIR__ . '/../Service/KioskAttendanceService.php';
 require_once __DIR__ . '/../Service/CameraFrameClient.php';
+require_once __DIR__ . '/../Model/FaceEmbeddingModel.php';
 require_once __DIR__ . '/AuthController.php';
 
 final class KioskController
@@ -15,12 +16,18 @@ final class KioskController
     private DeviceModel $devices;
     private KioskAttendanceService $attendance;
     private AiClient $ai;
+    private FaceEmbeddingModel $faceEmbeddings;
 
-    public function __construct(?DeviceModel $devices = null, ?KioskAttendanceService $attendance = null)
+    public function __construct(
+        ?DeviceModel $devices = null,
+        ?KioskAttendanceService $attendance = null,
+        ?FaceEmbeddingModel $faceEmbeddings = null
+    )
     {
         $this->devices = $devices ?? new DeviceModel();
         $this->attendance = $attendance ?? new KioskAttendanceService();
         $this->ai = new AiClient();
+        $this->faceEmbeddings = $faceEmbeddings ?? new FaceEmbeddingModel();
     }
 
     /** Start a kiosk-owned AI session and bind its opaque ID to this admin session. */
@@ -45,25 +52,78 @@ final class KioskController
         }
 
         try {
-            $result = $this->ai->startRecognitionSession();
+            $health = $this->ai->health();
         } catch (Throwable $exception) {
-            error_log('Attendance terminal could not start recognition: ' . $exception->getMessage());
+            error_log('Attendance terminal AI1 health request failed: ' . $exception->getMessage());
             $this->jsonResponse([
                 'success' => false,
                 'code' => 'AI1_UNAVAILABLE',
                 'message' => 'Không kết nối được AI1 tại 127.0.0.1:5001. Hãy chạy python ai_service.py.',
             ], 503);
         }
-        $sessionId = strtolower((string)($result['session_id'] ?? ''));
-        if (($result['success'] ?? false) !== true || !preg_match('/^[a-f0-9]{32}$/D', $sessionId)) {
-            $status = !empty($result['busy']) ? 409 : 503;
+
+        if (($health['success'] ?? false) !== true) {
             $this->jsonResponse([
                 'success' => false,
                 'code' => 'AI1_UNAVAILABLE',
-                'busy' => !empty($result['busy']),
-                'message' => !empty($result['busy'])
+                'message' => 'AI1 không trả về trạng thái hợp lệ.',
+            ], 503);
+        }
+        if (empty($health['model_ready'])) {
+            $this->jsonResponse([
+                'success' => false,
+                'code' => 'AI1_PREPARING',
+                'message' => 'AI1 đang khởi tạo model buffalo_l. Vui lòng chờ rồi thử lại.',
+            ], 503);
+        }
+
+        if (empty($health['gallery_ready'])) {
+            try {
+                $galleryRows = $this->faceEmbeddings->findAllForInternalGallery();
+                $sync = $this->ai->syncGallery($galleryRows);
+            } catch (Throwable $exception) {
+                error_log('Attendance terminal gallery sync failed: ' . $exception->getMessage());
+                $this->jsonResponse([
+                    'success' => false,
+                    'code' => 'AI1_GALLERY_UNAVAILABLE',
+                    'message' => 'Không thể tải Gallery từ MariaDB để đồng bộ AI1. Chấm công đang tạm dừng.',
+                ], 503);
+            }
+            if (($sync['success'] ?? false) !== true
+                || (int)($sync['embedding_count'] ?? -1) !== count($galleryRows)
+                || (int)($sync['invalid_count'] ?? -1) !== 0) {
+                $this->jsonResponse([
+                    'success' => false,
+                    'code' => 'AI1_GALLERY_UNAVAILABLE',
+                    'message' => 'AI1 chưa xác nhận được Gallery mới nhất. Chấm công đang tạm dừng.',
+                ], 503);
+            }
+        }
+
+        try {
+            $result = $this->ai->startRecognitionSession();
+        } catch (Throwable $exception) {
+            error_log('Attendance terminal could not start recognition: ' . $exception->getMessage());
+            $this->jsonResponse([
+                'success' => false,
+                'code' => 'AI1_UNAVAILABLE',
+                'message' => 'Không kết nối được AI1 tại 127.0.0.1:5001. Hãy kiểm tra dịch vụ AI1.',
+            ], 503);
+        }
+        $sessionId = strtolower((string)($result['session_id'] ?? ''));
+        if (($result['success'] ?? false) !== true || !preg_match('/^[a-f0-9]{32}$/D', $sessionId)) {
+            $busy = !empty($result['busy']);
+            $preparing = ($result['code'] ?? '') === 'GALLERY_UNAVAILABLE';
+            $status = $busy ? 409 : 503;
+            $this->jsonResponse([
+                'success' => false,
+                'code' => $busy ? 'AI1_BUSY' : ($preparing ? 'AI1_PREPARING' : 'AI1_UNAVAILABLE'),
+                'busy' => $busy,
+                'message' => $busy
                     ? 'Đang có một lượt quét khác. Vui lòng chờ.'
-                    : 'AI1 chưa sẵn sàng tại 127.0.0.1:5001. Kiểm tra ai_service.py và model buffalo_l.',
+                    : ($preparing
+                        ? 'AI1 đang đồng bộ Gallery. Vui lòng đợi trong giây lát.'
+                        : 'AI1 chưa sẵn sàng tại 127.0.0.1:5001. Kiểm tra ai_service.py và model buffalo_l.'),
             ], $status);
         }
 

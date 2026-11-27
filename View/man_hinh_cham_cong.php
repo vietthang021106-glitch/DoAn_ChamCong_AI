@@ -70,6 +70,7 @@
 </div>
 <script src="/public/js/enrollment_ui_helpers.js?v=<?= (int)filemtime(__DIR__ . '/../public/js/enrollment_ui_helpers.js') ?>" defer></script>
 <script src="/public/js/kiosk_result_overlay.js?v=<?= (int)filemtime(__DIR__ . '/../public/js/kiosk_result_overlay.js') ?>" defer></script>
+<script src="/public/js/kiosk_ai_start.js?v=<?= (int)filemtime(__DIR__ . '/../public/js/kiosk_ai_start.js') ?>" defer></script>
 <script src="/public/js/man_hinh_cham_cong.js?v=<?= (int)filemtime(__DIR__ . '/../public/js/man_hinh_cham_cong.js') ?>" defer></script>
 </body>
 </html>

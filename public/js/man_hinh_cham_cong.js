@@ -456,18 +456,21 @@
         cameraEmpty.hidden = true;
 
         try {
-            const startResponse = await fetch('/?action=kiosk_recognition_start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
-                body: new URLSearchParams({ _csrf_token: csrfToken }),
-                credentials: 'same-origin', cache: 'no-store',
+            const { response: startResponse, payload: start } = await window.KioskAiStart.startRecognition({
+                fetchImpl: window.fetch.bind(window),
+                readJson,
+                csrfToken,
+                onPreparing: (attempt, total) => {
+                    setStatus(`AI1 đang khởi tạo/đồng bộ Gallery (${attempt}/${total})...`, 'processing');
+                },
             });
-            const start = await readJson(startResponse);
             if (!startResponse.ok || !start.success || !/^[a-f0-9]{32}$/.test(start.session_id || '')) {
                 if (start.code === 'CAMERA_SOURCE_UNAVAILABLE') throw new Error('CAMERA_SOURCE_UNAVAILABLE');
                 if (start.code === 'AI1_UNAVAILABLE' || start.code === 'AI1_MODEL_UNAVAILABLE') {
                     throw new Error('AI1_UNAVAILABLE');
                 }
+                if (start.code === 'AI1_GALLERY_UNAVAILABLE') throw new Error('AI1_GALLERY_UNAVAILABLE');
+                if (start.code === 'AI1_BUSY') throw new Error('AI1_BUSY');
                 if (startResponse.status >= 500) throw new Error('SERVER_OFFLINE');
                 throw new Error(start.message || 'START_FAILED');
             }
@@ -495,18 +498,27 @@
         } catch (error) {
             const authExpired = error.message === 'AUTH_REQUIRED';
             const cameraOffline = error.message === 'CAMERA_SOURCE_UNAVAILABLE';
+            const aiPreparing = error.message === 'AI1_PREPARING';
+            const galleryUnavailable = error.message === 'AI1_GALLERY_UNAVAILABLE';
+            const aiBusy = error.message === 'AI1_BUSY';
             const aiOffline = error.message === 'AI1_UNAVAILABLE'
                 || error.message === 'SERVER_OFFLINE' || error.message === 'RECOGNITION_UNAVAILABLE';
             const offline = cameraOffline || aiOffline;
             const title = authExpired ? 'PHIÊN ĐĂNG NHẬP ĐÃ HẾT HẠN'
                 : cameraOffline ? 'CAMERA OFFLINE'
-                    : aiOffline ? 'AI1 OFFLINE' : 'CẦN QUÉT LẠI';
-            finish(authExpired || offline ? 'offline' : 'error', title,
+                    : aiOffline ? 'AI1 OFFLINE'
+                        : aiPreparing ? 'AI1 ĐANG CHUẨN BỊ'
+                            : galleryUnavailable ? 'GALLERY AI1 CHƯA SẴN SÀNG'
+                                : aiBusy ? 'AI1 ĐANG BẬN' : 'CẦN QUÉT LẠI';
+            finish(authExpired || offline ? 'offline' : (aiPreparing || aiBusy ? 'processing' : 'error'), title,
                 authExpired ? 'Đăng nhập lại để tiếp tục chấm công.'
                     : cameraOffline ? 'Không nhận được frame từ app.py tại 127.0.0.1:5000. Chấm công đã tạm dừng.'
                         : error.message === 'AI1_UNAVAILABLE'
                             ? 'Không kết nối được AI1 tại 127.0.0.1:5001. Hãy chạy python ai_service.py.'
-                            : aiOffline ? 'Máy chủ AI1 chưa sẵn sàng. Kiểm tra ai_service.py và model buffalo_l.'
+                            : aiPreparing ? 'AI1 đang tải model hoặc đồng bộ Gallery. Đã thử lại có giới hạn; vui lòng thử lại sau.'
+                                : galleryUnavailable ? 'Không đọc hoặc đồng bộ được Gallery từ MariaDB. Không tạo phiên nhận diện.'
+                                    : aiBusy ? 'Một phiên nhận diện hoặc đăng ký đang giữ camera. Chờ phiên đó kết thúc rồi thử lại.'
+                                        : aiOffline ? 'Máy chủ AI1 chưa sẵn sàng. Kiểm tra ai_service.py và model buffalo_l.'
                     : (error.message === 'START_FAILED'
                         ? 'Không thể bắt đầu lượt quét. Vui lòng thử lại.'
                         : error.message));

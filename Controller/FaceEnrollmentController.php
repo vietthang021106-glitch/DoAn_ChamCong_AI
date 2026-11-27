@@ -541,19 +541,37 @@ final class FaceEnrollmentController
             $deviceId = (int)($state['device_id'] ?? 0);
             if (is_string($state['ai_session_id'] ?? null)) {
                 try {
-                    $this->ai->closeEnrollmentSession((string)$state['ai_session_id']);
+                    $closed = $this->ai->closeEnrollmentSession((string)$state['ai_session_id']);
+                    if (empty($closed['success'])) {
+                        error_log('Smart Enrollment AI session did not close cleanly after save.');
+                        $cancelled = $this->ai->cancelEnrollmentSession((string)$state['ai_session_id']);
+                        if (empty($cancelled['success'])) {
+                            error_log('Smart Enrollment AI session release fallback was unsuccessful.');
+                        }
+                    }
                 } catch (Throwable $exception) {
                     error_log('Smart Enrollment AI session close failed after save.');
+                    try {
+                        $cancelled = $this->ai->cancelEnrollmentSession((string)$state['ai_session_id']);
+                        if (empty($cancelled['success'])) {
+                            error_log('Smart Enrollment AI session release fallback was unsuccessful.');
+                        }
+                    } catch (Throwable $releaseException) {
+                        error_log('Smart Enrollment AI session release fallback failed after save.');
+                    }
                 }
             }
             unset($_SESSION[self::SESSION_KEY][$employeeId]);
             $galleryUpdated = false;
             try {
-                $gallery = $this->ai->refreshGallery();
+                // Push the committed PHP gallery to AI. A pull here would make
+                // ai_service.py call back into this still-running PHP request.
+                $gallery = $this->ai->syncGallery($this->faceEmbeddings->findAllForInternalGallery());
                 $galleryUpdated = !empty($gallery['success'])
                     && (int)($gallery['embedding_count'] ?? -1) === $this->faceEmbeddings->countAllActive()
                     && (int)($gallery['invalid_count'] ?? -1) === 0;
             } catch (Throwable $exception) {
+                error_log('Face enrollment gallery push failed after save: ' . $exception->getMessage());
                 $galleryUpdated = false;
             }
             $this->rememberDeviceEnrollmentNotice(
